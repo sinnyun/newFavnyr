@@ -723,4 +723,68 @@ mod tests {
         assert_eq!(fit_window_axis(-2500, -1920, 0, 1100), -1920);
         assert_eq!(fit_window_axis(-50, -1920, 0, 1100), -1100);
     }
+
+    /// The vendored parley patch (see `vendor/parley/PATCHES.md`) has one job:
+    /// keep ICU4X from reporting a missing segmentation model while Slint lays
+    /// the interface out. Unpatched, parley runs its word segmenter over every
+    /// analysed run with no model loaded, and ICU4X answers each Han run with
+    /// `ICU4X data error: No segmentation model for language: ja` — hundreds of
+    /// lines per session, on a Chinese interface.
+    ///
+    /// This lays real Chinese text out through the same engine the UI uses and
+    /// fails if any such report appears, so dropping the `[patch.crates-io]`
+    /// stanza (or an upstream change that brings the model-less constructors
+    /// back) cannot pass unnoticed.
+    #[test]
+    fn laying_chinese_text_out_reports_no_missing_segmentation_model() {
+        use std::sync::{Arc, Mutex};
+
+        /// ICU4X's notices reach `log` (see `icu_provider` in Cargo.toml).
+        struct Capture(Arc<Mutex<Vec<String>>>);
+
+        impl log::Log for Capture {
+            fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+                true
+            }
+            fn log(&self, record: &log::Record<'_>) {
+                self.0
+                    .lock()
+                    .expect("capture lock")
+                    .push(record.args().to_string());
+            }
+            fn flush(&self) {}
+        }
+
+        // One global logger per process: if another test claimed it first, the
+        // assertion below still holds — nothing is captured either way.
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        if log::set_boxed_logger(Box::new(Capture(captured.clone()))).is_ok() {
+            log::set_max_level(log::LevelFilter::Warn);
+        }
+
+        let mut font_cx = parley::FontContext::new();
+        let mut layout_cx = parley::LayoutContext::<()>::new();
+        let text = "这是一个中文标签，用来检查排版时是否会报告缺少分词模型。";
+        let mut builder = layout_cx.ranged_builder(&mut font_cx, text, 1.0, true);
+        builder.push_default(parley::style::StyleProperty::WordBreak(
+            parley::style::WordBreak::Normal,
+        ));
+        let mut layout: parley::Layout<()> = builder.build(text);
+        layout.break_all_lines(Some(120.0));
+        assert!(
+            layout.len() > 1,
+            "the text has to wrap for this test to exercise segmentation"
+        );
+
+        let captured = captured.lock().expect("capture lock");
+        let offending: Vec<&String> = captured
+            .iter()
+            .filter(|message| message.contains("segmentation model"))
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "ICU4X reported a missing segmentation model — is vendor/parley still \
+             patched? {offending:?}"
+        );
+    }
 }

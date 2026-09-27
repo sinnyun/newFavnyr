@@ -49,3 +49,17 @@ opt-level     = 3
 lto           = "thin"
 codegen-units = 1
 strip         = true
+
+# --- Vendored fix: parley's ICU4X segmenters --------------------------------
+# Slint's text layout (i-slint-core → parley) builds its ICU4X segmenters
+# WITHOUT the CJK/Thai/Lao/Khmer/Myanmar models and then segments every text run
+# with them, so ICU4X logs one fallback notice per Han run — a Chinese interface
+# produced hundreds per session:
+#     WARN icu_provider::error: ICU4X data error: No segmentation model for language: ja
+# The models are already part of the build (`icu_segmenter/compiled_data` ships
+# them); `vendor/parley` makes parley load them, which removes the notice at its
+# source instead of filtering logs — and gives Chinese/Thai real word
+# boundaries. Diff, measured cost (+3.6 MB, 0.47 µs per construction) and the
+# exit path: vendor/parley/PATCHES.md.
+[patch.crates-io]
+parley = { path = "vendor/parley" }

@@ -1305,8 +1305,11 @@ dependencies = [
  "arboard",
  "dirs",
  "favnyr-core",
+ "icu_provider",
+ "log",
  "notify",
  "open",
+ "parley",
  "slint",
  "slint-build",
  "toml 0.9.12+spec-1.1.0",
@@ -2270,6 +2273,7 @@ checksum = "139c4cf31c8b5f33d7e199446eff9c1e02decfc2f0eec2c8d71f65befa45b421"
 dependencies = [
  "displaydoc",
  "icu_locale_core",
+ "log",
  "serde",
  "stable_deref_trait",
  "writeable",
@@ -3590,8 +3594,6 @@ checksum = "4b6937eda350acc1a5d05872c3cbf99fe78619c269096e2be3d4a350058639d5"
 [[package]]
 name = "parley"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6c00ec192e1a402861526eff91a4b4690a2e5a17a4ae2deb772d72b49daf868"
 dependencies = [
  "fontique",
  "harfrust",

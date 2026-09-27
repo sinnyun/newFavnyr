@@ -23,6 +23,24 @@ open        = { workspace = true }
 arboard     = { workspace = true }
 toml        = { workspace = true }
 
+# Declared for its FEATURE, not its API: nothing here imports `icu_provider`.
+#
+# It turns ON icu_provider's `logging` feature, which routes ICU4X's own
+# diagnostics through `log`/`tracing` like every other dependency's. Without it,
+# ICU4X's internal log shim aliases `warn` to `std::eprintln!` in debug builds
+# (see icu_provider/src/lib.rs) — straight to stderr, invisible to the log file
+# users are asked to send. With the feature on, an ICU4X notice lands in
+# `favnyr.log` at its real level. Nothing is filtered out: the segmentation
+# notice this used to silence is gone at its source instead (vendor/parley).
+icu_provider = { version = "2.2", default-features = false, features = ["logging"] }
+
+[dev-dependencies]
+# Guard for the vendored parley patch (vendor/parley/PATCHES.md): the test lays
+# Chinese text out through the real text engine and asserts ICU4X reports no
+# missing segmentation model. ICU4X's notices arrive through `log`.
+log    = "0.4"
+parley = "0.8.0"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 wl-clipboard-rs = { workspace = true }
 
