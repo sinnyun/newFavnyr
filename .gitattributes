@@ -1,0 +1,7 @@
+# Line endings.
+
+# Windows batch files must reach the worktree as CRLF: cmd.exe can fail to
+# resolve `call`/`goto` labels in a batch file that uses Unix line endings.
+# Stated here so it holds whatever core.autocrlf is set to locally, rather
+# than depending on each contributor's Git configuration.
+*.bat text eol=crlf
