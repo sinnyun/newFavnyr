@@ -26,6 +26,7 @@ const EMBED_FR: &str = include_str!("../i18n/fr.toml");
 const EMBED_ES: &str = include_str!("../i18n/es.toml");
 const EMBED_DE: &str = include_str!("../i18n/de.toml");
 const EMBED_IT: &str = include_str!("../i18n/it.toml");
+const EMBED_ZH: &str = include_str!("../i18n/zh.toml");
 
 fn embedded(lang: Lang) -> &'static str {
     match lang {
@@ -34,6 +35,7 @@ fn embedded(lang: Lang) -> &'static str {
         Lang::Es => EMBED_ES,
         Lang::De => EMBED_DE,
         Lang::It => EMBED_IT,
+        Lang::Zh => EMBED_ZH,
     }
 }
 
@@ -94,12 +96,14 @@ fn catalog(lang: Lang) -> &'static HashMap<String, String> {
     static ES: OnceLock<HashMap<String, String>> = OnceLock::new();
     static DE: OnceLock<HashMap<String, String>> = OnceLock::new();
     static IT: OnceLock<HashMap<String, String>> = OnceLock::new();
+    static ZH: OnceLock<HashMap<String, String>> = OnceLock::new();
     match lang {
         Lang::En => get(lang, &EN),
         Lang::Fr => get(lang, &FR),
         Lang::Es => get(lang, &ES),
         Lang::De => get(lang, &DE),
         Lang::It => get(lang, &IT),
+        Lang::Zh => get(lang, &ZH),
     }
 }
 
@@ -542,12 +546,14 @@ pub fn size_units(lang: Lang) -> favnyr_core::fs::SizeUnits<'static> {
     static ES: OnceLock<Units> = OnceLock::new();
     static DE: OnceLock<Units> = OnceLock::new();
     static IT: OnceLock<Units> = OnceLock::new();
+    static ZH: OnceLock<Units> = OnceLock::new();
     let cell = match lang {
         Lang::En => &EN,
         Lang::Fr => &FR,
         Lang::Es => &ES,
         Lang::De => &DE,
         Lang::It => &IT,
+        Lang::Zh => &ZH,
     };
     *cell.get_or_init(|| build(lang))
 }
@@ -572,12 +578,14 @@ pub fn age_units(lang: Lang) -> favnyr_core::fs::AgeUnits<'static> {
     static ES: OnceLock<Units> = OnceLock::new();
     static DE: OnceLock<Units> = OnceLock::new();
     static IT: OnceLock<Units> = OnceLock::new();
+    static ZH: OnceLock<Units> = OnceLock::new();
     let cell = match lang {
         Lang::En => &EN,
         Lang::Fr => &FR,
         Lang::Es => &ES,
         Lang::De => &DE,
         Lang::It => &IT,
+        Lang::Zh => &ZH,
     };
     *cell.get_or_init(|| build(lang))
 }
@@ -836,6 +844,140 @@ mod tests {
         assert!(
             checked > 100,
             "scan g(\"…\") found abnormally few keys: {checked}"
+        );
+    }
+
+    /// `{name}`-style tokens of a message, sorted and deduplicated.
+    fn placeholders(message: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut rest = message;
+        while let Some(open) = rest.find('{') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('}') else { break };
+            let token = &after[..close];
+            if !token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                out.push(token.to_string());
+            }
+            rest = &after[close + 1..];
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Every bundled catalog must define every English key, with the same
+    /// placeholders. A missing key silently falls back to English — exactly
+    /// the half-translated interface this test exists to prevent — and a
+    /// dropped `{token}` turns into a message that lies about the item.
+    #[test]
+    fn every_bundled_catalog_covers_english_and_keeps_its_placeholders() {
+        let mut en = HashMap::new();
+        overlay(EMBED_EN, &mut en);
+        assert!(en.len() > 400, "en.toml looks truncated: {} keys", en.len());
+
+        for &lang in Lang::all() {
+            let mut map = HashMap::new();
+            overlay(embedded(lang), &mut map);
+            for (key, english) in &en {
+                let Some(value) = map.get(key) else {
+                    panic!(
+                        "{}: \"{key}\" is missing from the bundled catalog",
+                        lang.code()
+                    );
+                };
+                assert_eq!(
+                    placeholders(value),
+                    placeholders(english),
+                    "{}: \"{key}\" no longer carries the same placeholders",
+                    lang.code()
+                );
+            }
+            let mut extra: Vec<&String> = map.keys().filter(|k| !en.contains_key(*k)).collect();
+            extra.sort();
+            assert!(
+                extra.is_empty(),
+                "{}: keys that exist only in that catalog: {extra:?}",
+                lang.code()
+            );
+        }
+    }
+
+    /// The Chinese catalog must actually be Chinese. Without this, a file
+    /// copied from `en.toml` would pass the coverage test above while leaving
+    /// the whole interface in English. These keys legitimately stay ASCII: the
+    /// brand, the size units, the decimal mark, separator glyphs, modifier-key
+    /// names and the two example placeholders.
+    #[test]
+    fn chinese_catalog_is_translated() {
+        const NEUTRAL: &[&str] = &[
+            "app_title",
+            "unit_byte",
+            "unit_kb",
+            "unit_mb",
+            "unit_gb",
+            "unit_tb",
+            "decimal_separator",
+            "ext_filter_placeholder",
+            "separator_dot",
+            "list_separator",
+            "list_ellipsis",
+            "key_ctrl",
+            "key_alt",
+            "key_shift",
+            "key_delete",
+            "key_pageup",
+            "key_pagedown",
+            "ow_default_ext_placeholder",
+            "ow_used_ext_placeholder",
+        ];
+        let is_han = |c: char| ('\u{4e00}'..='\u{9fff}').contains(&c);
+
+        let mut zh = HashMap::new();
+        overlay(EMBED_ZH, &mut zh);
+        for (key, value) in &zh {
+            if NEUTRAL.contains(&key.as_str()) {
+                continue;
+            }
+            assert!(
+                value.chars().any(is_han),
+                "zh: \"{key}\" was left untranslated: {value}"
+            );
+        }
+    }
+
+    /// Chinese wording reaches the parts of the interface driven by code
+    /// rather than by a `Strings` field.
+    #[test]
+    fn chinese_reaches_the_computed_labels() {
+        assert_eq!(tr(Lang::Zh, "settings_language"), "语言");
+        assert_eq!(tr(Lang::Zh, "ctx_copy"), "复制");
+        assert_eq!(shortcut_action_name(Lang::Zh, "copy"), "复制");
+        assert_eq!(shortcut_group_name(Lang::Zh, "navigation"), "导航");
+        assert_eq!(theme_labels(Lang::Zh)[2], "深色");
+        assert_eq!(tabbar_labels(Lang::Zh)[0], "标签栏在顶部");
+        assert_eq!(
+            footer_text(Lang::Zh, 12, 2, 3),
+            "12 个项目  ·  3 个隐藏项  ·  已选 2 项"
+        );
+        assert_eq!(footer_items_text(Lang::Zh, 0), "空文件夹");
+        assert_eq!(op_more_text(Lang::Zh, 2), "+2 个其他操作");
+        assert_eq!(
+            shortcut_conflict_message(Lang::Zh, "复制"),
+            "已被“复制”使用。"
+        );
+        assert_eq!(size_units(Lang::Zh).steps[2], "MB");
+        assert_eq!(age_units(Lang::Zh).now, "刚刚");
+        assert_eq!(
+            favnyr_core::fs::format_age(0, 90, age_units(Lang::Zh)),
+            "1 分钟"
+        );
+        assert_eq!(
+            favnyr_core::fs::format_size(1536, size_units(Lang::Zh)),
+            "1.5 KB"
+        );
+        assert_eq!(
+            language_labels().last().map(|l| l.to_string()).as_deref(),
+            Some("简体中文")
         );
     }
 }

@@ -15962,7 +15962,7 @@ mod tests {
             // key in the settings. Its visible label must remain exactly the
             // translated action in every bundled language: the icon identifies
             // the tool, so adding a textual prefix would be redundant.
-            for lang in [Lang::En, Lang::Fr, Lang::Es, Lang::De, Lang::It] {
+            for lang in [Lang::En, Lang::Fr, Lang::Es, Lang::De, Lang::It, Lang::Zh] {
                 let action = i18n::tr(lang, r.label_key);
                 assert_ne!(action, r.label_key, "missing translation: {}", r.label_key);
                 assert_eq!(r.label(lang), action);

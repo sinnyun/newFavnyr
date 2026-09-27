@@ -17,6 +17,11 @@ pub enum Lang {
     Es,
     De,
     It,
+    /// Simplified Chinese. Lowercase regional forms are accepted on load, so a
+    /// hand-written `config.toml` (`language = "zh-cn"`) still resolves here
+    /// instead of silently falling back to English.
+    #[serde(alias = "zh-cn", alias = "zh_cn", alias = "zh-hans", alias = "zh_hans")]
+    Zh,
 }
 
 impl Lang {
@@ -28,6 +33,7 @@ impl Lang {
             Lang::Es => "es",
             Lang::De => "de",
             Lang::It => "it",
+            Lang::Zh => "zh",
         }
     }
 
@@ -39,21 +45,28 @@ impl Lang {
             Lang::Es => "Español",
             Lang::De => "Deutsch",
             Lang::It => "Italiano",
+            Lang::Zh => "简体中文",
         }
     }
 
     /// All supported languages, in display order.
     pub fn all() -> &'static [Lang] {
-        &[Lang::En, Lang::Fr, Lang::Es, Lang::De, Lang::It]
+        &[Lang::En, Lang::Fr, Lang::Es, Lang::De, Lang::It, Lang::Zh]
     }
 
-    /// Parses an ISO code; falls back to `En` if unrecognized.
+    /// Parses an ISO code; falls back to `En` if unrecognized. Matching ignores
+    /// case and `_`/`-`, so the regional forms of Chinese (`zh-CN`, `zh_CN`,
+    /// `zh-Hans`…) all land on Simplified Chinese. Traditional forms
+    /// (`zh-TW`, `zh-Hant`) are deliberately absent: no Traditional catalog
+    /// ships yet, and serving one to the reader of the other is worse than the
+    /// documented English fallback.
     pub fn from_code(code: &str) -> Lang {
-        match code {
+        match code.trim().to_ascii_lowercase().replace('_', "-").as_str() {
             "fr" => Lang::Fr,
             "es" => Lang::Es,
             "de" => Lang::De,
             "it" => Lang::It,
+            "zh" | "zh-cn" | "zh-sg" | "zh-hans" | "cn" => Lang::Zh,
             _ => Lang::En,
         }
     }
@@ -109,8 +122,47 @@ mod tests {
 
     #[test]
     fn lang_unknown_falls_back_to_english() {
-        assert_eq!(Lang::from_code("zh"), Lang::En);
+        assert_eq!(Lang::from_code("xx"), Lang::En);
         assert_eq!(Lang::from_code(""), Lang::En);
+    }
+
+    #[test]
+    fn chinese_is_reachable_through_its_regional_codes() {
+        for code in ["zh", "zh-CN", "zh-Hans", "zh_CN", "zh-SG", "cn", " ZH "] {
+            assert_eq!(Lang::from_code(code), Lang::Zh, "{code}");
+        }
+        // No Traditional catalog ships yet: the documented English fallback is
+        // better than silently serving Simplified to a Traditional reader.
+        assert_eq!(Lang::from_code("zh-TW"), Lang::En);
+        assert_eq!(Lang::from_code("zh-Hant"), Lang::En);
+        assert_eq!(Lang::Zh.code(), "zh");
+        assert!(Lang::all().contains(&Lang::Zh));
+    }
+
+    /// The value the app writes (`zh`) and the lowercase regional forms a user
+    /// may type by hand must both load, instead of quietly meaning English.
+    /// Written as `config.toml` holds it — a bare TOML value is not a document.
+    #[test]
+    fn chinese_loads_from_every_accepted_config_spelling() {
+        #[derive(serde::Deserialize)]
+        struct Read {
+            language: Lang,
+        }
+        for spelling in ["zh", "zh-cn", "zh_cn", "zh-hans", "zh_hans"] {
+            let text = format!("language = \"{spelling}\"");
+            let read: Read = toml::from_str(&text).unwrap();
+            assert_eq!(read.language, Lang::Zh, "{text}");
+        }
+
+        // Round trip: what the app persists loads back as Simplified Chinese.
+        #[derive(serde::Serialize)]
+        struct Write {
+            language: Lang,
+        }
+        let written = toml::to_string(&Write { language: Lang::Zh }).unwrap();
+        assert_eq!(written.trim(), "language = \"zh\"");
+        let read: Read = toml::from_str(&written).unwrap();
+        assert_eq!(read.language, Lang::Zh);
     }
 
     #[test]

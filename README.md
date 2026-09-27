@@ -47,7 +47,7 @@ Ready-made recipes fill the editor for you when the tool is installed — for in
 
 **Files.** Copy, move, link, rename, create, trash and delete, with progress reported without freezing the window. Several operations can run at once. Multi-selection, drag and drop between panels and to other applications, and reopening closed tabs.
 
-**Interface.** English, French, Spanish, German and Italian. Light and dark themes. Adjustable scaling.
+**Interface.** English, French, Spanish, German, Italian and Simplified Chinese. Light and dark themes. Adjustable scaling.
 
 ## Previews
 
