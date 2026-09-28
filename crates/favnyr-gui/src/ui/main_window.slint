@@ -21,10 +21,9 @@ import { CtxNav, Dismiss, Note, Theme, Tip, Tokens, WindowFocus } from "theme.sl
 // Re-exported so the Rust bridge keeps reaching it as `crate::CtxNav`
 // (only the root document's exports are re-exported by `include_modules!`).
 export { CtxNav } from "theme.slint";
-import { EditLineEdit, EditTextInput, FieldLink, HintEdit, PathRow, SearchField, SettingsRowButton } from "widgets/inputs.slint";
-import { DeferredLineEditFocus, FlyoutCloseTimer, ModalBackdrop, PanelSplitterAbs } from "widgets/tabs.slint";
-import { FolderSwatchRow, MarkBox } from "widgets/rows.slint";
-import { CommandIcon, IconMenuRow, MenuItem, OwRecipeButton, ShellMenuRow, SplitMenuItem, SubmenuRow, TabBarMenuItem } from "widgets/menus.slint";
+import { PathRow, SearchField, SettingsRowButton } from "widgets/inputs.slint";
+import { FlyoutCloseTimer, ModalBackdrop, PanelSplitterAbs } from "widgets/tabs.slint";
+import { CommandIcon, MenuItem, OwRecipeButton } from "widgets/menus.slint";
 import { PanelComponent } from "panel.slint";
 import { WorkspaceRow, WsButton } from "workspaces.slint";
 import { FfmpegCmdRow, ProgressToast } from "progress.slint";
@@ -35,6 +34,8 @@ import { OverlayCustomCommand } from "overlays/custom_command.slint";
 import { OverlayNoteBubble, OverlayNotes } from "overlays/notes.slint";
 import { OverlayFavorites } from "overlays/favorites.slint";
 import { OverlayOpenWith } from "overlays/openwith.slint";
+import { OverlayPanelMenus } from "overlays/panel_menus.slint";
+import { OverlayMenus } from "overlays/menus.slint";
 import { ActivityRail, FavPanel, Sidebar, SidebarHeaderAction } from "sidebar.slint";
 import { ComboBox, VerticalBox, HorizontalBox, ScrollView, LineEdit, Button, SpinBox, CheckBox, Palette } from "std-widgets.slint";
 
@@ -2593,517 +2594,105 @@ export component MainWindow inherits Window {
             } // closes the HorizontalLayout (sidebar + panels)
         }
 
-        // ===== Context menu =====
-        // NO full-screen backdrop: it used to consume the 2nd click (the menu
-        // wouldn't reposition on the next right-click) and swallow the left click
-        // (the clicked row wasn't selected). Instead, clicks
-        // within the content (sel-touch / dead-zones) close the menu, a right
-        // click repositions it (the bridge rewrites ctx-menu-x/y + open), and
-        // any interaction with the CHROME (rail, sidebar, tabs, headers,
-        // splitters, empty areas…) closes it via the global `Dismiss`.
-        if root.ctx-menu-open : Rectangle {
-            x: root.ctx-menu-x;
-            y: root.ctx-menu-y;
-            width: 240px;
-            // Adapted height: full menu (an entry is targeted) vs reduced
-            // menu (blank area).
-            //
-            // The base counts every row that is ALWAYS there (26px each, 1px
-            // per separator, 4px of padding above and below); each row that
-            // can be hidden then adds its own term, on the very condition of
-            // the `if` that renders it. Anything else drifts: the rule is one
-            // term per conditional row, and none for the others.
-            //
-            // "Open as administrator" and "Open in new tab" take the same
-            // slot under opposite conditions — exactly one of them shows, so
-            // they belong to the base and add nothing.
-            //
-            // The bridge's clamp repeats this calculation to know whether the
-            // menu still fits below the pointer.
-            height: (root.ctx-on-empty ? 194px : 376px
-                    + (root.ctx-selection-is-dir ? 0px : 26px)          // Open with
-                    + (root.ctx-selection-single ? 26px : 0px)          // Create a shortcut
-                    + ((root.ctx-selection-has-dir || root.ctx-selection-single) ? 26px : 0px)) // Color & note
-                + (root.ctx-custom-entries.length > 0 ? root.ctx-custom-entries.length * 26px + 1px : 0px)
-                + (root.ctx-shell-entries.length > 0 ? root.ctx-shell-entries.length * 26px + 1px : 0px);
-            background: Theme.background;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-
-            // Catch-all: absorbs clicks in the menu's empty areas to
-            // prevent propagation to the backdrop (which would close it).
-            TouchArea { }
-
-            // ----- Full menu: an entry (file/folder) is targeted -----
-            if !root.ctx-on-empty : VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-
-                MenuItem { label: root.strings.ctx-open;          shortcut: root.menu-shortcuts.open;  clicked => { root.ctx-close(); root.action-open(); } }
-                // File on Windows → "Open as administrator" ("new
-                // tab" would only open the parent folder: not very useful). Otherwise
-                // (folder, multiple selection, or Linux) → "new tab".
-                if root.platform-windows && root.ctx-selection-is-file : MenuItem {
-                    label: root.strings.ctx-open-admin;
-                    clicked => { root.ctx-close(); root.action-open-admin(); }
-                }
-                if !(root.platform-windows && root.ctx-selection-is-file) : MenuItem {
-                    label: root.strings.ctx-open-new-tab;
-                    clicked => { root.ctx-close(); root.action-open-new-tab(); }
-                }
-                // "Open with" → flyout on HOVER (the parent menu stays open).
-                // Files only: a folder is opened by navigating into it, not by
-                // handing it to an application.
-                if !root.ctx-selection-is-dir : SubmenuRow {
-                    label: root.strings.ctx-open-with;
-                    open: root.ow-menu-open;
-                    show(x, y) => { root.ow-menu-x = x; root.ow-menu-y = y; root.ow-menu-open = true; }
-                    hovered(h) => { root.ow-parent-hover = h; }
-                }
-                MenuItem { label: root.strings.ctx-open-parent;                       clicked => { root.ctx-close(); root.action-open-parent(); } }
-                MenuItem { label: root.strings.ctx-open-terminal; shortcut: root.menu-shortcuts.terminal; clicked => { root.ctx-close(); root.action-open-terminal(); } }
-                // Pinned user commands — filtered by the bridge
-                // based on the target (file / folder).
-                if root.ctx-custom-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
-                for cc in root.ctx-custom-entries : IconMenuRow {
-                    label: cc.label;
-                    icon: cc.icon;
-                    icon-kind: cc.icon-kind;
-                    clicked => { root.ctx-close(); root.ctx-custom-run(cc.id); }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-copy;          shortcut: root.menu-shortcuts.copy; clicked => { root.ctx-close(); root.action-copy(); } }
-                MenuItem { label: root.strings.ctx-cut;           shortcut: root.menu-shortcuts.cut; clicked => { root.ctx-close(); root.action-cut(); } }
-                MenuItem { label: root.strings.ctx-paste;         shortcut: root.menu-shortcuts.paste; clicked => { root.ctx-close(); root.action-paste(); } }
-                MenuItem { label: root.strings.ctx-duplicate;                         clicked => { root.ctx-close(); root.action-duplicate(); } }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-copy-path;                         clicked => { root.ctx-close(); root.action-copy-path(); } }
-                MenuItem { label: root.strings.ctx-copy-name;                         clicked => { root.ctx-close(); root.action-copy-name(); } }
-                MenuItem { label: root.strings.fav-add;                               clicked => { root.ctx-close(); root.fav-add-selection(); } }
-                // "Create a shortcut" — any SINGLE item, file or folder: opens
-                // the popup (.lnk shortcut / symlink tabs) creating a link in the
-                // current folder to it. Folders link fine (junction on Windows,
-                // symlink on Linux, or a .lnk pointing at the folder).
-                if root.ctx-selection-single : MenuItem { label: root.strings.ctx-create-link; clicked => { root.ctx-close(); root.action-create-link(); } }
-                // Annotations Favnyr keeps ABOUT the item, which is what this
-                // block already gathers — copy path, copy name, add to
-                // favorites. Nothing here touches a byte on disk.
-                // Shown when there is something to offer: a folder to colour,
-                // or a lone item to annotate.
-                if root.ctx-selection-has-dir || root.ctx-selection-single : SubmenuRow {
-                    label: root.strings.ctx-mark;
-                    open: root.mark-menu-open;
-                    show(x, y) => { root.mark-menu-x = x; root.mark-menu-y = y; root.mark-menu-open = true; }
-                    hovered(h) => { root.mark-parent-hover = h; }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-rename;        shortcut: root.menu-shortcuts.rename; clicked => { root.ctx-close(); root.action-rename(); } }
-                MenuItem { label: root.strings.ctx-delete;        shortcut: root.menu-shortcuts.delete; clicked => { root.ctx-close(); root.action-delete(); } }
-                // WINDOWS context menu entries (shell extensions).
-                if root.ctx-shell-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
-                for se in root.ctx-shell-entries : ShellMenuRow {
-                    entry: se;
-                    sub-open: root.ctx-shell-sub-open && se.has-sub && root.ctx-shell-sub-for == se.sub;
-                    run(id) => { root.ctx-close(); root.ctx-shell-run(id); }
-                    hover-changed(h) => {
-                        if (se.has-sub) { root.ctx-shell-sub-parent-hover = h; }
-                        else if (h) { root.ctx-shell-sub-open = false; }
-                    }
-                    sub-hover(x, y) => {
-                        root.ctx-shell-sub-x = x;
-                        root.ctx-shell-sub-y = y;
-                        root.ctx-shell-sub-for = se.sub;
-                        root.ctx-shell-sub-hover(se.sub);
-                        root.ctx-shell-sub-open = true;
-                    }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-properties;    shortcut: root.menu-shortcuts.properties; clicked => { root.ctx-close(); root.action-properties(); } }
-            }
-
-            // ----- Reduced menu: right-click on a blank area -----
-            // No Copy/Cut/Duplicate/Rename/Delete (no target).
-            // Actions target the current folder (Paste, path, name…).
-            if root.ctx-on-empty : VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-
-                // Unified "New" entry → flyout on HOVER (folder / file
-                // / shortcut). SAME mechanism as "Open with".
-                SubmenuRow {
-                    label: root.strings.ctx-new;
-                    open: root.new-menu-open;
-                    show(x, y) => { root.new-menu-x = x; root.new-menu-y = y; root.new-menu-open = true; }
-                    hovered(h) => { root.new-parent-hover = h; }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-paste;         shortcut: root.menu-shortcuts.paste; clicked => { root.ctx-close(); root.action-paste(); } }
-                MenuItem { label: root.strings.ctx-open-parent;                       clicked => { root.ctx-close(); root.action-open-parent(); } }
-                MenuItem { label: root.strings.ctx-open-terminal; shortcut: root.menu-shortcuts.terminal; clicked => { root.ctx-close(); root.action-open-terminal(); } }
-                // Commands pinned to the view BACKGROUND — e.g. "Git Bash
-                // here"; they target the current folder.
-                if root.ctx-custom-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
-                for cc in root.ctx-custom-entries : IconMenuRow {
-                    label: cc.label;
-                    icon: cc.icon;
-                    icon-kind: cc.icon-kind;
-                    clicked => { root.ctx-close(); root.ctx-custom-run(cc.id); }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-copy-path;                         clicked => { root.ctx-close(); root.action-copy-path(); } }
-                MenuItem { label: root.strings.ctx-copy-name;                         clicked => { root.ctx-close(); root.action-copy-name(); } }
-                // WINDOWS context menu entries for the CURRENT FOLDER —
-                // queried "as an item" (this exposes the
-                // full PeaZip menu, Git Bash here, Select left folder…).
-                if root.ctx-shell-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
-                for se in root.ctx-shell-entries : ShellMenuRow {
-                    entry: se;
-                    sub-open: root.ctx-shell-sub-open && se.has-sub && root.ctx-shell-sub-for == se.sub;
-                    run(id) => { root.ctx-close(); root.ctx-shell-run(id); }
-                    hover-changed(h) => {
-                        if (se.has-sub) { root.ctx-shell-sub-parent-hover = h; }
-                        else if (h) { root.ctx-shell-sub-open = false; }
-                    }
-                    sub-hover(x, y) => {
-                        root.ctx-shell-sub-x = x;
-                        root.ctx-shell-sub-y = y;
-                        root.ctx-shell-sub-for = se.sub;
-                        root.ctx-shell-sub-hover(se.sub);
-                        root.ctx-shell-sub-open = true;
-                    }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                MenuItem { label: root.strings.ctx-properties;    shortcut: root.menu-shortcuts.properties; clicked => { root.ctx-close(); root.action-properties(); } }
-            }
-        }
-
-        // ===== "Split" menu =====
-        // Opened by a panel's split token. Transparent backdrop that
-        // closes on an outside click; acts on the active panel (the token
-        // activated it beforehand) via `panel-split`.
-        // (no more backdrop — unified closing via close-ctx-menus/Dismiss.)
-        if root.split-menu-open : Rectangle {
-            // Clamped so it doesn't overflow the window.
-            x: min(root.split-menu-x, root.width - self.width - 8px);
-            y: min(root.split-menu-y, root.height - self.height - 8px);
-            width: 224px;
-            // Two split rows, then a filet and the equalizer — which only
-            // exists to offer once there is more than one view to even out.
-            height: root.equalize-available ? 123px : 82px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-
-            // Catch-all: absorbs clicks in the menu's empty areas.
-            TouchArea { }
-
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                SplitMenuItem {
-                    label: root.strings.split-side-by-side;
-                    icon: @image-url("../../assets/icons/split.svg");
-                    shortcut: root.menu-shortcuts.split-side;
-                    clicked => { root.split-menu-open = false; root.panel-split(0); }
-                }
-                SplitMenuItem {
-                    label: root.strings.split-stacked;
-                    icon: @image-url("../../assets/icons/split-stacked.svg");
-                    shortcut: root.menu-shortcuts.split-stack;
-                    clicked => { root.split-menu-open = false; root.panel-split(1); }
-                }
-                // The menu has no place on screen, so it cannot aim at one
-                // separator: it evens out the whole layout, and says so. While
-                // a way back is held, the same row offers it instead — the
-                // menu can afford to change its wording where a separator,
-                // which has none, cannot.
-                if root.equalize-available : Rectangle {
-                    height: 5px;
-                    Rectangle {
-                        y: 2px;
-                        height: 1px;
-                        background: Theme.border;
-                    }
-                }
-                if root.equalize-available : SplitMenuItem {
-                    label: root.equalize-undone
-                        ? root.strings.equalize-restore
-                        : root.strings.equalize-all;
-                    icon: @image-url("../../assets/icons/equalize.svg");
-                    shortcut: root.menu-shortcuts.equalize;
-                    clicked => { root.split-menu-open = false; root.equalize-views(-1); }
-                }
-            }
-        }
-
-        // ===== "Tab bar position" menu =====
-        // 3 radio options (checkmark on the current mode), per view.
-        if root.tabbar-menu-open : Rectangle {
-            x: min(root.tabbar-menu-x, root.width - self.width - 8px);
-            y: min(root.tabbar-menu-y, root.height - self.height - 8px);
-            width: 224px;
-            height: 120px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-
-            // Catch-all: absorbs clicks in the menu's empty areas.
-            TouchArea { }
-
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                TabBarMenuItem {
-                    icon: @image-url("../../assets/icons/tabs-top.svg");
-                    label: root.strings.tabbar-top;
-                    selected: root.tabbar-menu-mode == 0;
-                    clicked => {
-                        root.tabbar-menu-open = false;
-                        root.set-tab-bar-mode(root.tabbar-menu-panel, 0);
-                    }
-                }
-                TabBarMenuItem {
-                    icon: @image-url("../../assets/icons/tabs-left.svg");
-                    label: root.strings.tabbar-left;
-                    selected: root.tabbar-menu-mode == 1;
-                    clicked => {
-                        root.tabbar-menu-open = false;
-                        root.set-tab-bar-mode(root.tabbar-menu-panel, 1);
-                    }
-                }
-                TabBarMenuItem {
-                    icon: @image-url("../../assets/icons/tabs-right.svg");
-                    label: root.strings.tabbar-right;
-                    selected: root.tabbar-menu-mode == 2;
-                    clicked => {
-                        root.tabbar-menu-open = false;
-                        root.set-tab-bar-mode(root.tabbar-menu-panel, 2);
-                    }
-                }
-            }
-        }
-
-        // ===== "View mode" menu =====
-        // 3 radio options (checkmark on the current mode), per view.
-        if root.view-menu-open : Rectangle {
-            x: min(root.view-menu-x, root.width - self.width - 8px);
-            y: min(root.view-menu-y, root.height - self.height - 8px);
-            width: 224px;
-            height: 120px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-
-            // Catch-all: absorbs clicks in the menu's empty areas.
-            TouchArea { }
-
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                TabBarMenuItem {
-                    icon: @image-url("../../assets/icons/list.svg");
-                    label: root.strings.view-mode-list;
-                    selected: root.view-menu-mode == "list";
-                    clicked => {
-                        root.view-menu-open = false;
-                        root.set-view-mode(root.view-menu-panel, "list");
-                    }
-                }
-                TabBarMenuItem {
-                    icon: @image-url("../../assets/icons/previews.svg");
-                    label: root.strings.view-mode-previews;
-                    selected: root.view-menu-mode == "previews";
-                    clicked => {
-                        root.view-menu-open = false;
-                        root.set-view-mode(root.view-menu-panel, "previews");
-                    }
-                }
-                TabBarMenuItem {
-                    icon: @image-url("../../assets/icons/grid.svg");
-                    label: root.strings.view-mode-grid;
-                    selected: root.view-menu-mode == "grid";
-                    clicked => {
-                        root.view-menu-open = false;
-                        root.set-view-mode(root.view-menu-panel, "grid");
-                    }
-                }
-            }
-        }
-
-        // ===== URL bar menu (right-click): Paste / Copy path =====
-        if root.url-menu-open : Rectangle {
-            x: min(root.url-menu-x, root.width - self.width - 8px);
-            y: min(root.url-menu-y, root.height - self.height - 8px);
-            width: 220px;
-            height: 64px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                MenuItem {
-                    label: root.strings.ctx-copy;     // "Copy"
-                    clicked => { root.url-menu-open = false; root.url-copy-serial += 1; }
-                }
-                MenuItem {
-                    label: root.strings.ctx-paste;    // "Paste"
-                    clicked => { root.url-menu-open = false; root.url-paste-serial += 1; }
-                }
-            }
-        }
-
-        // ===== Trash context menu (sidebar): Empty (two-step) =====
-        if root.trash-menu-open : Rectangle {
-            x: min(root.trash-menu-x, root.width - self.width - 8px);
-            y: min(root.trash-menu-y, root.height - self.height - 8px);
-            width: 220px;
-            height: 40px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                Rectangle {
-                    height: 32px;
-                    border-radius: 4px;
-                    background: root.trash-menu-confirm
-                        ? Tokens.danger.with-alpha(empty-touch.has-hover ? 0.34 : 0.20)
-                        : (empty-touch.has-hover ? Tokens.danger.with-alpha(0.14) : transparent);
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        Text {
-                            // 1st click: "Empty trash"; 2nd: confirmation.
-                            text: root.trash-menu-confirm
-                                ? root.strings.sidebar-empty-trash-confirm
-                                : root.strings.sidebar-empty-trash;
-                            color: Tokens.danger;
-                            font-size: 12px;
-                            font-weight: root.trash-menu-confirm ? 700 : 400;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    empty-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            if (root.trash-menu-confirm) {
-                                root.trash-menu-open = false;
-                                root.empty-trash();
-                            } else {
-                                root.trash-menu-confirm = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ===== Drive / Network context menu (sidebar) =====
-        // Actions: open in a new tab · copy path · (removable)
-        // safely remove · (mapped network, device = letter) disconnect.
-        if root.drive-menu-open : dmenu := Rectangle {
-            // Item count: open + copy (2) + eject? + disconnect?
-            property <bool> can-eject: root.drive-menu-removable && root.drive-menu-device != "";
-            property <bool> can-disconnect: root.drive-menu-kind == 4 && root.drive-menu-device != "";
-            property <int> item-count: 2 + (self.can-eject ? 1 : 0) + (self.can-disconnect ? 1 : 0);
-            x: min(root.drive-menu-x, root.width - self.width - 8px);
-            y: min(root.drive-menu-y, root.height - self.height - 8px);
-            width: 240px;
-            height: 8px + self.item-count * 30px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                MenuItem {
-                    label: root.strings.ctx-open-new-tab;
-                    clicked => { root.drive-menu-open = false; root.place-open-new-tab(root.drive-menu-path, root.drive-menu-kind); }
-                }
-                MenuItem {
-                    label: root.strings.ctx-copy-path;
-                    clicked => { root.drive-menu-open = false; root.place-copy-path(root.drive-menu-path); }
-                }
-                if dmenu.can-eject : MenuItem {
-                    label: root.drive-menu-hotplug
-                        ? root.strings.net-eject
-                        : root.strings.net-release;
-                    clicked => { root.drive-menu-open = false; root.drive-eject(root.drive-menu-device, root.drive-menu-hotplug); }
-                }
-                if dmenu.can-disconnect : MenuItem {
-                    label: root.strings.net-disconnect;
-                    clicked => { root.drive-menu-open = false; root.drive-disconnect(root.drive-menu-device); }
-                }
-            }
-        }
-
-        // ===== "Colour & note" flyout (attached to the context menu) =====
-        if root.mark-menu-open : Rectangle {
-            x: min(root.mark-menu-x, root.width - self.width - 8px);
-            y: min(root.mark-menu-y, root.height - self.height - 8px);
-            width: 240px;
-            height: 8px
-                + (root.ctx-selection-has-dir ? 26px : 0px)
-                + (root.ctx-selection-single ? 26px : 0px);
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            // The content sits INSIDE the touch area, not beside it: the
-            // hover flag has to stay true while the pointer is over a swatch or
-            // an entry, and a sibling would lose it the moment a child took the
-            // pointer — closing the flyout exactly when it is being used.
-            TouchArea {
-                changed has-hover => { root.mark-flyout-hover = self.has-hover; }
-                VerticalLayout {
-                    padding: 4px;
-                    if root.ctx-selection-has-dir : FolderSwatchRow {
-                        current: root.mark-current-color;
-                        picked(slot) => { root.ctx-close(); root.folder-color-picked(slot); }
-                    }
-                    // The ellipsis says a dialog follows, as "Open with…" does.
-                    if root.ctx-selection-single : MenuItem {
-                        label: root.strings.ctx-comment;
-                        clicked => { root.ctx-close(); root.open-comment-editor(); }
-                    }
-                }
-            }
+        // ===== File & panel context menus (ctx, split, view, tab-bar, URL, trash, drive) =====
+        // Extracted to overlays/menus.slint; the forwards below are the whole
+        // contract with it (state in, actions back out).
+        OverlayMenus {
+            action-copy() => { root.action-copy(); }
+            action-copy-name() => { root.action-copy-name(); }
+            action-copy-path() => { root.action-copy-path(); }
+            action-create-link() => { root.action-create-link(); }
+            action-cut() => { root.action-cut(); }
+            action-delete() => { root.action-delete(); }
+            action-duplicate() => { root.action-duplicate(); }
+            action-open() => { root.action-open(); }
+            action-open-admin() => { root.action-open-admin(); }
+            action-open-new-tab() => { root.action-open-new-tab(); }
+            action-open-parent() => { root.action-open-parent(); }
+            action-open-terminal() => { root.action-open-terminal(); }
+            action-paste() => { root.action-paste(); }
+            action-properties() => { root.action-properties(); }
+            action-rename() => { root.action-rename(); }
+            ctx-close() => { root.ctx-close(); }
+            ctx-custom-entries: root.ctx-custom-entries;
+            ctx-custom-run(id) => { root.ctx-custom-run(id); }
+            ctx-menu-open: root.ctx-menu-open;
+            ctx-menu-x: root.ctx-menu-x;
+            ctx-menu-y: root.ctx-menu-y;
+            ctx-on-empty: root.ctx-on-empty;
+            ctx-selection-has-dir: root.ctx-selection-has-dir;
+            ctx-selection-is-dir: root.ctx-selection-is-dir;
+            ctx-selection-is-file: root.ctx-selection-is-file;
+            ctx-selection-single: root.ctx-selection-single;
+            ctx-shell-entries: root.ctx-shell-entries;
+            ctx-shell-run(command) => { root.ctx-shell-run(command); }
+            ctx-shell-sub-for <=> root.ctx-shell-sub-for;
+            ctx-shell-sub-hover(sub) => { root.ctx-shell-sub-hover(sub); }
+            ctx-shell-sub-open <=> root.ctx-shell-sub-open;
+            ctx-shell-sub-parent-hover <=> root.ctx-shell-sub-parent-hover;
+            ctx-shell-sub-x <=> root.ctx-shell-sub-x;
+            ctx-shell-sub-y <=> root.ctx-shell-sub-y;
+            fav-add-selection() => { root.fav-add-selection(); }
+            mark-menu-open <=> root.mark-menu-open;
+            mark-menu-x <=> root.mark-menu-x;
+            mark-menu-y <=> root.mark-menu-y;
+            mark-parent-hover <=> root.mark-parent-hover;
+            menu-shortcuts: root.menu-shortcuts;
+            new-menu-open <=> root.new-menu-open;
+            new-menu-x <=> root.new-menu-x;
+            new-menu-y <=> root.new-menu-y;
+            new-parent-hover <=> root.new-parent-hover;
+            ow-menu-open <=> root.ow-menu-open;
+            ow-menu-x <=> root.ow-menu-x;
+            ow-menu-y <=> root.ow-menu-y;
+            ow-parent-hover <=> root.ow-parent-hover;
+            platform-windows: root.platform-windows;
+            strings: root.strings;
+            equalize-available: root.equalize-available;
+            equalize-undone: root.equalize-undone;
+            equalize-views(p1) => { root.equalize-views(p1); }
+            panel-split(p1) => { root.panel-split(p1); }
+            split-menu-open <=> root.split-menu-open;
+            split-menu-x: root.split-menu-x;
+            split-menu-y: root.split-menu-y;
+            set-tab-bar-mode(panel, mode) => { root.set-tab-bar-mode(panel, mode); }
+            tabbar-menu-mode: root.tabbar-menu-mode;
+            tabbar-menu-open <=> root.tabbar-menu-open;
+            tabbar-menu-panel: root.tabbar-menu-panel;
+            tabbar-menu-x: root.tabbar-menu-x;
+            tabbar-menu-y: root.tabbar-menu-y;
+            set-view-mode(idx, mode) => { root.set-view-mode(idx, mode); }
+            view-menu-mode: root.view-menu-mode;
+            view-menu-open <=> root.view-menu-open;
+            view-menu-panel: root.view-menu-panel;
+            view-menu-x: root.view-menu-x;
+            view-menu-y: root.view-menu-y;
+            url-copy-serial: root.url-copy-serial;
+            url-menu-open <=> root.url-menu-open;
+            url-menu-x: root.url-menu-x;
+            url-menu-y: root.url-menu-y;
+            url-paste-serial: root.url-paste-serial;
+            empty-trash() => { root.empty-trash(); }
+            trash-menu-confirm <=> root.trash-menu-confirm;
+            trash-menu-open <=> root.trash-menu-open;
+            trash-menu-x: root.trash-menu-x;
+            trash-menu-y: root.trash-menu-y;
+            drive-disconnect(p1) => { root.drive-disconnect(p1); }
+            drive-eject(p1, p2) => { root.drive-eject(p1, p2); }
+            drive-menu-device: root.drive-menu-device;
+            drive-menu-hotplug: root.drive-menu-hotplug;
+            drive-menu-kind: root.drive-menu-kind;
+            drive-menu-open <=> root.drive-menu-open;
+            drive-menu-path: root.drive-menu-path;
+            drive-menu-removable: root.drive-menu-removable;
+            drive-menu-x: root.drive-menu-x;
+            drive-menu-y: root.drive-menu-y;
+            place-copy-path(p1) => { root.place-copy-path(p1); }
+            place-open-new-tab(p1, p2) => { root.place-open-new-tab(p1, p2); }
+            folder-color-picked(p1) => { root.folder-color-picked(p1); }
+            mark-current-color: root.mark-current-color;
+            mark-flyout-hover <=> root.mark-flyout-hover;
+            open-comment-editor() => { root.open-comment-editor(); }
         }
 
         OverlayOpenWith {
@@ -3247,81 +2836,39 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ===== Context menu of a tab bar's dead zone =====
-        if root.tab-empty-menu-open : Rectangle {
-            x: min(root.tab-empty-menu-x, root.width - self.width - 8px);
-            y: min(root.tab-empty-menu-y, root.height - self.height - 8px);
-            width: 270px;
-            height: 60px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                MenuItem {
-                    label: root.strings.fav-save-all-tabs;
-                    clicked => {
-                        root.tab-empty-menu-open = false;
-                        root.fav-save-all-tabs(root.tab-empty-menu-panel);
-                    }
-                }
-                MenuItem {
-                    label: root.strings.tab-reopen-closed;
-                    shortcut: root.menu-shortcuts.tab-reopen-closed;
-                    enabled: root.closed-tabs-available;
-                    clicked => {
-                        root.tab-empty-menu-open = false;
-                        root.reopen-last-closed-tab(root.tab-empty-menu-panel);
-                    }
-                }
-            }
-        }
-
-        // ===== Context menu of a tab =====
-        if root.tab-menu-open : Rectangle {
-            x: min(root.tab-menu-x, root.width - self.width - 8px);
-            y: min(root.tab-menu-y, root.height - self.height - 8px);
-            width: 260px;
-            height: 96px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                MenuItem {
-                    label: root.strings.tab-duplicate;
-                    clicked => {
-                        root.tab-menu-open = false;
-                        root.duplicate-tab(root.tab-menu-panel, root.tab-menu-tab);
-                    }
-                }
-                MenuItem {
-                    label: root.strings.fav-save-tab;
-                    clicked => {
-                        root.tab-menu-open = false;
-                        root.fav-save-tab(root.tab-menu-panel, root.tab-menu-tab);
-                    }
-                }
-                MenuItem {
-                    label: root.strings.fav-save-all-tabs;
-                    clicked => {
-                        root.tab-menu-open = false;
-                        root.fav-save-all-tabs(root.tab-menu-panel);
-                    }
-                }
-                // The tab bar's position is set from its dedicated
-                // button in the navigation bar.
-            }
+        // ===== Tab bar, Columns and drop menus =====
+        // Extracted to overlays/panel_menus.slint; the forwards below are the
+        // whole contract with it (state in, actions back out).
+        OverlayPanelMenus {
+            closed-tabs-available: root.closed-tabs-available;
+            fav-save-all-tabs(p1) => { root.fav-save-all-tabs(p1); }
+            menu-shortcuts: root.menu-shortcuts;
+            reopen-last-closed-tab(panel) => { root.reopen-last-closed-tab(panel); }
+            strings: root.strings;
+            tab-empty-menu-open <=> root.tab-empty-menu-open;
+            tab-empty-menu-panel: root.tab-empty-menu-panel;
+            tab-empty-menu-x: root.tab-empty-menu-x;
+            tab-empty-menu-y: root.tab-empty-menu-y;
+            duplicate-tab(p1, p2) => { root.duplicate-tab(p1, p2); }
+            fav-save-tab(p1, p2) => { root.fav-save-tab(p1, p2); }
+            tab-menu-open <=> root.tab-menu-open;
+            tab-menu-panel: root.tab-menu-panel;
+            tab-menu-tab: root.tab-menu-tab;
+            tab-menu-x: root.tab-menu-x;
+            tab-menu-y: root.tab-menu-y;
+            column-toggle(p1, p2, p3) => { root.column-toggle(p1, p2, p3); }
+            columns-menu-open <=> root.columns-menu-open;
+            columns-menu-panel: root.columns-menu-panel;
+            columns-menu-x: root.columns-menu-x;
+            columns-menu-y: root.columns-menu-y;
+            ext-filter-toggle(p1) => { root.ext-filter-toggle(p1); }
+            panels: root.panels;
+            set-group-mode(p1, p2) => { root.set-group-mode(p1, p2); }
+            return-focus() => { key-scope.focus(); }
+            file-drop-action(p1) => { root.file-drop-action(p1); }
+            file-drop-menu-open <=> root.file-drop-menu-open;
+            file-drop-menu-x: root.file-drop-menu-x;
+            file-drop-menu-y: root.file-drop-menu-y;
         }
 
         // ===== Favorites popups (naming, save-as, new container) =====
@@ -3350,237 +2897,6 @@ export component MainWindow inherits Window {
             fav-newc-focus-armed <=> root.fav-newc-focus-armed;
         }
 
-        // ===== Columns menu (right-click on a header) =====
-        // Lists ALL columns (check/uncheck). "name" (anchor) greyed out.
-        if root.columns-menu-open : Rectangle {
-            property <[ColumnInfo]> cols: root.panels[root.columns-menu-panel].columns-menu;
-            x: min(root.columns-menu-x, root.width - self.width - 8px);
-            y: min(root.columns-menu-y, root.height - self.height - 8px);
-            width: 210px;
-            // height = grouping section (label 22 + 3x30 + separator 9 = 121)
-            //          + columns (nx30) + padding (8)
-            // grouping (121) + columns (nx30) + ext filter (separator 9 + 30) + padding 8
-            height: self.cols.length * 30px + 168px;
-            background: Theme.surface;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                // "Grouping" section: 3 exclusive modes -----
-                // Marks (check.svg) the active mode; orthogonal to column
-                // sorting (which remains driven by clicking the header).
-                Text {
-                    text: root.strings.group-section;
-                    font-size: 10px;
-                    color: Theme.foreground.with-alpha(0.5);
-                    height: 22px;
-                    vertical-alignment: center;
-                    horizontal-alignment: left;
-                }
-                for gopt[gi] in [
-                    { code: "folders", label: root.strings.group-folders-first },
-                    { code: "files", label: root.strings.group-files-first },
-                    { code: "mixed", label: root.strings.group-mixed },
-                    { code: "category", label: root.strings.group-category },
-                ] : Rectangle {
-                    height: 30px;
-                    border-radius: 4px;
-                    background: gitem.has-hover ? Theme.alternate-background : transparent;
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 10px;
-                        spacing: 9px;
-                        // Radio mark (check.svg if active), full-height slot.
-                        Rectangle {
-                            width: 16px;
-                            height: parent.height;
-                            if gopt.code == root.panels[root.columns-menu-panel].group-mode : Image {
-                                source: @image-url("../../assets/icons/check.svg");
-                                width: 12px;
-                                height: 12px;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                colorize: Theme.accent-background;
-                            }
-                        }
-                        Text {
-                            text: gopt.label;
-                            font-size: 12px;
-                            color: Theme.foreground;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    gitem := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.set-group-mode(root.columns-menu-panel, gopt.code);
-                            root.columns-menu-open = false;
-                        }
-                    }
-                }
-                // Separator between grouping and column visibility.
-                Rectangle {
-                    height: 9px;
-                    Rectangle {
-                        y: 4px;
-                        height: 1px;
-                        background: Theme.border;
-                    }
-                }
-                for col[ci] in parent.cols : Rectangle {
-                    height: 30px;
-                    border-radius: 4px;
-                    opacity: col.id == "name" ? 0.5 : 1.0;   // anchor, not uncheckable
-                    background: citem.has-hover && col.id != "name"
-                        ? Theme.alternate-background
-                        : transparent;
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 10px;
-                        spacing: 9px;
-                        // Checkbox (full-height slot → vertical centering).
-                        Rectangle {
-                            width: 16px;
-                            height: parent.height;
-                            Rectangle {
-                                width: 16px;
-                                height: 16px;
-                                y: (parent.height - self.height) / 2;
-                                border-radius: 4px;
-                                border-width: 1px;
-                                border-color: col.visible ? Theme.accent-background : Theme.border;
-                                background: col.visible ? Theme.accent-background : transparent;
-                                if col.visible : Image {
-                                    source: @image-url("../../assets/icons/check.svg");
-                                    width: 10px;
-                                    height: 10px;
-                                    colorize: Theme.accent-foreground;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-                        Text {
-                            text: col.label;
-                            font-size: 12px;
-                            color: Theme.foreground;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    citem := TouchArea {
-                        mouse-cursor: col.id == "name" ? default : pointer;
-                        clicked => {
-                            if (col.id != "name") {
-                                root.column-toggle(root.columns-menu-panel, col.id, !col.visible);
-                            }
-                        }
-                    }
-                }
-                // Separator before the extension filter option.
-                Rectangle {
-                    height: 9px;
-                    Rectangle {
-                        y: 4px;
-                        height: 1px;
-                        background: Theme.border;
-                    }
-                }
-                // "Filter by extension" option: checkable, unchecked by default.
-                // Shows/hides the panel's input bar; closes the menu to
-                // let the field take focus.
-                Rectangle {
-                    height: 30px;
-                    border-radius: 4px;
-                    background: xfitem.has-hover ? Theme.alternate-background : transparent;
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 10px;
-                        spacing: 9px;
-                        Rectangle {
-                            width: 16px;
-                            height: parent.height;
-                            Rectangle {
-                                width: 16px;
-                                height: 16px;
-                                y: (parent.height - self.height) / 2;
-                                border-radius: 4px;
-                                border-width: 1px;
-                                border-color: root.panels[root.columns-menu-panel].ext-filter-on
-                                    ? Theme.accent-background : Theme.border;
-                                background: root.panels[root.columns-menu-panel].ext-filter-on
-                                    ? Theme.accent-background : transparent;
-                                if root.panels[root.columns-menu-panel].ext-filter-on : Image {
-                                    source: @image-url("../../assets/icons/check.svg");
-                                    width: 10px;
-                                    height: 10px;
-                                    colorize: Theme.accent-foreground;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-                        Text {
-                            text: root.strings.ext-filter-label;
-                            font-size: 12px;
-                            color: Theme.foreground;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    xfitem := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.ext-filter-toggle(root.columns-menu-panel);
-                            root.columns-menu-open = false;
-                            // Immediate keyboard focus → direct input with no click,
-                            // like the type-ahead filter (no caret).
-                            key-scope.focus();
-                        }
-                    }
-                }
-            }
-        }
-
-        // ===== Cross-view drag'n'drop drop menu =====
-        // Move / Copy / Link here. Opened on release over another view.
-        if root.file-drop-menu-open : Rectangle {
-            x: min(root.file-drop-menu-x, root.width - self.width - 8px);
-            y: min(root.file-drop-menu-y, root.height - self.height - 8px);
-            width: 200px;
-            height: 94px;
-            background: Theme.surface;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                spacing: 0px;
-                MenuItem {
-                    label: root.strings.drop-move;
-                    clicked => { root.file-drop-menu-open = false; root.file-drop-action(0); }
-                }
-                MenuItem {
-                    label: root.strings.drop-copy;
-                    clicked => { root.file-drop-menu-open = false; root.file-drop-action(1); }
-                }
-                MenuItem {
-                    label: root.strings.drop-link;
-                    clicked => { root.file-drop-menu-open = false; root.file-drop-action(2); }
-                }
-            }
-        }
 
         // ===== Settings panel =====
         // Same here: the backdrop only absorbs clicks, doesn't close it. Escape or X.
@@ -5255,5 +4571,6 @@ export component MainWindow inherits Window {
 
     }
 }
+
 
 

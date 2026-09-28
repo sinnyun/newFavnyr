@@ -1,0 +1,364 @@
+// The menus that hang off a panel's own chrome: the dead-zone and tab
+// menus of its tab bar, the Columns menu of a header and the cross-view
+// drop menu raised on release over another view.
+//
+// Extracted from main_window.slint. The instance stands where the dead-zone
+// menu used to; the tab menus keep their exact depth, and the Columns and
+// drop menus drop below the favorites popups — which are modal and can
+// never be on screen at the same time as a menu.
+
+import { ColumnInfo, MenuShortcuts, PanelView, Strings } from "../structs.slint";
+import { Theme, Tokens } from "../theme.slint";
+import { MenuItem } from "../widgets/menus.slint";
+
+export component OverlayPanelMenus inherits Rectangle {
+    // Transparent, full-window host; every menu places itself against it.
+    width: 100%;
+    height: 100%;
+
+    // tab empty
+    in-out property <bool> closed-tabs-available: false;
+    callback fav-save-all-tabs(int);                   // (panel)
+    in property <MenuShortcuts> menu-shortcuts;
+    callback reopen-last-closed-tab(int /*panel*/);
+    in property <Strings> strings;
+    in-out property <bool> tab-empty-menu-open: false;
+    in-out property <int> tab-empty-menu-panel: -1;
+    in-out property <length> tab-empty-menu-x;
+    in-out property <length> tab-empty-menu-y;
+
+    // tab menu
+    callback duplicate-tab(int, int);                  // (panel, tab) → copy inserted after
+    callback fav-save-tab(int, int);                   // (panel, tab)
+    in-out property <bool> tab-menu-open: false;
+    in-out property <int> tab-menu-panel: -1;
+    in-out property <int> tab-menu-tab: -1;
+    in-out property <length> tab-menu-x;
+    in-out property <length> tab-menu-y;
+
+    // columns
+    callback column-toggle(int, string, bool);
+    in-out property <bool> columns-menu-open: false;
+    in-out property <int> columns-menu-panel: 0;
+    in-out property <length> columns-menu-x;
+    in-out property <length> columns-menu-y;
+    callback ext-filter-toggle(int);
+    in property <[PanelView]> panels;
+    callback set-group-mode(int, string);
+    callback return-focus();   // hands the keyboard back to the window
+
+    // file drop
+    callback file-drop-action(int /*0 move · 1 copy · 2 link*/);
+    in-out property <bool> file-drop-menu-open: false;
+    in-out property <length> file-drop-menu-x;
+    in-out property <length> file-drop-menu-y;
+
+    // ===== Context menu of a tab bar's dead zone =====
+    if root.tab-empty-menu-open : Rectangle {
+        x: min(root.tab-empty-menu-x, root.width - self.width - 8px);
+        y: min(root.tab-empty-menu-y, root.height - self.height - 8px);
+        width: 270px;
+        height: 60px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            MenuItem {
+                label: root.strings.fav-save-all-tabs;
+                clicked => {
+                    root.tab-empty-menu-open = false;
+                    root.fav-save-all-tabs(root.tab-empty-menu-panel);
+                }
+            }
+            MenuItem {
+                label: root.strings.tab-reopen-closed;
+                shortcut: root.menu-shortcuts.tab-reopen-closed;
+                enabled: root.closed-tabs-available;
+                clicked => {
+                    root.tab-empty-menu-open = false;
+                    root.reopen-last-closed-tab(root.tab-empty-menu-panel);
+                }
+            }
+        }
+    }
+
+    // ===== Context menu of a tab =====
+    if root.tab-menu-open : Rectangle {
+        x: min(root.tab-menu-x, root.width - self.width - 8px);
+        y: min(root.tab-menu-y, root.height - self.height - 8px);
+        width: 260px;
+        height: 96px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            MenuItem {
+                label: root.strings.tab-duplicate;
+                clicked => {
+                    root.tab-menu-open = false;
+                    root.duplicate-tab(root.tab-menu-panel, root.tab-menu-tab);
+                }
+            }
+            MenuItem {
+                label: root.strings.fav-save-tab;
+                clicked => {
+                    root.tab-menu-open = false;
+                    root.fav-save-tab(root.tab-menu-panel, root.tab-menu-tab);
+                }
+            }
+            MenuItem {
+                label: root.strings.fav-save-all-tabs;
+                clicked => {
+                    root.tab-menu-open = false;
+                    root.fav-save-all-tabs(root.tab-menu-panel);
+                }
+            }
+            // The tab bar's position is set from its dedicated
+            // button in the navigation bar.
+        }
+    }
+
+    // ===== Columns menu (right-click on a header) =====
+    // Lists ALL columns (check/uncheck). "name" (anchor) greyed out.
+    if root.columns-menu-open : Rectangle {
+        property <[ColumnInfo]> cols: root.panels[root.columns-menu-panel].columns-menu;
+        x: min(root.columns-menu-x, root.width - self.width - 8px);
+        y: min(root.columns-menu-y, root.height - self.height - 8px);
+        width: 210px;
+        // height = grouping section (label 22 + 3x30 + separator 9 = 121)
+        //          + columns (nx30) + padding (8)
+        // grouping (121) + columns (nx30) + ext filter (separator 9 + 30) + padding 8
+        height: self.cols.length * 30px + 168px;
+        background: Theme.surface;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            // "Grouping" section: 3 exclusive modes -----
+            // Marks (check.svg) the active mode; orthogonal to column
+            // sorting (which remains driven by clicking the header).
+            Text {
+                text: root.strings.group-section;
+                font-size: 10px;
+                color: Theme.foreground.with-alpha(0.5);
+                height: 22px;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+            }
+            for gopt[gi] in [
+                { code: "folders", label: root.strings.group-folders-first },
+                { code: "files", label: root.strings.group-files-first },
+                { code: "mixed", label: root.strings.group-mixed },
+                { code: "category", label: root.strings.group-category },
+            ] : Rectangle {
+                height: 30px;
+                border-radius: 4px;
+                background: gitem.has-hover ? Theme.alternate-background : transparent;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 10px;
+                    spacing: 9px;
+                    // Radio mark (check.svg if active), full-height slot.
+                    Rectangle {
+                        width: 16px;
+                        height: parent.height;
+                        if gopt.code == root.panels[root.columns-menu-panel].group-mode : Image {
+                            source: @image-url("../../../assets/icons/check.svg");
+                            width: 12px;
+                            height: 12px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            colorize: Theme.accent-background;
+                        }
+                    }
+                    Text {
+                        text: gopt.label;
+                        font-size: 12px;
+                        color: Theme.foreground;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+                gitem := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.set-group-mode(root.columns-menu-panel, gopt.code);
+                        root.columns-menu-open = false;
+                    }
+                }
+            }
+            // Separator between grouping and column visibility.
+            Rectangle {
+                height: 9px;
+                Rectangle {
+                    y: 4px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+            for col[ci] in parent.cols : Rectangle {
+                height: 30px;
+                border-radius: 4px;
+                opacity: col.id == "name" ? 0.5 : 1.0;   // anchor, not uncheckable
+                background: citem.has-hover && col.id != "name"
+                    ? Theme.alternate-background
+                    : transparent;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 10px;
+                    spacing: 9px;
+                    // Checkbox (full-height slot → vertical centering).
+                    Rectangle {
+                        width: 16px;
+                        height: parent.height;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: col.visible ? Theme.accent-background : Theme.border;
+                            background: col.visible ? Theme.accent-background : transparent;
+                            if col.visible : Image {
+                                source: @image-url("../../../assets/icons/check.svg");
+                                width: 10px;
+                                height: 10px;
+                                colorize: Theme.accent-foreground;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Text {
+                        text: col.label;
+                        font-size: 12px;
+                        color: Theme.foreground;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+                citem := TouchArea {
+                    mouse-cursor: col.id == "name" ? default : pointer;
+                    clicked => {
+                        if (col.id != "name") {
+                            root.column-toggle(root.columns-menu-panel, col.id, !col.visible);
+                        }
+                    }
+                }
+            }
+            // Separator before the extension filter option.
+            Rectangle {
+                height: 9px;
+                Rectangle {
+                    y: 4px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+            // "Filter by extension" option: checkable, unchecked by default.
+            // Shows/hides the panel's input bar; closes the menu to
+            // let the field take focus.
+            Rectangle {
+                height: 30px;
+                border-radius: 4px;
+                background: xfitem.has-hover ? Theme.alternate-background : transparent;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 10px;
+                    spacing: 9px;
+                    Rectangle {
+                        width: 16px;
+                        height: parent.height;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: root.panels[root.columns-menu-panel].ext-filter-on
+                                ? Theme.accent-background : Theme.border;
+                            background: root.panels[root.columns-menu-panel].ext-filter-on
+                                ? Theme.accent-background : transparent;
+                            if root.panels[root.columns-menu-panel].ext-filter-on : Image {
+                                source: @image-url("../../../assets/icons/check.svg");
+                                width: 10px;
+                                height: 10px;
+                                colorize: Theme.accent-foreground;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.strings.ext-filter-label;
+                        font-size: 12px;
+                        color: Theme.foreground;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+                xfitem := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.ext-filter-toggle(root.columns-menu-panel);
+                        root.columns-menu-open = false;
+                        // Immediate keyboard focus → direct input with no click,
+                        // like the type-ahead filter (no caret).
+                        root.return-focus();
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== Cross-view drag'n'drop drop menu =====
+    // Move / Copy / Link here. Opened on release over another view.
+    if root.file-drop-menu-open : Rectangle {
+        x: min(root.file-drop-menu-x, root.width - self.width - 8px);
+        y: min(root.file-drop-menu-y, root.height - self.height - 8px);
+        width: 200px;
+        height: 94px;
+        background: Theme.surface;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            MenuItem {
+                label: root.strings.drop-move;
+                clicked => { root.file-drop-menu-open = false; root.file-drop-action(0); }
+            }
+            MenuItem {
+                label: root.strings.drop-copy;
+                clicked => { root.file-drop-menu-open = false; root.file-drop-action(1); }
+            }
+            MenuItem {
+                label: root.strings.drop-link;
+                clicked => { root.file-drop-menu-open = false; root.file-drop-action(2); }
+            }
+        }
+    }
+}

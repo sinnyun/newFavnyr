@@ -1,0 +1,642 @@
+// The floating menus that belong to panels and panels only: the file
+// context menu with its "Split", "View mode" and "Colour & note" flyouts,
+// and the Tab-bar-position, URL-bar, Trash and Drive/Network menus.
+//
+// Extracted from main_window.slint. The instance stands where the context
+// menu used to, so every menu keeps the depth it had relative to the
+// panels and to the overlays that follow (Open with, favorites, settings).
+
+import { MenuShortcuts, OpenerItem, ShellCtxEntry, Strings } from "../structs.slint";
+import { Theme, Tokens } from "../theme.slint";
+import { IconMenuRow, MenuItem, ShellMenuRow, SplitMenuItem, SubmenuRow, TabBarMenuItem } from "../widgets/menus.slint";
+import { FolderSwatchRow } from "../widgets/rows.slint";
+
+export component OverlayMenus inherits Rectangle {
+    // Transparent, full-window host; every menu places itself against it.
+    width: 100%;
+    height: 100%;
+
+    // ctx menu
+    callback action-copy();
+    callback action-copy-name();
+    callback action-copy-path();
+    callback action-create-link();             // file context menu → kind 3 popup
+    callback action-cut();
+    callback action-delete();
+    callback action-duplicate();
+    callback action-open();
+    callback action-open-admin();   // "Open as administrator" (file, Windows)
+    callback action-open-new-tab();
+    callback action-open-parent();
+    callback action-open-terminal();
+    callback action-paste();
+    callback action-properties();
+    callback action-rename();
+    callback ctx-close();
+    in property <[OpenerItem]> ctx-custom-entries;
+    callback ctx-custom-run(string /*id*/);
+    in-out property <bool> ctx-menu-open: false;
+    in-out property <length> ctx-menu-x;
+    in-out property <length> ctx-menu-y;
+    in-out property <bool> ctx-on-empty: false;
+    in-out property <bool> ctx-selection-has-dir: false;
+    in-out property <bool> ctx-selection-is-dir: false;
+    in-out property <bool> ctx-selection-is-file: false;
+    in-out property <bool> ctx-selection-single: false;
+    in property <[ShellCtxEntry]> ctx-shell-entries;
+    callback ctx-shell-run(int /*command offset*/);
+    in-out property <int> ctx-shell-sub-for: -1;   // `sub` index of the open parent
+    callback ctx-shell-sub-hover(int /*sub*/);
+    in-out property <bool> ctx-shell-sub-open: false;
+    in-out property <bool> ctx-shell-sub-parent-hover: false;
+    in-out property <length> ctx-shell-sub-x;
+    in-out property <length> ctx-shell-sub-y;
+    callback fav-add-selection();                      // selected files (active view)
+    in-out property <bool> mark-menu-open: false;
+    in-out property <length> mark-menu-x;
+    in-out property <length> mark-menu-y;
+    in-out property <bool> mark-parent-hover: false;
+    in property <MenuShortcuts> menu-shortcuts;
+    in-out property <bool> new-menu-open: false;
+    in-out property <length> new-menu-x;
+    in-out property <length> new-menu-y;
+    in-out property <bool> new-parent-hover: false;
+    in-out property <bool> ow-menu-open: false;
+    in-out property <length> ow-menu-x;
+    in-out property <length> ow-menu-y;
+    in-out property <bool> ow-parent-hover: false;
+    in property <bool> platform-windows: false;
+    in property <Strings> strings;
+
+    // split
+    in property <bool> equalize-available: false;
+    in property <bool> equalize-undone: false;
+    callback equalize-views(int);
+    callback panel-split(int);
+    in-out property <bool> split-menu-open: false;
+    in-out property <length> split-menu-x;
+    in-out property <length> split-menu-y;
+
+    // tabbar
+    callback set-tab-bar-mode(int /*panel*/, int /*mode*/);
+    in-out property <int> tabbar-menu-mode: 0;     // CURRENT mode (checked option)
+    in-out property <bool> tabbar-menu-open: false;
+    in-out property <int> tabbar-menu-panel: -1;
+    in-out property <length> tabbar-menu-x;
+    in-out property <length> tabbar-menu-y;
+
+    // view
+    callback set-view-mode(int /*idx*/, string /*mode code*/);
+    in-out property <string> view-menu-mode: "list";
+    in-out property <bool> view-menu-open: false;
+    in-out property <int> view-menu-panel: -1;
+    in-out property <length> view-menu-x;
+    in-out property <length> view-menu-y;
+
+    // url
+    in-out property <int> url-copy-serial: 0;
+    in-out property <bool> url-menu-open: false;
+    in-out property <length> url-menu-x;
+    in-out property <length> url-menu-y;
+    in-out property <int> url-paste-serial: 0;
+
+    // trash
+    callback empty-trash();                         // empties the trash (permanent)
+    in-out property <bool> trash-menu-confirm: false;   // 2nd click = confirmation
+    in-out property <bool> trash-menu-open: false;
+    in-out property <length> trash-menu-x;
+    in-out property <length> trash-menu-y;
+
+    // drive
+    callback drive-disconnect(string);   // disconnects a mapped network drive (device)
+    callback drive-eject(string, bool);  // release (device, unpluggable)
+    in-out property <string> drive-menu-device;    // eject/disconnect target (empty → actions hidden)
+    in-out property <bool> drive-menu-hotplug;
+    in-out property <int> drive-menu-kind;
+    in-out property <bool> drive-menu-open: false;
+    in-out property <string> drive-menu-path;
+    in-out property <bool> drive-menu-removable;   // → offers to release the drive
+    in-out property <length> drive-menu-x;
+    in-out property <length> drive-menu-y;
+    callback place-copy-path(string);    // copies the path to the clipboard
+    callback place-open-new-tab(string, int);      // (path, kind) → new tab (active view)
+
+    // mark
+    callback folder-color-picked(int);
+    in-out property <int> mark-current-color: 0;
+    in-out property <bool> mark-flyout-hover: false;
+    callback open-comment-editor();
+
+    // ===== Context menu =====
+    // NO full-screen backdrop: it used to consume the 2nd click (the menu
+    // wouldn't reposition on the next right-click) and swallow the left click
+    // (the clicked row wasn't selected). Instead, clicks
+    // within the content (sel-touch / dead-zones) close the menu, a right
+    // click repositions it (the bridge rewrites ctx-menu-x/y + open), and
+    // any interaction with the CHROME (rail, sidebar, tabs, headers,
+    // splitters, empty areas…) closes it via the global `Dismiss`.
+    if root.ctx-menu-open : Rectangle {
+        x: root.ctx-menu-x;
+        y: root.ctx-menu-y;
+        width: 240px;
+        // Adapted height: full menu (an entry is targeted) vs reduced
+        // menu (blank area).
+        //
+        // The base counts every row that is ALWAYS there (26px each, 1px
+        // per separator, 4px of padding above and below); each row that
+        // can be hidden then adds its own term, on the very condition of
+        // the `if` that renders it. Anything else drifts: the rule is one
+        // term per conditional row, and none for the others.
+        //
+        // "Open as administrator" and "Open in new tab" take the same
+        // slot under opposite conditions — exactly one of them shows, so
+        // they belong to the base and add nothing.
+        //
+        // The bridge's clamp repeats this calculation to know whether the
+        // menu still fits below the pointer.
+        height: (root.ctx-on-empty ? 194px : 376px
+                + (root.ctx-selection-is-dir ? 0px : 26px)          // Open with
+                + (root.ctx-selection-single ? 26px : 0px)          // Create a shortcut
+                + ((root.ctx-selection-has-dir || root.ctx-selection-single) ? 26px : 0px)) // Color & note
+            + (root.ctx-custom-entries.length > 0 ? root.ctx-custom-entries.length * 26px + 1px : 0px)
+            + (root.ctx-shell-entries.length > 0 ? root.ctx-shell-entries.length * 26px + 1px : 0px);
+        background: Theme.background;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+
+        // Catch-all: absorbs clicks in the menu's empty areas to
+        // prevent propagation to the backdrop (which would close it).
+        TouchArea { }
+
+        // ----- Full menu: an entry (file/folder) is targeted -----
+        if !root.ctx-on-empty : VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+
+            MenuItem { label: root.strings.ctx-open;          shortcut: root.menu-shortcuts.open;  clicked => { root.ctx-close(); root.action-open(); } }
+            // File on Windows → "Open as administrator" ("new
+            // tab" would only open the parent folder: not very useful). Otherwise
+            // (folder, multiple selection, or Linux) → "new tab".
+            if root.platform-windows && root.ctx-selection-is-file : MenuItem {
+                label: root.strings.ctx-open-admin;
+                clicked => { root.ctx-close(); root.action-open-admin(); }
+            }
+            if !(root.platform-windows && root.ctx-selection-is-file) : MenuItem {
+                label: root.strings.ctx-open-new-tab;
+                clicked => { root.ctx-close(); root.action-open-new-tab(); }
+            }
+            // "Open with" → flyout on HOVER (the parent menu stays open).
+            // Files only: a folder is opened by navigating into it, not by
+            // handing it to an application.
+            if !root.ctx-selection-is-dir : SubmenuRow {
+                label: root.strings.ctx-open-with;
+                open: root.ow-menu-open;
+                show(x, y) => { root.ow-menu-x = x; root.ow-menu-y = y; root.ow-menu-open = true; }
+                hovered(h) => { root.ow-parent-hover = h; }
+            }
+            MenuItem { label: root.strings.ctx-open-parent;                       clicked => { root.ctx-close(); root.action-open-parent(); } }
+            MenuItem { label: root.strings.ctx-open-terminal; shortcut: root.menu-shortcuts.terminal; clicked => { root.ctx-close(); root.action-open-terminal(); } }
+            // Pinned user commands — filtered by the bridge
+            // based on the target (file / folder).
+            if root.ctx-custom-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
+            for cc in root.ctx-custom-entries : IconMenuRow {
+                label: cc.label;
+                icon: cc.icon;
+                icon-kind: cc.icon-kind;
+                clicked => { root.ctx-close(); root.ctx-custom-run(cc.id); }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-copy;          shortcut: root.menu-shortcuts.copy; clicked => { root.ctx-close(); root.action-copy(); } }
+            MenuItem { label: root.strings.ctx-cut;           shortcut: root.menu-shortcuts.cut; clicked => { root.ctx-close(); root.action-cut(); } }
+            MenuItem { label: root.strings.ctx-paste;         shortcut: root.menu-shortcuts.paste; clicked => { root.ctx-close(); root.action-paste(); } }
+            MenuItem { label: root.strings.ctx-duplicate;                         clicked => { root.ctx-close(); root.action-duplicate(); } }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-copy-path;                         clicked => { root.ctx-close(); root.action-copy-path(); } }
+            MenuItem { label: root.strings.ctx-copy-name;                         clicked => { root.ctx-close(); root.action-copy-name(); } }
+            MenuItem { label: root.strings.fav-add;                               clicked => { root.ctx-close(); root.fav-add-selection(); } }
+            // "Create a shortcut" — any SINGLE item, file or folder: opens
+            // the popup (.lnk shortcut / symlink tabs) creating a link in the
+            // current folder to it. Folders link fine (junction on Windows,
+            // symlink on Linux, or a .lnk pointing at the folder).
+            if root.ctx-selection-single : MenuItem { label: root.strings.ctx-create-link; clicked => { root.ctx-close(); root.action-create-link(); } }
+            // Annotations Favnyr keeps ABOUT the item, which is what this
+            // block already gathers — copy path, copy name, add to
+            // favorites. Nothing here touches a byte on disk.
+            // Shown when there is something to offer: a folder to colour,
+            // or a lone item to annotate.
+            if root.ctx-selection-has-dir || root.ctx-selection-single : SubmenuRow {
+                label: root.strings.ctx-mark;
+                open: root.mark-menu-open;
+                show(x, y) => { root.mark-menu-x = x; root.mark-menu-y = y; root.mark-menu-open = true; }
+                hovered(h) => { root.mark-parent-hover = h; }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-rename;        shortcut: root.menu-shortcuts.rename; clicked => { root.ctx-close(); root.action-rename(); } }
+            MenuItem { label: root.strings.ctx-delete;        shortcut: root.menu-shortcuts.delete; clicked => { root.ctx-close(); root.action-delete(); } }
+            // WINDOWS context menu entries (shell extensions).
+            if root.ctx-shell-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
+            for se in root.ctx-shell-entries : ShellMenuRow {
+                entry: se;
+                sub-open: root.ctx-shell-sub-open && se.has-sub && root.ctx-shell-sub-for == se.sub;
+                run(id) => { root.ctx-close(); root.ctx-shell-run(id); }
+                hover-changed(h) => {
+                    if (se.has-sub) { root.ctx-shell-sub-parent-hover = h; }
+                    else if (h) { root.ctx-shell-sub-open = false; }
+                }
+                sub-hover(x, y) => {
+                    root.ctx-shell-sub-x = x;
+                    root.ctx-shell-sub-y = y;
+                    root.ctx-shell-sub-for = se.sub;
+                    root.ctx-shell-sub-hover(se.sub);
+                    root.ctx-shell-sub-open = true;
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-properties;    shortcut: root.menu-shortcuts.properties; clicked => { root.ctx-close(); root.action-properties(); } }
+        }
+
+        // ----- Reduced menu: right-click on a blank area -----
+        // No Copy/Cut/Duplicate/Rename/Delete (no target).
+        // Actions target the current folder (Paste, path, name…).
+        if root.ctx-on-empty : VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+
+            // Unified "New" entry → flyout on HOVER (folder / file
+            // / shortcut). SAME mechanism as "Open with".
+            SubmenuRow {
+                label: root.strings.ctx-new;
+                open: root.new-menu-open;
+                show(x, y) => { root.new-menu-x = x; root.new-menu-y = y; root.new-menu-open = true; }
+                hovered(h) => { root.new-parent-hover = h; }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-paste;         shortcut: root.menu-shortcuts.paste; clicked => { root.ctx-close(); root.action-paste(); } }
+            MenuItem { label: root.strings.ctx-open-parent;                       clicked => { root.ctx-close(); root.action-open-parent(); } }
+            MenuItem { label: root.strings.ctx-open-terminal; shortcut: root.menu-shortcuts.terminal; clicked => { root.ctx-close(); root.action-open-terminal(); } }
+            // Commands pinned to the view BACKGROUND — e.g. "Git Bash
+            // here"; they target the current folder.
+            if root.ctx-custom-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
+            for cc in root.ctx-custom-entries : IconMenuRow {
+                label: cc.label;
+                icon: cc.icon;
+                icon-kind: cc.icon-kind;
+                clicked => { root.ctx-close(); root.ctx-custom-run(cc.id); }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-copy-path;                         clicked => { root.ctx-close(); root.action-copy-path(); } }
+            MenuItem { label: root.strings.ctx-copy-name;                         clicked => { root.ctx-close(); root.action-copy-name(); } }
+            // WINDOWS context menu entries for the CURRENT FOLDER —
+            // queried "as an item" (this exposes the
+            // full PeaZip menu, Git Bash here, Select left folder…).
+            if root.ctx-shell-entries.length > 0 : Rectangle { height: 1px; background: Theme.border; }
+            for se in root.ctx-shell-entries : ShellMenuRow {
+                entry: se;
+                sub-open: root.ctx-shell-sub-open && se.has-sub && root.ctx-shell-sub-for == se.sub;
+                run(id) => { root.ctx-close(); root.ctx-shell-run(id); }
+                hover-changed(h) => {
+                    if (se.has-sub) { root.ctx-shell-sub-parent-hover = h; }
+                    else if (h) { root.ctx-shell-sub-open = false; }
+                }
+                sub-hover(x, y) => {
+                    root.ctx-shell-sub-x = x;
+                    root.ctx-shell-sub-y = y;
+                    root.ctx-shell-sub-for = se.sub;
+                    root.ctx-shell-sub-hover(se.sub);
+                    root.ctx-shell-sub-open = true;
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            MenuItem { label: root.strings.ctx-properties;    shortcut: root.menu-shortcuts.properties; clicked => { root.ctx-close(); root.action-properties(); } }
+        }
+    }
+
+    // ===== "Split" menu =====
+    // Opened by a panel's split token. Transparent backdrop that
+    // closes on an outside click; acts on the active panel (the token
+    // activated it beforehand) via `panel-split`.
+    // (no more backdrop — unified closing via close-ctx-menus/Dismiss.)
+    if root.split-menu-open : Rectangle {
+        // Clamped so it doesn't overflow the window.
+        x: min(root.split-menu-x, root.width - self.width - 8px);
+        y: min(root.split-menu-y, root.height - self.height - 8px);
+        width: 224px;
+        // Two split rows, then a filet and the equalizer — which only
+        // exists to offer once there is more than one view to even out.
+        height: root.equalize-available ? 123px : 82px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+
+        // Catch-all: absorbs clicks in the menu's empty areas.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            SplitMenuItem {
+                label: root.strings.split-side-by-side;
+                icon: @image-url("../../../assets/icons/split.svg");
+                shortcut: root.menu-shortcuts.split-side;
+                clicked => { root.split-menu-open = false; root.panel-split(0); }
+            }
+            SplitMenuItem {
+                label: root.strings.split-stacked;
+                icon: @image-url("../../../assets/icons/split-stacked.svg");
+                shortcut: root.menu-shortcuts.split-stack;
+                clicked => { root.split-menu-open = false; root.panel-split(1); }
+            }
+            // The menu has no place on screen, so it cannot aim at one
+            // separator: it evens out the whole layout, and says so. While
+            // a way back is held, the same row offers it instead — the
+            // menu can afford to change its wording where a separator,
+            // which has none, cannot.
+            if root.equalize-available : Rectangle {
+                height: 5px;
+                Rectangle {
+                    y: 2px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+            if root.equalize-available : SplitMenuItem {
+                label: root.equalize-undone
+                    ? root.strings.equalize-restore
+                    : root.strings.equalize-all;
+                icon: @image-url("../../../assets/icons/equalize.svg");
+                shortcut: root.menu-shortcuts.equalize;
+                clicked => { root.split-menu-open = false; root.equalize-views(-1); }
+            }
+        }
+    }
+
+    // ===== "Tab bar position" menu =====
+    // 3 radio options (checkmark on the current mode), per view.
+    if root.tabbar-menu-open : Rectangle {
+        x: min(root.tabbar-menu-x, root.width - self.width - 8px);
+        y: min(root.tabbar-menu-y, root.height - self.height - 8px);
+        width: 224px;
+        height: 120px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+
+        // Catch-all: absorbs clicks in the menu's empty areas.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            TabBarMenuItem {
+                icon: @image-url("../../../assets/icons/tabs-top.svg");
+                label: root.strings.tabbar-top;
+                selected: root.tabbar-menu-mode == 0;
+                clicked => {
+                    root.tabbar-menu-open = false;
+                    root.set-tab-bar-mode(root.tabbar-menu-panel, 0);
+                }
+            }
+            TabBarMenuItem {
+                icon: @image-url("../../../assets/icons/tabs-left.svg");
+                label: root.strings.tabbar-left;
+                selected: root.tabbar-menu-mode == 1;
+                clicked => {
+                    root.tabbar-menu-open = false;
+                    root.set-tab-bar-mode(root.tabbar-menu-panel, 1);
+                }
+            }
+            TabBarMenuItem {
+                icon: @image-url("../../../assets/icons/tabs-right.svg");
+                label: root.strings.tabbar-right;
+                selected: root.tabbar-menu-mode == 2;
+                clicked => {
+                    root.tabbar-menu-open = false;
+                    root.set-tab-bar-mode(root.tabbar-menu-panel, 2);
+                }
+            }
+        }
+    }
+
+    // ===== "View mode" menu =====
+    // 3 radio options (checkmark on the current mode), per view.
+    if root.view-menu-open : Rectangle {
+        x: min(root.view-menu-x, root.width - self.width - 8px);
+        y: min(root.view-menu-y, root.height - self.height - 8px);
+        width: 224px;
+        height: 120px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+
+        // Catch-all: absorbs clicks in the menu's empty areas.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            TabBarMenuItem {
+                icon: @image-url("../../../assets/icons/list.svg");
+                label: root.strings.view-mode-list;
+                selected: root.view-menu-mode == "list";
+                clicked => {
+                    root.view-menu-open = false;
+                    root.set-view-mode(root.view-menu-panel, "list");
+                }
+            }
+            TabBarMenuItem {
+                icon: @image-url("../../../assets/icons/previews.svg");
+                label: root.strings.view-mode-previews;
+                selected: root.view-menu-mode == "previews";
+                clicked => {
+                    root.view-menu-open = false;
+                    root.set-view-mode(root.view-menu-panel, "previews");
+                }
+            }
+            TabBarMenuItem {
+                icon: @image-url("../../../assets/icons/grid.svg");
+                label: root.strings.view-mode-grid;
+                selected: root.view-menu-mode == "grid";
+                clicked => {
+                    root.view-menu-open = false;
+                    root.set-view-mode(root.view-menu-panel, "grid");
+                }
+            }
+        }
+    }
+
+    // ===== URL bar menu (right-click): Paste / Copy path =====
+    if root.url-menu-open : Rectangle {
+        x: min(root.url-menu-x, root.width - self.width - 8px);
+        y: min(root.url-menu-y, root.height - self.height - 8px);
+        width: 220px;
+        height: 64px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            MenuItem {
+                label: root.strings.ctx-copy;     // "Copy"
+                clicked => { root.url-menu-open = false; root.url-copy-serial += 1; }
+            }
+            MenuItem {
+                label: root.strings.ctx-paste;    // "Paste"
+                clicked => { root.url-menu-open = false; root.url-paste-serial += 1; }
+            }
+        }
+    }
+
+    // ===== Trash context menu (sidebar): Empty (two-step) =====
+    if root.trash-menu-open : Rectangle {
+        x: min(root.trash-menu-x, root.width - self.width - 8px);
+        y: min(root.trash-menu-y, root.height - self.height - 8px);
+        width: 220px;
+        height: 40px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            Rectangle {
+                height: 32px;
+                border-radius: 4px;
+                background: root.trash-menu-confirm
+                    ? Tokens.danger.with-alpha(empty-touch.has-hover ? 0.34 : 0.20)
+                    : (empty-touch.has-hover ? Tokens.danger.with-alpha(0.14) : transparent);
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text {
+                        // 1st click: "Empty trash"; 2nd: confirmation.
+                        text: root.trash-menu-confirm
+                            ? root.strings.sidebar-empty-trash-confirm
+                            : root.strings.sidebar-empty-trash;
+                        color: Tokens.danger;
+                        font-size: 12px;
+                        font-weight: root.trash-menu-confirm ? 700 : 400;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+                empty-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if (root.trash-menu-confirm) {
+                            root.trash-menu-open = false;
+                            root.empty-trash();
+                        } else {
+                            root.trash-menu-confirm = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== Drive / Network context menu (sidebar) =====
+    // Actions: open in a new tab · copy path · (removable)
+    // safely remove · (mapped network, device = letter) disconnect.
+    if root.drive-menu-open : dmenu := Rectangle {
+        // Item count: open + copy (2) + eject? + disconnect?
+        property <bool> can-eject: root.drive-menu-removable && root.drive-menu-device != "";
+        property <bool> can-disconnect: root.drive-menu-kind == 4 && root.drive-menu-device != "";
+        property <int> item-count: 2 + (self.can-eject ? 1 : 0) + (self.can-disconnect ? 1 : 0);
+        x: min(root.drive-menu-x, root.width - self.width - 8px);
+        y: min(root.drive-menu-y, root.height - self.height - 8px);
+        width: 240px;
+        height: 8px + self.item-count * 30px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            MenuItem {
+                label: root.strings.ctx-open-new-tab;
+                clicked => { root.drive-menu-open = false; root.place-open-new-tab(root.drive-menu-path, root.drive-menu-kind); }
+            }
+            MenuItem {
+                label: root.strings.ctx-copy-path;
+                clicked => { root.drive-menu-open = false; root.place-copy-path(root.drive-menu-path); }
+            }
+            if dmenu.can-eject : MenuItem {
+                label: root.drive-menu-hotplug
+                    ? root.strings.net-eject
+                    : root.strings.net-release;
+                clicked => { root.drive-menu-open = false; root.drive-eject(root.drive-menu-device, root.drive-menu-hotplug); }
+            }
+            if dmenu.can-disconnect : MenuItem {
+                label: root.strings.net-disconnect;
+                clicked => { root.drive-menu-open = false; root.drive-disconnect(root.drive-menu-device); }
+            }
+        }
+    }
+
+    // ===== "Colour & note" flyout (attached to the context menu) =====
+    if root.mark-menu-open : Rectangle {
+        x: min(root.mark-menu-x, root.width - self.width - 8px);
+        y: min(root.mark-menu-y, root.height - self.height - 8px);
+        width: 240px;
+        height: 8px
+            + (root.ctx-selection-has-dir ? 26px : 0px)
+            + (root.ctx-selection-single ? 26px : 0px);
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        // The content sits INSIDE the touch area, not beside it: the
+        // hover flag has to stay true while the pointer is over a swatch or
+        // an entry, and a sibling would lose it the moment a child took the
+        // pointer — closing the flyout exactly when it is being used.
+        TouchArea {
+            changed has-hover => { root.mark-flyout-hover = self.has-hover; }
+            VerticalLayout {
+                padding: 4px;
+                if root.ctx-selection-has-dir : FolderSwatchRow {
+                    current: root.mark-current-color;
+                    picked(slot) => { root.ctx-close(); root.folder-color-picked(slot); }
+                }
+                // The ellipsis says a dialog follows, as "Open with…" does.
+                if root.ctx-selection-single : MenuItem {
+                    label: root.strings.ctx-comment;
+                    clicked => { root.ctx-close(); root.open-comment-editor(); }
+                }
+            }
+        }
+    }
+}
