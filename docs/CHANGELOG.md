@@ -255,3 +255,34 @@ files touched, so a behaviour can be traced back to its source.
 - 冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，日志到 `starting Slint event loop init_ms=97`（工作区恢复 panels=1），无 panic、无 Slint 加载错误。
 - 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突），**列表区选择（单击 / Ctrl / Shift / 右键 / 双击）**、**左侧 gutter 条拉出的橡皮筋与拖到上下边缘的自动滚动**、**列头的排序 / 重排 / 调整宽度**、**两条自绘滚动条的拖动**。
 - 本地 `main` 领先 `origin/main`（`6e1fe75`…`f0806dc` 共 11 个提交未推送），本轮未推送。
+
+## 2026-09-28 — 侧栏拆分：`sidebar.slint` 1 113 → 外壳 287 + `sidebar/` 3 个组件
+
+**Changed**
+
+仍是纯搬迁拆分：不改行为、不动契约。`Sidebar` / `FavPanel` / `ActivityRail` 对 `main_window.slint` 的成员面逐字未变，`MainWindow` 的 518 个成员与 `FileKind` 的 `#[repr(u8)]` 取值均未触碰。三次提交，每次一块：
+
+| 提交 | 新文件（行数） | 内容 |
+| --- | ---: | --- |
+| `21ba83e` | `sidebar/fav.slint`（467） | `FavRow` + `FavPanel`：收藏树的节头 + 展平模型 + 折叠状态 + 重排拖拽；行本身纯视觉，手势上报面板，因此两块同处一文件 |
+| `c268611` | `sidebar/rail.slint`（115） | `RailBtn` + `ActivityRail`：最左侧活动栏的三个按钮（侧栏开关 / 工作区 / 设置）与右侧 tooltip |
+| `c267f74` | `sidebar/item.slint`（271） | `SidebarItem`：Places 单行——图标 / 标签 / 盘符容量条（`DriveGauge`）、hover 与选中态、拖拽与右键把手 |
+
+`sidebar.slint` **1 113 → 287 行**：只剩节头一族（`SidebarHeaderAction` / `SidebarHeaderActionSlot` / `SidebarSectionHeader`）与 `Sidebar` 容器（节顺序、拖拽重排、把 Places 每行交给 `sidebar/item.slint`）。`main_window.slint` 只改一行 import（`Sidebar` 一行 → `Sidebar` / `FavPanel` / `ActivityRail` 三行，3 193 → 3 195 行）。
+
+**与方案的两点不同**（详见 `docs/split-plan.md` §16 偏差 24–27）：
+
+- 节头一族留在 `sidebar.slint`：`SidebarSectionHeader` 为四个可重排节共用，`SidebarHeaderAction` 还被 `overlays/settings/openwith.slint` 引用，搬走会让设置页反向依赖收藏页。于是 `fav.slint` 反向 import `sidebar.slint`、`sidebar.slint` import `item.slint`，两条边不冲突、无环。
+- 提取顺序由 800 行上限倒推：先搬 `SidebarItem` 会让外壳停在 847 行、校验脚本直接拒绝写盘，所以先搬最大的内聚块（收藏树），外壳 1 113 → 651 → 546 → 287 行。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 阶段 5 状态补"侧栏按组件拆分已完成"，偏差补 24–27（实际形状、节头留存与依赖方向、顺序倒推与两层校验、`main_window.slint` 的两行变化），剩余项新增侧栏一条并从"仍超 800 行"里移除。
+- `docs/code-map.md` — §1 概览（`ui/` 33 个 `.slint`、侧栏外壳 + 3 组件）、§2 结构树新增 `ui/sidebar/` 一行、§3.3 文件表补 4 行、§4.4 依赖链改写为侧栏一族并新增 `sidebar/*.slint` 条目、§6 从"仍超 800 行"表里移除 `ui/sidebar.slint`。
+
+**Notes**
+
+- 验证：与面板轮同一套写盘前断言（成员集合、子文件自包含、大括号平衡、无死 import、无重复空行、单文件 ≤ 800 行；`@image-url` 只允许多下沉一级，本轮共 16 句），另加一次**整体 round-trip**——把三个子文件按原声明顺序缝回外壳，去掉空行 / import / 注释、`../../../assets/` 还原为 `../../assets/`，与 `21ba83e~1` 的原文逐行比对：**849 行代码完全一致**。每个提交后 `cargo check -p favnyr-gui` 全绿。
+- 收尾：`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed；`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo fmt --check` 干净。冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，日志到 `starting Slint event loop init_ms=123`（工作区恢复 panels=1），15 秒内无 panic、无 Slint 加载错误。
+- 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突）、列表区选择、gutter 条橡皮筋与边缘自动滚动、列头排序 / 重排 / 改宽、两条自绘滚动条，**Places 行的 hover / 拖拽 / 盘符容量条**、**收藏树的展开折叠与重排拖拽**、**activity rail 三个按钮（侧栏开关 / 工作区 / 设置）与 tooltip**、**节的拖拽重排**。
+- 上一轮记录"本地 `main` 领先 `origin/main`"已失效：面板轮的文档提交已推送（`6fd6853`），本轮的三个代码提交随文档一并推送。
