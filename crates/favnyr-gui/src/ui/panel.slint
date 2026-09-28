@@ -2,13 +2,12 @@
 // rows, footer). Instantiated once per view by `MainWindow`.
 
 import { PanelView, Strings } from "structs.slint";
-import { Dismiss, Note, Theme, Tokens, WindowFocus } from "theme.slint";
-import { DragEdgeScroller, VTabBar } from "widgets/tabs.slint";
-import { ColumnHeader, FileRowView, FileTileView, SectionHeaderView } from "widgets/rows.slint";
+import { Theme, Tokens } from "theme.slint";
+import { VTabBar } from "widgets/tabs.slint";
 import { FilterBar } from "widgets/inputs.slint";
 import { PanelTabsBar } from "panel/tabs_bar.slint";
 import { PanelNavBar } from "panel/nav_bar.slint";
-import { PanelSelection } from "panel/selection.slint";
+import { PanelList } from "panel/list.slint";
 
 export component PanelComponent inherits Rectangle {
     // IMPORTANT: `preferred-width: 0` is necessary for the splitter
@@ -34,19 +33,7 @@ export component PanelComponent inherits Rectangle {
     in property <bool> active;
     in property <bool> can-close: false;
     in property <Strings> strings;
-    // Column widths SPECIFIC to this panel: initialized from the model
-    // (`view`), mutated locally by the header grips. On resize end,
-    // `column-resized(id, width)` reports it to the bridge (which stores it per panel
-    // to survive model rebuilds). GENERIC callback per column
-    // → no tuple that needs to grow with every new column.
-    in-out property <length> col-name-width: root.view.col-name-w;
-    in-out property <length> col-path-width: root.view.col-path-w;
-    in-out property <length> col-size-width: root.view.col-size-w;
-    in-out property <length> col-modified-width: root.view.col-modified-w;
-    in-out property <length> col-ext-width: root.view.col-ext-w;
-    in-out property <length> col-resolution-width: root.view.col-resolution-w;
-    in-out property <length> col-depth-width: root.view.col-depth-w;
-    in-out property <length> col-age-width: root.view.col-age-w;
+
     callback column-resized(string /*id*/, length /*width*/);
     // check/uncheck a column (id, visible) + right-click header.
     callback column-toggle(string, bool);
@@ -68,34 +55,6 @@ export component PanelComponent inherits Rectangle {
     // current tab bar scroll (viewport-x, plain) —
     // reported to the bridge via `panel-tabs-scrolled(idx, vx)`.
     callback tabs-scrolled(length);
-    property <bool> col-drag-active: false;
-    property <length> col-drag-center: 0px;   // center of the dragged column (plain)
-    property <length> col-drag-delta: 0px;
-    property <int> col-drop-idx: -1;
-    property <string> col-drag-id: "";
-
-    // Width of a column by its id. All resizable.
-    function width-of(id: string) -> length {
-        id == "path" ? root.col-path-width
-            : id == "size" ? root.col-size-width
-            : id == "modified" ? root.col-modified-width
-            : id == "ext" ? root.col-ext-width
-            : id == "resolution" ? root.col-resolution-width
-            : id == "depth" ? root.col-depth-width
-            : id == "age" ? root.col-age-width
-            : root.col-name-width;
-    }
-    // Applies a width to the right property (live resize, `for`-compatible).
-    function set-col-width(id: string, w: length) {
-        if (id == "path") { root.col-path-width = w; }
-        else if (id == "size") { root.col-size-width = w; }
-        else if (id == "modified") { root.col-modified-width = w; }
-        else if (id == "ext") { root.col-ext-width = w; }
-        else if (id == "resolution") { root.col-resolution-width = w; }
-        else if (id == "depth") { root.col-depth-width = w; }
-        else if (id == "age") { root.col-age-width = w; }
-        else { root.col-name-width = w; }
-    }
 
     // Path bar edit mode: false = clickable breadcrumbs,
     // true = TextInput. Local to the panel, toggled by clicking empty area / Enter / Escape.
@@ -196,7 +155,7 @@ export component PanelComponent inherits Rectangle {
     callback file-drag-progress(length, length);
     callback file-drag-dropped(length, length);
     // Top of the body (below the tabs + nav header) = list-area position.
-    property <length> body-top: list-area.absolute-position.y - root.absolute-position.y;
+    property <length> body-top: list.area-abs-y - root.absolute-position.y;
     // Actual LEFT inset of list-area within the panel: root row's
     // padding (`Tokens.panel-pad`) + 6px spacing consumed by `vbar-left`, which
     // stays in the tree at zero width when the vertical tab bar is
@@ -206,39 +165,19 @@ export component PanelComponent inherits Rectangle {
     // Same read as `body-top` (panel absolute-position = proven safe):
     // used only to place `gutter-strip`, which takes part in no layout →
     // no cycle.
-    property <length> list-inset-x: list-area.absolute-position.x - root.absolute-position.x;
-    // (FOLDER) row hovered during a file-drag → allows dropping the
-    // selection INTO this subfolder. Same reads as `file-drag-over` /
-    // `body-top` (panel absolute-position = proven safe); the hit-test consults
-    // the precomputed geometry, no reentrant layout read. -1 = no
-    // folder-row under the cursor (falls back to the panel's current folder).
-    property <length> drag-y-in-body: root.file-drag-abs-y - root.absolute-position.y - root.body-top;
-    // Exact X position of the row area (accounts for vertical bar,
-    // padding, and horizontal scroll). It shares the same dead bounds as
-    // normal hover/click: gutter on the left, end of columns on the right.
-    property <length> fd-x-in-list: root.file-drag-abs-x - list-area.absolute-position.x;
-    property <int> drag-hover-row: -1;
-    function update-drag-hover-row() {
-        root.drag-hover-row =
-            (root.file-drag-active && root.file-drag-over && root.drag-y-in-body >= 0px
-                && root.fd-x-in-list >= Tokens.gutter
-                && root.fd-x-in-list <= root.content-right)
-            ? root.row-idx-at-y(root.drag-y-in-body)
-            : -1;
-    }
-    changed file-drag-active => { root.update-drag-hover-row(); }
-    changed file-drag-over => { root.update-drag-hover-row(); }
-    changed file-drag-abs-x => { root.update-drag-hover-row(); }
-    changed file-drag-abs-y => { root.update-drag-hover-row(); }
-    out property <int> drag-target-row: root.drag-hover-row;
+    property <length> list-inset-x: list.area-abs-x - root.absolute-position.x;
+    // Row of the list under the file-drag cursor (its own hit-test), and the
+    // two ways it can receive a drop: runnable entry, or folder. -1 = none.
+    // Read by MainWindow through the three `out` properties below.
+    out property <int> drag-target-row: list.drag-hover-row;
     out property <bool> drag-target-exec:
-        root.drag-hover-row >= 0 && root.drag-hover-row < root.view.rows.length
-        && !root.view.rows[root.drag-hover-row].is-dir
-        && root.view.rows[root.drag-hover-row].drop-runnable;
+        list.drag-hover-row >= 0 && list.drag-hover-row < root.view.rows.length
+        && !root.view.rows[list.drag-hover-row].is-dir
+        && root.view.rows[list.drag-hover-row].drop-runnable;
     out property <int> drag-folder-row:
-        (root.drag-hover-row >= 0 && root.drag-hover-row < root.view.rows.length
-            && root.view.rows[root.drag-hover-row].is-dir)
-        ? root.drag-hover-row
+        (list.drag-hover-row >= 0 && list.drag-hover-row < root.view.rows.length
+            && root.view.rows[list.drag-hover-row].is-dir)
+        ? list.drag-hover-row
         : -1;
     // Normalized [0,1] coordinates WITHIN the body — X renormalized OUTSIDE the
     // vertical bar: otherwise the "west/east" zone and the 30/70%
@@ -431,35 +370,11 @@ export component PanelComponent inherits Rectangle {
     property <length> rb-anchor-cy;   // CONTENT y at the start (anchor)
     property <length> rb-cur-x;       // current visible x
     property <length> rb-cur-vy;      // current VISIBLE y (mouse)
-    // current content y — reactive to scroll (key to edge auto-scroll).
-    property <length> rb-cur-cy: root.rb-cur-vy - rows-scroll.viewport-y;
-    // Lower (negative) bound of viewport-y; 0 if the content fits without scrolling.
-    property <length> rb-min-vy: rows-scroll.viewport-height > rows-scroll.height
-        ? -(rows-scroll.viewport-height - rows-scroll.height)
-        : 0px;
+    // Content y of the rubber-band cursor — reactive to scroll (key to
+    // edge auto-scroll). Computed by the list, which owns the vertical
+    // scroll; read here by the left gutter strip.
+    property <length> rb-cur-cy: list.rb-cur-cy;
 
-    // Hovered row index (-1 = none) — driven by `sel-touch`.
-    property <int> hovered-idx: selection.hovered-idx;
-    // Which row's note the pointer is asking for, or -1. The badge is drawn on
-    // the ICON, so that is where the reader points; the rest of the line must
-    // not pop a bubble on the way past.
-    //
-    // Decided ONCE for the view rather than by a property on every rendered
-    // row. A `changed` handler forces its property to be evaluated eagerly, so
-    // one per row means a hundred evaluations where one per view means one —
-    // and the pointer moves far more often than the rows do. The hover test
-    // comes first, so while a separator is being dragged this stops at a single
-    // boolean and never even looks at the column widths that are moving.
-    property <int> note-row: (selection.has-hover && !selection.pressed
-            && root.hovered-idx >= 0
-            && root.hovered-idx < root.view.rows.length
-            && root.view.rows[root.hovered-idx].comment != ""
-            && selection.mouse-x >= Tokens.gutter-content
-            && selection.mouse-x <= Tokens.gutter-content
-                + Tokens.row-icon-slot(root.view.preview-mode,
-                    root.view.rows[root.hovered-idx].visual-h,
-                    root.col-name-width))
-        ? root.hovered-idx : -1;
     // Menu key (the context-menu key of a PC keyboard). The window bumps a
     // counter, every view watches it, and only the active one answers — the
     // same idiom as `Dismiss.serial`, and the only one that reaches a single
@@ -469,55 +384,6 @@ export component PanelComponent inherits Rectangle {
     // the bridge, which owns the selection; the geometry stays here, where the
     // pixels are.
     callback keyboard-context-row() -> int;
-    property <int> menu-key-watch: root.menu-key-serial;
-    changed menu-key-watch => {
-        if (root.active) {
-            // Top-left of the entries area: where a menu opens when nothing is
-            // targeted, and the fallback when the target cannot be pointed at.
-            let fx: length = rows-scroll.absolute-position.x + Tokens.gutter;
-            let fy: length = rows-scroll.absolute-position.y;
-            let idx: int = root.keyboard-context-row();
-            if (idx < 0 || idx >= root.view.rows.length) {
-                root.empty-right-clicked(fx, fy);
-            } else {
-                // Same geometry as the note bubble: the frame's own position,
-                // plus the scroll offset, plus the row's place in the viewport.
-                let rtop: length = rows-scroll.absolute-position.y + rows-scroll.viewport-y
-                    + root.view.rows[idx].visual-y;
-                let rbot: length = rtop + root.view.rows[idx].visual-h;
-                // A row scrolled out of sight would drag the menu off the view.
-                // The selection still owns the menu; only its position falls
-                // back to the corner.
-                let on-screen: bool = rtop >= rows-scroll.absolute-position.y
-                    && rbot <= rows-scroll.absolute-position.y + rows-scroll.height;
-                root.right-clicked(idx, fx, on-screen ? rbot : fy);
-            }
-        }
-    }
-
-    // Claim held on the shared bubble. Leaving one view as the pointer enters
-    // another fires both handlers in an order nothing guarantees, so a view
-    // only clears what it put there itself. Same idiom as `Dismiss.serial`.
-    property <int> note-claim: -1;
-    changed note-row => {
-        if (root.note-row >= 0) {
-            Note.owner += 1;
-            root.note-claim = Note.owner;
-            Note.pending = root.view.rows[root.note-row].comment;
-            // Edges of the row in WINDOW coordinates: the frame's own position,
-            // plus the scroll offset (negative when scrolled down), plus the
-            // row's place in the viewport. Both travel, so the bubble can flip
-            // above the row when there is no room beneath it. On x, the gutter
-            // is added: a row spans the whole viewport, but the entry the user
-            // sees starts at the gutter, the same inset as its selection pill.
-            Note.pending-x = rows-scroll.absolute-position.x + Tokens.gutter;
-            Note.row-top = rows-scroll.absolute-position.y + rows-scroll.viewport-y
-                + root.view.rows[root.note-row].visual-y;
-            Note.row-bottom = Note.row-top + root.view.rows[root.note-row].visual-h;
-        } else if (root.note-claim == Note.owner) {
-            Note.pending = "";
-        }
-    }
 
     // Close / merge previews -----
     // `is-drag-source` = this panel is the source of the ongoing tab drag.
@@ -535,102 +401,6 @@ export component PanelComponent inherits Rectangle {
     // because it really does leave. Which is exactly what must NOT happen on a
     // swap, where nothing is lost.
     property <bool> leaving: root.will-merge || root.view-drag-leaving;
-
-    // ACTUAL content height. Unlike Slint's standard ListView,
-    // no average-height computation is involved: scrollbar and hit-tests
-    // share exactly the same cumulative reference.
-    property <length> rows-content-height:
-        root.view.rows.length > 0
-            ? root.view.rows[root.view.rows.length - 1].visual-y
-                + root.view.rows[root.view.rows.length - 1].visual-h
-            : 0px;
-
-    function report-rows-viewport() {
-        root.rows-viewport-changed(max(0px, -rows-scroll.viewport-y), rows-scroll.height);
-    }
-    property <int> rows-revision-watch: root.view.rows-revision;
-    property <int> viewport-reset-watch: root.view.viewport-reset-gen;
-    property <length> rows-viewport-height-watch: list-area.height;
-    // The grid packs its tiles from the list area's width.
-    property <length> rows-width-watch: list-area.width;
-    changed rows-width-watch => {
-        root.rows-area-width(list-area.width);
-    }
-    changed rows-revision-watch => {
-        if (!selection.zoom-adjusting) {
-            rows-scroll.viewport-y = clamp(rows-scroll.viewport-y, root.rb-min-vy, 0px);
-            root.report-rows-viewport();
-            root.update-drag-hover-row();
-            selection.update-pointer-hover();
-        }
-    }
-    changed rows-viewport-height-watch => {
-        rows-scroll.viewport-y = clamp(rows-scroll.viewport-y, root.rb-min-vy, 0px);
-        root.report-rows-viewport();
-        selection.update-pointer-hover();
-    }
-    changed viewport-reset-watch => {
-        rows-scroll.viewport-y = 0px;
-        root.report-rows-viewport();
-        root.update-drag-hover-row();
-        selection.update-pointer-hover();
-    }
-
-    // Index of the row under the ordinate `y` (list-area frame), accounting
-    // for scrolling. `-1` if outside the list.
-    function row-idx-at-y(y: length) -> int {
-        if (y < 0px) {
-            return -1;
-        }
-        return root.row-at-content-y(y - rows-scroll.viewport-y);
-    }
-    // RIGHT edge of the columns (Flickable content position): beyond it is a
-    // DEAD ZONE (like the left gutter) → click/hover/drag there start a
-    // rubber-band, not a row action. Columns run from `gutter-content`
-    // to `gutter-content + content-width`.
-    property <length> content-right: Tokens.gutter-content + root.view.content-width;
-    // Row index under `(x, y)`. In list mode the left gutter and the area
-    // beyond the columns are DEAD ZONES (they start a rubber-band, not a row
-    // action). In grid mode a tile owns exactly its own x range, and a section
-    // header — which spans the whole band — owns all of it.
-    function row-idx-at-xy(x: length, y: length) -> int {
-        let idx: int = root.row-idx-at-y(y);
-        if (idx < 0) {
-            return -1;
-        }
-        if (root.view.grid-mode) {
-            let row = root.view.rows[idx];
-            return (row.role != 0
-                || (x >= row.visual-x && x < row.visual-x + row.visual-w)) ? idx : -1;
-        }
-        return (x < Tokens.gutter || x > root.content-right) ? -1 : idx;
-    }
-
-    // Keyboard navigation: brings row `idx` into the visible area by
-    // adjusting the exact vertical scroll (viewport-y ≤ 0). Only moves if the
-    // row overflows top or bottom. Bounded by `rb-min-vy`.
-    function scroll-row-into-view(idx: int) {
-        if (idx < 0) {
-            return;
-        }
-        if (idx >= root.view.rows.length) {
-            return;
-        }
-        let top: length = root.view.rows[idx].visual-y;
-        let height: length = root.view.rows[idx].visual-h;
-        let row-top-in-view: length = top + rows-scroll.viewport-y;
-        if (row-top-in-view < 0px) {
-            rows-scroll.viewport-y = clamp(-top, root.rb-min-vy, 0px);
-        } else if (row-top-in-view + height > rows-scroll.height) {
-            rows-scroll.viewport-y = clamp(rows-scroll.height - top - height, root.rb-min-vy, 0px);
-        }
-    }
-
-    // We ONLY observe `scroll-gen` (bumped on every keyboard cursor
-    // move) → scrolls only on keyboard navigation, not on other
-    // PanelView refreshes.
-    property <int> scroll-gen-watch: root.view.scroll-gen;
-    changed scroll-gen-watch => { root.scroll-row-into-view(root.view.cursor-row); }
 
     // The active state reads as a crisp accent outline (2px); inactive panels
     // carry a discreet thread. (No drop shadow: `panels-container` clips
@@ -852,456 +622,56 @@ export component PanelComponent inherits Rectangle {
             close => { root.ext-filter-toggle(); }
         }
 
-        // ===== Flickable wrapper: headers + list scroll TOGETHER horizontally =====
-        // If the sum of column widths exceeds the available width,
-        // a custom scrollbar appears at the bottom of the panel (see below).
-        Rectangle {
-            vertical-stretch: 1;
-            preferred-width: 0px;
-            min-width: 0px;
-            max-width: 99999px;
-
-            // Actual row width: left gutter (`gutter-content`) +
-            // visible columns (`content-width`) + right padding. It must
-            // match the rows' and header's indents so the
-            // viewport doesn't add spurious horizontal overflow.
-            property <length> total-col-w:
-                root.view.content-width + Tokens.gutter-content + 8px;
-            // A 6px threshold absorbs residual rounding and spacing to
-            // avoid a scrollbar almost as wide as the viewport.
-            property <bool> needs-hscroll: total-col-w > self.width + 6px;
-
-            flickable := Flickable {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: parent.height - (parent.needs-hscroll ? 10px : 0px);
-                viewport-width: max(self.width, parent.total-col-w);
-                viewport-height: self.height;
-                // `interactive: false`: otherwise the Flickable captures the
-                // drags and the rubber-band no longer receives anything. Horizontal
-                // scrolling happens via the custom scrollbar at the bottom + via
-                // shift+wheel within the list.
-                interactive: false;
-
-                VerticalLayout {
-                    spacing: 2px;
-
-                    // === Column header (inside the Flickable
-                    //     to scroll along with the rows) ===
-                    // "Pro table" look: no filled rounded chip, just
-                    // a flat header topping a thin hairline.
-                    Rectangle {
-                        background: transparent;
-                        height: 30px;
-                        // Thin hairline separating header / list.
-                        Rectangle {
-                            y: parent.height - 1px;
-                            height: 1px;
-                            background: Tokens.hairline;
-                        }
-                        HorizontalLayout {
-                            // Aligned with the rows' content (see FileRowView).
-                            padding-left: Tokens.gutter-content;
-                            padding-right: 8px;
-                            spacing: Tokens.col-gap;
-                            alignment: start;
-
-                            // Headers rendered dynamically based on their order and
-                            // visibility. The width is resolved via `width-of`, then
-                            // applied via `set-col-width` and persisted.
-                            for col[ci] in root.view.columns : ColumnHeader {
-                                column-width: root.width-of(col.id);
-                                label: col.label;
-                                column-id: col.id;
-                                active: root.view.sort-column == col.id;
-                                asc: root.view.sort-asc;
-                                index: ci;
-                                count: root.view.columns.length;
-                                offset: col.offset;
-                                col-drag-active: root.col-drag-active;
-                                col-drag-new-center: root.col-drag-center + root.col-drag-delta;
-                                col-drop-idx: root.col-drop-idx;
-                                clicked => { root.activate(); root.sort-clicked(col.id); }
-                                resized(w) => { root.set-col-width(col.id, w); }
-                                resize-finished => { root.column-resized(col.id, root.width-of(col.id)); }
-                                right-clicked(x, y) => { root.activate(); root.open-columns-menu(x, y); }
-                                reorder-start(center) => {
-                                    root.col-drag-active = true;
-                                    root.col-drag-id = col.id;
-                                    root.col-drag-center = center;
-                                    root.col-drag-delta = 0px;
-                                    root.col-drop-idx = -1;
-                                }
-                                reorder-move(delta) => { root.col-drag-delta = delta; }
-                                report-drop-target(t) => { root.col-drop-idx = t; }
-                                reorder-end(delta) => {
-                                    if (root.col-drag-active && root.col-drag-id != "") {
-                                        root.column-moved(root.col-drag-id, delta / 1px);
-                                    }
-                                    root.col-drag-active = false;
-                                    root.col-drag-id = "";
-                                    root.col-drag-delta = 0px;
-                                    root.col-drop-idx = -1;
-                                }
-                            }
-                        }
-                    }
-
-                    // === List + empty area + rubber-band overlay ===
-                    list-area := Rectangle {
-            vertical-stretch: 1;
-            preferred-width: 0px;
-            min-width: 0px;
-            max-width: 99999px;
-            // Confines the selection rectangle (and the rows) to the list
-            // area: without this, a negative rubber-band `y` would make it overflow
-            // OVER the column header (list-area draws afterward).
-            clip: true;
-
-            // Vertical Flickable with EXACT content. The standard `ListView` estimates
-            // its anchor via the delegates' average height, which is not
-            // compatible with a mix of 28/76/… px. `rendered-rows` stays a
-            // sub-model bounded to the viewport + overscan: virtualization is
-            // preserved without ever approximating the geometry.
-            rows-scroll := Flickable {
-                width: parent.width;
-                height: parent.height;
-                viewport-width: self.width;
-                viewport-height: max(self.height, root.rows-content-height);
-                interactive: false;
-                changed viewport-y => {
-                    if (!selection.zoom-adjusting) {
-                        root.report-rows-viewport();
-                        root.update-drag-hover-row();
-                        selection.update-pointer-hover();
-                    }
-                }
-                // One wrapper per row carrying the bridge-computed geometry;
-                // the visual that goes inside depends on the role (entry vs
-                // section header) and the display mode (list row vs grid tile).
-                for entry[visible-idx] in root.view.rendered-rows : Rectangle {
-                    x: 0px;
-                    y: entry.visual-y;
-                    width: rows-scroll.viewport-width;
-                    height: entry.visual-h;
-
-                    if entry.role == 1 : SectionHeaderView {
-                        width: parent.width;
-                        strings: root.strings;
-                        label: entry.section-label;
-                        count-text: entry.section-count-text;
-                        pending: entry.section-pending;
-                        collapsed: false;   // the caret follows the entries below
-                        is-folder: entry.is-dir;
-                        icon: entry.is-dir
-                            ? @image-url("../../assets/icons/folder.svg")
-                            : @image-url("../../assets/icons/file.svg");
-                        icon-color: entry.is-dir
-                            ? Tokens.folder-color(entry.folder-slot)
-                            : Theme.foreground.with-alpha(0.6);
-                        indent: entry.visual-x;
-                        hovered: root.hovered-idx == entry.model-index;
-                    }
-                    if entry.role == 0 && root.view.grid-mode : FileTileView {
-                        x: entry.visual-x;
-                        width: entry.visual-w;
-                        name-base: entry.name-base;
-                        name-ext: entry.name-ext;
-                        is-dir: entry.is-dir;
-                        is-symlink: entry.is-symlink;
-                        folder-slot: entry.folder-slot;
-                        kind: entry.kind;
-                        selected: entry.selected;
-                        cut: entry.cut;
-                        hovered: entry.model-index == root.hovered-idx
-                            || (root.file-drag-over && entry.model-index == root.drag-hover-row
-                                && (entry.is-dir || entry.drop-runnable));
-                        hidden: entry.hidden;
-                        comment: entry.comment;
-                        thumbnail: entry.thumbnail;
-                        app-icon: entry.app-icon;
-                        link-folder: entry.link-folder;
-                        preview-mode: root.view.preview-mode;
-                        row-h: entry.visual-h;
-                    }
-                    if entry.role == 0 && !root.view.grid-mode : FileRowView {
-                        width: parent.width;
-                        name: entry.name;
-                        name-base: entry.name-base;
-                        name-ext: entry.name-ext;
-                        hidden: entry.hidden;
-                        age: entry.age;
-                        age-bucket: entry.age-bucket;
-                        path: entry.path;
-                        size: entry.size;
-                        modified: entry.modified;
-                        is-dir: entry.is-dir;
-                        is-symlink: entry.is-symlink;
-                        folder-slot: entry.folder-slot;
-                        comment: entry.comment;
-                        kind: entry.kind;
-                        selected: entry.selected;
-                        cut: entry.cut;
-                        // A drag target receives the same hover as mouse
-                        // hover, including from another Favnyr view/instance.
-                        hovered: entry.model-index == root.hovered-idx
-                            || (root.file-drag-over && entry.model-index == root.drag-hover-row
-                                && (entry.is-dir || entry.drop-runnable));
-                        preview-mode: root.view.preview-mode;
-                        row-h: entry.visual-h;
-                        resolution: entry.resolution;
-                        depth: entry.depth;
-                        ext: entry.ext;
-                        thumbnail: entry.thumbnail;
-                        app-icon: entry.app-icon;
-                        link-folder: entry.link-folder;
-                        col-name-width: root.col-name-width;
-                        col-path-width: root.col-path-width;
-                        col-size-width: root.col-size-width;
-                        col-modified-width: root.col-modified-width;
-                        col-ext-width: root.col-ext-width;
-                        col-resolution-width: root.col-resolution-width;
-                        col-depth-width: root.col-depth-width;
-                        col-age-width: root.col-age-width;
-                        content-width: root.view.content-width;
-                        columns: root.view.columns;
-                    }
-                }
-            }
-
-            // "Folder not found" banner: inaccessible folder (network
-            // drive not started, missing mount). We KEEP the tab + this message
-            // PERSISTENT; it disappears on its own once the folder becomes
-            // accessible again (automatic recheck, see `recheck-unavailable`).
-            if root.view.unavailable : Rectangle {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: parent.height;
-                background: Theme.background;
-                // LEFT-ALIGNED block — on a narrow/cramped view, a
-                // centered warning can "fall" outside the visible area or get
-                // clipped; anchored on the left, it always stays legible. Centered
-                // vertically only.
-                VerticalLayout {
-                    alignment: center;              // centers the block VERTICALLY
-                    spacing: 7px;
-                    padding-left: 22px;
-                    padding-right: 22px;
-                    padding-top: 24px;
-                    padding-bottom: 24px;
-                    // Icon wrapped in a LEFT-aligned HorizontalLayout: a
-                    // fixed-size Image is NOT stretched by the VerticalLayout.
-                    HorizontalLayout {
-                        alignment: start;
-                        Image {
-                            source: @image-url("../../assets/icons/network.svg");
-                            width: 24px;
-                            height: 24px;
-                            colorize: Tokens.danger;
-                        }
-                    }
-                    Text {
-                        text: root.strings.tab-unavailable;
-                        font-size: 14px;
-                        font-weight: 700;
-                        color: Theme.foreground;
-                        horizontal-alignment: left;
-                        wrap: word-wrap;
-                    }
-                    Text {
-                        text: root.view.current-path;
-                        font-size: 12px;
-                        color: Theme.foreground.with-alpha(0.65);
-                        horizontal-alignment: left;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: root.strings.tab-unavailable-hint;
-                        font-size: 11px;
-                        color: Theme.foreground.with-alpha(0.5);
-                        horizontal-alignment: left;
-                        wrap: word-wrap;
-                    }
-                }
-            }
-
-            // ===== Selection layer =====
-            // Pointer gestures over the list (hover, clicks, rubber-band,
-            // middle-click auto-scroll, deferred rename, drag edge auto-scroll)
-            // live in `panel/selection.slint`, in the same frame. The
-            // rubber-band state is shared with `gutter-strip` below and the
-            // scroll positions are two-way; `update-pointer-hover` stays public
-            // for the relayout watches above.
-            selection := PanelSelection {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: parent.height;
-                view: root.view;
-                active: root.active;
-                overlay-open: root.overlay-open;
-                file-drag-active: root.file-drag-active;
-                file-drag-over: root.file-drag-over;
-                file-drag-abs-y: root.file-drag-abs-y;
-                keyboard-interaction-gen: root.keyboard-interaction-gen;
-                rows-vh: rows-scroll.viewport-height;
-                rows-h: rows-scroll.height;
-                flick-vw: flickable.viewport-width;
-                flick-w: flickable.width;
-                rb-cur-cy: root.rb-cur-cy;
-                rb-min-vy: root.rb-min-vy;
-                rows-vy <=> rows-scroll.viewport-y;
-                flick-vx <=> flickable.viewport-x;
-                rb-active <=> root.rb-active;
-                rb-anchor-x <=> root.rb-anchor-x;
-                rb-anchor-cy <=> root.rb-anchor-cy;
-                rb-cur-x <=> root.rb-cur-x;
-                rb-cur-vy <=> root.rb-cur-vy;
-                activate => { root.activate(); }
-                close-ctx-menu => { root.close-ctx-menu(); }
-                deselect-all => { root.deselect-all(); }
-                empty-right-clicked(x, y) => { root.empty-right-clicked(x, y); }
-                file-drag-started(i, x, y) => { root.file-drag-started(i, x, y); }
-                file-drag-progress(x, y) => { root.file-drag-progress(x, y); }
-                file-drag-dropped(x, y) => { root.file-drag-dropped(x, y); }
-                go-back => { root.go-back(); }
-                go-forward => { root.go-forward(); }
-                rename-selected => { root.rename-selected(); }
-                request-focus => { root.request-focus(); }
-                right-clicked(i, x, y) => { root.right-clicked(i, x, y); }
-                row-activated(i) => { root.row-activated(i); }
-                row-clicked(i) => { return root.row-clicked(i); }
-                row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
-                row-shift-clicked(i) => { root.row-shift-clicked(i); }
-                rubber-band-begin(m) => { root.rubber-band-begin(m); }
-                rubber-band-update(x0, y0, x1, y1) => { root.rubber-band-update(x0, y0, x1, y1); }
-                toggle-section(k) => { root.toggle-section(k); }
-                zoom-step(d, t, h, y) => { return root.zoom-step(d, t, h, y); }
-                hit-test(x, y) => { return root.row-idx-at-xy(x, y); }
-                cancel-column-drag => {
-                    if (root.col-drag-active) {
-                        root.col-drag-active = false;
-                        root.col-drag-id = "";
-                        root.col-drop-idx = -1;
-                    }
-                }
-                report-rows-viewport => { root.report-rows-viewport(); }
-                update-drag-hover-row => { root.update-drag-hover-row(); }
-            }
+        // ===== List: column header + rows + selection + scrollbars =====
+        // The list body lives in `panel/list.slint`; the panel forwards the
+        // model, the drag flags, the rubber-band state the gutter strip shares,
+        // and the callbacks. What it still measures comes back through
+        // `list.area-*` / `list.rows-vy` (see `body-top`, `list-inset-x`).
+        list := PanelList {
+            view: root.view;
+            strings: root.strings;
+            active: root.active;
+            overlay-open: root.overlay-open;
+            keyboard-interaction-gen: root.keyboard-interaction-gen;
+            file-drag-active: root.file-drag-active;
+            file-drag-over: root.file-drag-over;
+            file-drag-abs-x: root.file-drag-abs-x;
+            file-drag-abs-y: root.file-drag-abs-y;
+            menu-key-serial: root.menu-key-serial;
+            rb-active <=> root.rb-active;
+            rb-anchor-x <=> root.rb-anchor-x;
+            rb-anchor-cy <=> root.rb-anchor-cy;
+            rb-cur-x <=> root.rb-cur-x;
+            rb-cur-vy <=> root.rb-cur-vy;
+            activate => { root.activate(); }
+            close-ctx-menu => { root.close-ctx-menu(); }
+            column-moved(id, t) => { root.column-moved(id, t); }
+            column-resized(id, w) => { root.column-resized(id, w); }
+            deselect-all => { root.deselect-all(); }
+            empty-right-clicked(x, y) => { root.empty-right-clicked(x, y); }
+            file-drag-dropped(x, y) => { root.file-drag-dropped(x, y); }
+            file-drag-progress(x, y) => { root.file-drag-progress(x, y); }
+            file-drag-started(i, x, y) => { root.file-drag-started(i, x, y); }
+            go-back => { root.go-back(); }
+            go-forward => { root.go-forward(); }
+            keyboard-context-row() => { return root.keyboard-context-row(); }
+            open-columns-menu(x, y) => { root.open-columns-menu(x, y); }
+            rename-selected => { root.rename-selected(); }
+            request-focus => { root.request-focus(); }
+            right-clicked(i, x, y) => { root.right-clicked(i, x, y); }
+            row-activated(i) => { root.row-activated(i); }
+            row-at-content-y(y) => { return root.row-at-content-y(y); }
+            row-clicked(i) => { return root.row-clicked(i); }
+            row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
+            row-shift-clicked(i) => { root.row-shift-clicked(i); }
+            rows-area-width(w) => { root.rows-area-width(w); }
+            rows-viewport-changed(t, h) => { root.rows-viewport-changed(t, h); }
+            rubber-band-begin(m) => { root.rubber-band-begin(m); }
+            rubber-band-update(a, b, c, d) => { root.rubber-band-update(a, b, c, d); }
+            sort-clicked(id) => { root.sort-clicked(id); }
+            toggle-section(k) => { root.toggle-section(k); }
+            zoom-step(d, t, h, y) => { return root.zoom-step(d, t, h, y); }
         }
-                } // closes the VerticalLayout inside the Flickable
-            } // closes Flickable
-
-            // ===== Custom horizontal scrollbar (visible on overflow) =====
-            if needs-hscroll : hscrollbar := Rectangle {
-                x: 0;
-                y: parent.height - 7px;
-                width: parent.width;
-                height: 5px;
-                // TRANSPARENT track (no more background band): discreet, can
-                // no longer read as a dark line.
-                background: transparent;
-                border-radius: 2.5px;
-
-                property <length> thumb-w:
-                    max(30px, self.width * flickable.width / max(1px, flickable.viewport-width));
-
-                // Thumb: position driven by the Flickable's viewport-x.
-                Rectangle {
-                    x: -flickable.viewport-x
-                        / max(1px, flickable.viewport-width - flickable.width)
-                        * (hscrollbar.width - hscrollbar.thumb-w);
-                    y: 0;
-                    width: hscrollbar.thumb-w;
-                    height: parent.height;
-                    // Dimmed (0.22 at rest, formerly 0.4) → light indicator, not a
-                    // dark bar; crisp accent on hover/drag.
-                    background: thumb-touch.has-hover || thumb-touch.pressed
-                        ? Theme.accent-background.with-alpha(0.7)
-                        : Theme.foreground.with-alpha(0.22);
-                    border-radius: parent.border-radius;
-
-                    property <length> drag-start-x;
-                    property <length> drag-start-viewport-x;
-                    thumb-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        pointer-event(ev) => {
-                            if (ev.button == PointerEventButton.left
-                                    && ev.kind == PointerEventKind.down) {
-                                root.close-ctx-menu();
-                                parent.drag-start-x = self.absolute-position.x + self.mouse-x;
-                                parent.drag-start-viewport-x = flickable.viewport-x;
-                            }
-                        }
-                        moved => {
-                            if (self.pressed) {
-                                flickable.viewport-x = parent.drag-start-viewport-x
-                                    - (self.absolute-position.x + self.mouse-x - parent.drag-start-x)
-                                        / max(1px, hscrollbar.width - hscrollbar.thumb-w)
-                                        * (flickable.viewport-width - flickable.width);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ===== Custom VERTICAL scrollbar (visible on vertical overflow) =====
-            // Pinned to the RIGHT edge of the VIEW (not the content) → ALWAYS visible,
-            // even when the columns overflow horizontally. Same
-            // style/logic as the
-            // custom horizontal scrollbar.
-            if root.rb-min-vy < 0px : vscrollbar := Rectangle {
-                x: parent.width - 7px;
-                y: 32px;                              // below the header (30px + 2px spacing)
-                width: 5px;
-                height: flickable.height - 32px;      // stops above the hscrollbar
-                background: transparent;
-                border-radius: 2.5px;
-
-                property <length> thumb-h:
-                    max(30px, self.height * rows-scroll.height / max(1px, rows-scroll.viewport-height));
-
-                Rectangle {
-                    x: 0;
-                    // Position driven by viewport-y (∈ [rb-min-vy, 0]).
-                    y: -rows-scroll.viewport-y
-                        / max(1px, rows-scroll.viewport-height - rows-scroll.height)
-                        * (vscrollbar.height - vscrollbar.thumb-h);
-                    width: parent.width;
-                    height: vscrollbar.thumb-h;
-                    background: vthumb-touch.has-hover || vthumb-touch.pressed
-                        ? Theme.accent-background.with-alpha(0.7)
-                        : Theme.foreground.with-alpha(0.22);
-                    border-radius: parent.border-radius;
-
-                    property <length> drag-start-y;
-                    property <length> drag-start-viewport-y;
-                    vthumb-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        pointer-event(ev) => {
-                            if (ev.button == PointerEventButton.left
-                                    && ev.kind == PointerEventKind.down) {
-                                root.close-ctx-menu();
-                                parent.drag-start-y = self.absolute-position.y + self.mouse-y;
-                                parent.drag-start-viewport-y = rows-scroll.viewport-y;
-                            }
-                        }
-                        moved => {
-                            if (self.pressed) {
-                                rows-scroll.viewport-y = clamp(
-                                    parent.drag-start-viewport-y
-                                        - (self.absolute-position.y + self.mouse-y - parent.drag-start-y)
-                                            / max(1px, vscrollbar.height - vscrollbar.thumb-h)
-                                            * (rows-scroll.viewport-height - rows-scroll.height),
-                                    root.rb-min-vy, 0px);
-                            }
-                        }
-                    }
-                }
-            }
-        } // closes the wrapper Rectangle (Flickable + scrollbar)
 
         // ===== Footer =====
         HorizontalLayout {
@@ -1375,7 +745,7 @@ export component PanelComponent inherits Rectangle {
         x: 0;
         y: root.body-top;
         width: root.tab-mode == 1 ? 0px : root.list-inset-x;
-        height: list-area.height;
+        height: list.area-h;
 
         property <length> down-x;   // list-area position (negative)
         property <length> down-y;
@@ -1418,7 +788,7 @@ export component PanelComponent inherits Rectangle {
                     root.rb-active = true;
                     root.rubber-band-begin(self.down-ctrl ? 2 : (self.down-shift ? 1 : 0));
                     root.rb-anchor-x = self.down-x;
-                    root.rb-anchor-cy = self.down-y - rows-scroll.viewport-y;
+                    root.rb-anchor-cy = self.down-y - list.rows-vy;
                 }
                 if (self.dragging) {
                     root.rb-cur-x = self.mouse-x - root.list-inset-x;
