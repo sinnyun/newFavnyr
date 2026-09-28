@@ -324,9 +324,9 @@ export component PanelList inherits Rectangle {
     changed file-drag-abs-x => { root.update-drag-hover-row(); }
     changed file-drag-abs-y => { root.update-drag-hover-row(); }
 
-// ===== Flickable wrapper: headers + list scroll TOGETHER horizontally =====
-// If the sum of column widths exceeds the available width,
-// a custom scrollbar appears at the bottom of the panel (see below).
+    // ===== Flickable wrapper: headers + list scroll TOGETHER horizontally =====
+    // If the sum of column widths exceeds the available width,
+    // a custom scrollbar appears at the bottom of the panel (see below).
 
     // Actual row width: left gutter (`gutter-content`) +
     // visible columns (`content-width`) + right padding. It must

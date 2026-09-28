@@ -431,283 +431,283 @@ export component PanelComponent inherits Rectangle {
         width: 100%;
         height: 100%;
         clip: true;
-    // Root row: [left vertical tab bar] · content ·
-    // [right vertical bar]. BOTH bars stay in the tree (zero width
-    // and invisible when inactive): a conditional `if` element would not be
-    // referenceable (reveal, viewport-y, drag cursor).
-    HorizontalLayout {
-        padding: Tokens.panel-pad;
-        spacing: 6px;
-        // "Dissolution" fade when the view is about to be absorbed via merge
-        // (dragging its last tab) — main signal, neutral (not red).
-        opacity: root.leaving ? 0.55 : 1.0;
-        animate opacity { duration: 200ms; easing: ease-out; }
-
-        vbar-left := VTabBar {
-            width: root.tab-mode == 1 ? root.vbar-w : 0px;
-            visible: root.tab-mode == 1;
-            on-left: true;
-            tabs: root.view.tabs;
-            active-tab-idx: root.view.active-tab-idx;
-            overlay-open: root.overlay-open;
-            tab-drag-active: root.drag-active;
-            new-tab-tooltip: root.strings.tab-new-tooltip;
-            show-tooltip: root.tab-tooltip-enabled;
-            reorder-here: root.tab-mode == 1 && root.drag-active
-                && root.drag-over && root.drag-in-bar;
-            // Drag cursor in the list's CONTENT position (plain values only:
-            // fixed origin `vtabs-col-y` + viewport reported by the bar).
-            reorder-cur: root.drag-abs-y - root.vtabs-col-y - self.vp-y;
-            cursor-in-bar-y: root.drag-abs-y - root.vtabs-col-y;
-            preview-idx: root.tab-mode == 1 ? root.drag-preview-idx : -1;
-            preview-pos: root.tab-drop-x;
-            claim-drop(g, gy) => { root.report-tab-drop(g, gy); }
-            tab-clicked(i) => { root.activate(); root.tab-clicked(i); }
-            tab-closed(i) => { root.activate(); root.tab-closed(i); }
-            tab-context(i, x, y) => { root.activate(); root.tab-context(i, x, y); }
-            // NO `activate()` during the drag (would rebuild the model →
-            // lost grab; activation on drop, bridge side) — strip parity.
-            tab-drag-progress(i, ax, ay) => { root.tab-drag-progress(i, ax, ay); }
-            tab-drag-completed(i, ax, ay) => {
-                root.tab-drag-completed(i, root.drag-preview-idx, ax, ay);
-            }
-            tab-new => { root.activate(); root.close-ctx-menu(); root.tab-new(); }
-            bar-clicked => { root.activate(); root.close-ctx-menu(); }
-            bar-context(x, y) => { root.activate(); root.tab-bar-context(x, y); }
-            wheel(fwd) => { tabsbar.tab-wheel(fwd); }
-            scrolled(vy) => { root.tabs-scrolled(vy); }
-            scroll-target(ti, fwd, vp, vw) => {
-                return root.scroll-target(ti, fwd, vp, vw);
-            }
-            // Resize via the inner grip: width = mouse −
-            // bar's left edge (panel + padding 7). Shared clamp
-            // via `vbar-w` (the raw live-w is bounded by the formula).
-            grip-moved(ax) => {
-                root.vbar-live-w = ax - root.absolute-position.x - 7px;
-            }
-            grip-done => { root.vbar-resized(root.vbar-w); }
-        }
-
-    VerticalLayout {
-        spacing: 6px;
-
-        // ===== Top toolbar (tabs + nav) =====
-        // `Theme.toolbar` background (one notch darker than the surface) to clearly
-        // set apart the top part (tabs + URL + buttons) from the bottom part
-        // (list). Inset rounded block (the card's border/corner remain
-        // visible around it).
-        Rectangle {
-            // Washed while this view is the one being carried: the header is
-            // what the hand is holding, and saying it there costs nothing
-            // anywhere else.
-            background: root.view-drag-is-source
-                ? Theme.accent-background.with-alpha(0.18)
-                : Theme.toolbar;
-            border-radius: Tokens.radius-row;
-            VerticalLayout {
-                padding: 6px;
-                // Vertical bar: the strip's row is COLLAPSED (height
-                // 0) → no spacing above the nav bar.
-                spacing: root.tab-mode == 0 ? 6px : 0px;
-
-        // ===== Tab strip =====
-        // The scrollable row of tabs with its "+" button lives in
-        // `panel/tabs_bar.slint` and keeps its Flickable private (the panel
-        // never reads the strip's geometry). COLLAPSED (height 0, invisible)
-        // when the tab bar is VERTICAL, but the element stays in the tree —
-        // its TabItems keep claiming the drop gaps (an `if` would break them).
-        tabsbar := PanelTabsBar {
-            view: root.view;
-            strings: root.strings;
-            overlay-open: root.overlay-open;
-            drag-active: root.drag-active;
-            drag-over: root.drag-over;
-            drag-in-bar: root.drag-in-bar;
-            drag-abs-x: root.drag-abs-x;
-            tabs-row-x: root.tabs-row-x;
-            dl-y: root.dl-y;
-            body-top: root.body-top;
-            tab-mode: root.tab-mode;
-            tab-tooltip-enabled: root.tab-tooltip-enabled;
-            drag-preview-idx: root.drag-preview-idx;
-            tab-drop-x: root.tab-drop-x;
-            activate => { root.activate(); }
-            close-ctx-menu => { root.close-ctx-menu(); }
-            tab-new => { root.tab-new(); }
-            tab-clicked(i) => { root.tab-clicked(i); }
-            tab-closed(i) => { root.tab-closed(i); }
-            tab-context(i, x, y) => { root.tab-context(i, x, y); }
-            tab-bar-context(x, y) => { root.tab-bar-context(x, y); }
-            tab-drag-progress(i, ax, ay) => { root.tab-drag-progress(i, ax, ay); }
-            tab-drag-completed(i, ti, ax, ay) => {
-                root.tab-drag-completed(i, ti, ax, ay);
-            }
-            tabs-scrolled(vx) => { root.tabs-scrolled(vx); }
-            scroll-target(ti, fwd, vp, vw) => {
-                return root.scroll-target(ti, fwd, vp, vw);
-            }
-            report-tab-drop(g, x) => { root.report-tab-drop(g, x); }
-            reveal-in-bar(idx) => {
-                if (root.tab-mode == 1) { vbar-left.reveal(idx); }
-                else if (root.tab-mode == 2) { vbar-right.reveal(idx); }
-            }
-        }
-
-        // ===== Nav bar + breadcrumb =====
-        // ===== Nav bar + breadcrumb =====
-        // History / view-mode / path bar / grip / split / close live in
-        // `panel/nav_bar.slint`; the two-way bindings are the edit mode, the
-        // URL field's text and the close-hover preview.
-        navbar := PanelNavBar {
-            view: root.view;
-            strings: root.strings;
-            can-close: root.can-close;
-            tab-mode: root.tab-mode;
-            path-edit-mode <=> root.path-edit-mode;
-            url-edit-text <=> root.url-edit-text;
-            url-menu-open: root.url-menu-open;
-            url-copy-serial: root.url-copy-serial;
-            url-paste-serial: root.url-paste-serial;
-            close-hover <=> root.close-hover;
-            activate => { root.activate(); }
-            go-back => { root.go-back(); }
-            go-forward => { root.go-forward(); }
-            go-parent => { root.go-parent(); }
-            refresh => { root.refresh(); }
-            request-focus => { root.request-focus(); }
-            navigate-to(p) => { root.navigate-to(p); }
-            close-panel => { root.close-panel(); }
-            open-split-menu(x, y) => { root.open-split-menu(x, y); }
-            open-tabbar-menu(x, y) => { root.open-tabbar-menu(x, y); }
-            open-view-menu(x, y) => { root.open-view-menu(x, y); }
-            toggle-subfolder-contents => { root.toggle-subfolder-contents(); }
-            toggle-show-hidden => { root.toggle-show-hidden(); }
-            open-url-menu(x, y) => { root.open-url-menu(x, y); }
-            close-ctx-menu => { root.close-ctx-menu(); }
-            view-drag-progress(x, y) => { root.view-drag-progress(x, y); }
-            view-drag-completed(x, y) => { root.view-drag-completed(x, y); }
-        }
-            } // closes the toolbar's inner VerticalLayout
-        } // closes the toolbar (Theme.toolbar)
-
-        // ===== View filter bar — SHARED component =====
-        // By-NAME type-ahead filter: magnifying glass + typed text; shows as soon as
-        // text is entered. "x" / Escape = reset (see key-scope).
-        if root.active && root.filter-text != "" && !root.view.ext-filter-on : FilterBar {
-            icon: @image-url("../../assets/icons/search.svg");
-            text: root.filter-text;
-            close => { root.close-ctx-menu(); root.filter-clear(); }
-        }
-        // By-EXTENSION filter: funnel + text (hint "jpg, png" if empty).
-        // Activated from the columns menu; driven by keyboard like the
-        // type-ahead (input routed bridge-side). "x" = disables it.
-        if root.view.ext-filter-on : FilterBar {
-            icon: @image-url("../../assets/icons/filter.svg");
-            text: root.view.ext-filter;
-            hint: root.strings.ext-filter-placeholder;
-            close => { root.ext-filter-toggle(); }
-        }
-
-        // ===== List: column header + rows + selection + scrollbars =====
-        // The list body (and the gutter strip beside it) lives in
-        // `panel/list.slint`; the panel forwards the model, the drag
-        // flags and the callbacks. What it still measures of the list
-        // comes back through `list.area-*` (see `body-top`, `list-inset-x`).
-        list := PanelList {
-            view: root.view;
-            strings: root.strings;
-            active: root.active;
-            overlay-open: root.overlay-open;
-            keyboard-interaction-gen: root.keyboard-interaction-gen;
-            file-drag-active: root.file-drag-active;
-            file-drag-over: root.file-drag-over;
-            file-drag-abs-x: root.file-drag-abs-x;
-            file-drag-abs-y: root.file-drag-abs-y;
-            menu-key-serial: root.menu-key-serial;
-            gutter-w: root.tab-mode == 1 ? 0px : root.list-inset-x;
-            activate => { root.activate(); }
-            close-ctx-menu => { root.close-ctx-menu(); }
-            column-moved(id, t) => { root.column-moved(id, t); }
-            column-resized(id, w) => { root.column-resized(id, w); }
-            deselect-all => { root.deselect-all(); }
-            empty-right-clicked(x, y) => { root.empty-right-clicked(x, y); }
-            file-drag-dropped(x, y) => { root.file-drag-dropped(x, y); }
-            file-drag-progress(x, y) => { root.file-drag-progress(x, y); }
-            file-drag-started(i, x, y) => { root.file-drag-started(i, x, y); }
-            go-back => { root.go-back(); }
-            go-forward => { root.go-forward(); }
-            keyboard-context-row() => { return root.keyboard-context-row(); }
-            open-columns-menu(x, y) => { root.open-columns-menu(x, y); }
-            rename-selected => { root.rename-selected(); }
-            request-focus => { root.request-focus(); }
-            right-clicked(i, x, y) => { root.right-clicked(i, x, y); }
-            row-activated(i) => { root.row-activated(i); }
-            row-at-content-y(y) => { return root.row-at-content-y(y); }
-            row-clicked(i) => { return root.row-clicked(i); }
-            row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
-            row-shift-clicked(i) => { root.row-shift-clicked(i); }
-            rows-area-width(w) => { root.rows-area-width(w); }
-            rows-viewport-changed(t, h) => { root.rows-viewport-changed(t, h); }
-            rubber-band-begin(m) => { root.rubber-band-begin(m); }
-            rubber-band-update(a, b, c, d) => { root.rubber-band-update(a, b, c, d); }
-            sort-clicked(id) => { root.sort-clicked(id); }
-            toggle-section(k) => { root.toggle-section(k); }
-            zoom-step(d, t, h, y) => { return root.zoom-step(d, t, h, y); }
-        }
-
-        // ===== Footer =====
+        // Root row: [left vertical tab bar] · content ·
+        // [right vertical bar]. BOTH bars stay in the tree (zero width
+        // and invisible when inactive): a conditional `if` element would not be
+        // referenceable (reveal, viewport-y, drag cursor).
         HorizontalLayout {
+            padding: Tokens.panel-pad;
             spacing: 6px;
-            alignment: start;
-            height: 18px;
-            Text {
-                text: root.footer-text;
-                font-size: 11px;
-                color: Theme.foreground.with-alpha(0.6);
-            }
-        }
-    }
+            // "Dissolution" fade when the view is about to be absorbed via merge
+            // (dragging its last tab) — main signal, neutral (not red).
+            opacity: root.leaving ? 0.55 : 1.0;
+            animate opacity { duration: 200ms; easing: ease-out; }
 
-        vbar-right := VTabBar {
-            width: root.tab-mode == 2 ? root.vbar-w : 0px;
-            visible: root.tab-mode == 2;
-            on-left: false;
-            tabs: root.view.tabs;
-            active-tab-idx: root.view.active-tab-idx;
-            overlay-open: root.overlay-open;
-            tab-drag-active: root.drag-active;
-            new-tab-tooltip: root.strings.tab-new-tooltip;
-            show-tooltip: root.tab-tooltip-enabled;
-            reorder-here: root.tab-mode == 2 && root.drag-active
-                && root.drag-over && root.drag-in-bar;
-            reorder-cur: root.drag-abs-y - root.vtabs-col-y - self.vp-y;
-            cursor-in-bar-y: root.drag-abs-y - root.vtabs-col-y;
-            preview-idx: root.tab-mode == 2 ? root.drag-preview-idx : -1;
-            preview-pos: root.tab-drop-x;
-            claim-drop(g, gy) => { root.report-tab-drop(g, gy); }
-            tab-clicked(i) => { root.activate(); root.tab-clicked(i); }
-            tab-closed(i) => { root.activate(); root.tab-closed(i); }
-            tab-context(i, x, y) => { root.activate(); root.tab-context(i, x, y); }
-            tab-drag-progress(i, ax, ay) => { root.tab-drag-progress(i, ax, ay); }
-            tab-drag-completed(i, ax, ay) => {
-                root.tab-drag-completed(i, root.drag-preview-idx, ax, ay);
+            vbar-left := VTabBar {
+                width: root.tab-mode == 1 ? root.vbar-w : 0px;
+                visible: root.tab-mode == 1;
+                on-left: true;
+                tabs: root.view.tabs;
+                active-tab-idx: root.view.active-tab-idx;
+                overlay-open: root.overlay-open;
+                tab-drag-active: root.drag-active;
+                new-tab-tooltip: root.strings.tab-new-tooltip;
+                show-tooltip: root.tab-tooltip-enabled;
+                reorder-here: root.tab-mode == 1 && root.drag-active
+                    && root.drag-over && root.drag-in-bar;
+                // Drag cursor in the list's CONTENT position (plain values only:
+                // fixed origin `vtabs-col-y` + viewport reported by the bar).
+                reorder-cur: root.drag-abs-y - root.vtabs-col-y - self.vp-y;
+                cursor-in-bar-y: root.drag-abs-y - root.vtabs-col-y;
+                preview-idx: root.tab-mode == 1 ? root.drag-preview-idx : -1;
+                preview-pos: root.tab-drop-x;
+                claim-drop(g, gy) => { root.report-tab-drop(g, gy); }
+                tab-clicked(i) => { root.activate(); root.tab-clicked(i); }
+                tab-closed(i) => { root.activate(); root.tab-closed(i); }
+                tab-context(i, x, y) => { root.activate(); root.tab-context(i, x, y); }
+                // NO `activate()` during the drag (would rebuild the model →
+                // lost grab; activation on drop, bridge side) — strip parity.
+                tab-drag-progress(i, ax, ay) => { root.tab-drag-progress(i, ax, ay); }
+                tab-drag-completed(i, ax, ay) => {
+                    root.tab-drag-completed(i, root.drag-preview-idx, ax, ay);
+                }
+                tab-new => { root.activate(); root.close-ctx-menu(); root.tab-new(); }
+                bar-clicked => { root.activate(); root.close-ctx-menu(); }
+                bar-context(x, y) => { root.activate(); root.tab-bar-context(x, y); }
+                wheel(fwd) => { tabsbar.tab-wheel(fwd); }
+                scrolled(vy) => { root.tabs-scrolled(vy); }
+                scroll-target(ti, fwd, vp, vw) => {
+                    return root.scroll-target(ti, fwd, vp, vw);
+                }
+                // Resize via the inner grip: width = mouse −
+                // bar's left edge (panel + padding 7). Shared clamp
+                // via `vbar-w` (the raw live-w is bounded by the formula).
+                grip-moved(ax) => {
+                    root.vbar-live-w = ax - root.absolute-position.x - 7px;
+                }
+                grip-done => { root.vbar-resized(root.vbar-w); }
             }
-            tab-new => { root.activate(); root.close-ctx-menu(); root.tab-new(); }
-            bar-clicked => { root.activate(); root.close-ctx-menu(); }
-            bar-context(x, y) => { root.activate(); root.tab-bar-context(x, y); }
-            wheel(fwd) => { tabsbar.tab-wheel(fwd); }
-            scrolled(vy) => { root.tabs-scrolled(vy); }
-            scroll-target(ti, fwd, vp, vw) => {
-                return root.scroll-target(ti, fwd, vp, vw);
+
+            VerticalLayout {
+                spacing: 6px;
+
+                // ===== Top toolbar (tabs + nav) =====
+                // `Theme.toolbar` background (one notch darker than the surface) to clearly
+                // set apart the top part (tabs + URL + buttons) from the bottom part
+                // (list). Inset rounded block (the card's border/corner remain
+                // visible around it).
+                Rectangle {
+                    // Washed while this view is the one being carried: the header is
+                    // what the hand is holding, and saying it there costs nothing
+                    // anywhere else.
+                    background: root.view-drag-is-source
+                        ? Theme.accent-background.with-alpha(0.18)
+                        : Theme.toolbar;
+                    border-radius: Tokens.radius-row;
+                    VerticalLayout {
+                        padding: 6px;
+                        // Vertical bar: the strip's row is COLLAPSED (height
+                        // 0) → no spacing above the nav bar.
+                        spacing: root.tab-mode == 0 ? 6px : 0px;
+
+                        // ===== Tab strip =====
+                        // The scrollable row of tabs with its "+" button lives in
+                        // `panel/tabs_bar.slint` and keeps its Flickable private (the panel
+                        // never reads the strip's geometry). COLLAPSED (height 0, invisible)
+                        // when the tab bar is VERTICAL, but the element stays in the tree —
+                        // its TabItems keep claiming the drop gaps (an `if` would break them).
+                        tabsbar := PanelTabsBar {
+                            view: root.view;
+                            strings: root.strings;
+                            overlay-open: root.overlay-open;
+                            drag-active: root.drag-active;
+                            drag-over: root.drag-over;
+                            drag-in-bar: root.drag-in-bar;
+                            drag-abs-x: root.drag-abs-x;
+                            tabs-row-x: root.tabs-row-x;
+                            dl-y: root.dl-y;
+                            body-top: root.body-top;
+                            tab-mode: root.tab-mode;
+                            tab-tooltip-enabled: root.tab-tooltip-enabled;
+                            drag-preview-idx: root.drag-preview-idx;
+                            tab-drop-x: root.tab-drop-x;
+                            activate => { root.activate(); }
+                            close-ctx-menu => { root.close-ctx-menu(); }
+                            tab-new => { root.tab-new(); }
+                            tab-clicked(i) => { root.tab-clicked(i); }
+                            tab-closed(i) => { root.tab-closed(i); }
+                            tab-context(i, x, y) => { root.tab-context(i, x, y); }
+                            tab-bar-context(x, y) => { root.tab-bar-context(x, y); }
+                            tab-drag-progress(i, ax, ay) => { root.tab-drag-progress(i, ax, ay); }
+                            tab-drag-completed(i, ti, ax, ay) => {
+                                root.tab-drag-completed(i, ti, ax, ay);
+                            }
+                            tabs-scrolled(vx) => { root.tabs-scrolled(vx); }
+                            scroll-target(ti, fwd, vp, vw) => {
+                                return root.scroll-target(ti, fwd, vp, vw);
+                            }
+                            report-tab-drop(g, x) => { root.report-tab-drop(g, x); }
+                            reveal-in-bar(idx) => {
+                                if (root.tab-mode == 1) { vbar-left.reveal(idx); }
+                                else if (root.tab-mode == 2) { vbar-right.reveal(idx); }
+                            }
+                        }
+
+                        // ===== Nav bar + breadcrumb =====
+                        // ===== Nav bar + breadcrumb =====
+                        // History / view-mode / path bar / grip / split / close live in
+                        // `panel/nav_bar.slint`; the two-way bindings are the edit mode, the
+                        // URL field's text and the close-hover preview.
+                        navbar := PanelNavBar {
+                            view: root.view;
+                            strings: root.strings;
+                            can-close: root.can-close;
+                            tab-mode: root.tab-mode;
+                            path-edit-mode <=> root.path-edit-mode;
+                            url-edit-text <=> root.url-edit-text;
+                            url-menu-open: root.url-menu-open;
+                            url-copy-serial: root.url-copy-serial;
+                            url-paste-serial: root.url-paste-serial;
+                            close-hover <=> root.close-hover;
+                            activate => { root.activate(); }
+                            go-back => { root.go-back(); }
+                            go-forward => { root.go-forward(); }
+                            go-parent => { root.go-parent(); }
+                            refresh => { root.refresh(); }
+                            request-focus => { root.request-focus(); }
+                            navigate-to(p) => { root.navigate-to(p); }
+                            close-panel => { root.close-panel(); }
+                            open-split-menu(x, y) => { root.open-split-menu(x, y); }
+                            open-tabbar-menu(x, y) => { root.open-tabbar-menu(x, y); }
+                            open-view-menu(x, y) => { root.open-view-menu(x, y); }
+                            toggle-subfolder-contents => { root.toggle-subfolder-contents(); }
+                            toggle-show-hidden => { root.toggle-show-hidden(); }
+                            open-url-menu(x, y) => { root.open-url-menu(x, y); }
+                            close-ctx-menu => { root.close-ctx-menu(); }
+                            view-drag-progress(x, y) => { root.view-drag-progress(x, y); }
+                            view-drag-completed(x, y) => { root.view-drag-completed(x, y); }
+                        }
+                    } // closes the toolbar's inner VerticalLayout
+                } // closes the toolbar (Theme.toolbar)
+
+                // ===== View filter bar — SHARED component =====
+                // By-NAME type-ahead filter: magnifying glass + typed text; shows as soon as
+                // text is entered. "x" / Escape = reset (see key-scope).
+                if root.active && root.filter-text != "" && !root.view.ext-filter-on : FilterBar {
+                    icon: @image-url("../../assets/icons/search.svg");
+                    text: root.filter-text;
+                    close => { root.close-ctx-menu(); root.filter-clear(); }
+                }
+                // By-EXTENSION filter: funnel + text (hint "jpg, png" if empty).
+                // Activated from the columns menu; driven by keyboard like the
+                // type-ahead (input routed bridge-side). "x" = disables it.
+                if root.view.ext-filter-on : FilterBar {
+                    icon: @image-url("../../assets/icons/filter.svg");
+                    text: root.view.ext-filter;
+                    hint: root.strings.ext-filter-placeholder;
+                    close => { root.ext-filter-toggle(); }
+                }
+
+                // ===== List: column header + rows + selection + scrollbars =====
+                // The list body (and the gutter strip beside it) lives in
+                // `panel/list.slint`; the panel forwards the model, the drag
+                // flags and the callbacks. What it still measures of the list
+                // comes back through `list.area-*` (see `body-top`, `list-inset-x`).
+                list := PanelList {
+                    view: root.view;
+                    strings: root.strings;
+                    active: root.active;
+                    overlay-open: root.overlay-open;
+                    keyboard-interaction-gen: root.keyboard-interaction-gen;
+                    file-drag-active: root.file-drag-active;
+                    file-drag-over: root.file-drag-over;
+                    file-drag-abs-x: root.file-drag-abs-x;
+                    file-drag-abs-y: root.file-drag-abs-y;
+                    menu-key-serial: root.menu-key-serial;
+                    gutter-w: root.tab-mode == 1 ? 0px : root.list-inset-x;
+                    activate => { root.activate(); }
+                    close-ctx-menu => { root.close-ctx-menu(); }
+                    column-moved(id, t) => { root.column-moved(id, t); }
+                    column-resized(id, w) => { root.column-resized(id, w); }
+                    deselect-all => { root.deselect-all(); }
+                    empty-right-clicked(x, y) => { root.empty-right-clicked(x, y); }
+                    file-drag-dropped(x, y) => { root.file-drag-dropped(x, y); }
+                    file-drag-progress(x, y) => { root.file-drag-progress(x, y); }
+                    file-drag-started(i, x, y) => { root.file-drag-started(i, x, y); }
+                    go-back => { root.go-back(); }
+                    go-forward => { root.go-forward(); }
+                    keyboard-context-row() => { return root.keyboard-context-row(); }
+                    open-columns-menu(x, y) => { root.open-columns-menu(x, y); }
+                    rename-selected => { root.rename-selected(); }
+                    request-focus => { root.request-focus(); }
+                    right-clicked(i, x, y) => { root.right-clicked(i, x, y); }
+                    row-activated(i) => { root.row-activated(i); }
+                    row-at-content-y(y) => { return root.row-at-content-y(y); }
+                    row-clicked(i) => { return root.row-clicked(i); }
+                    row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
+                    row-shift-clicked(i) => { root.row-shift-clicked(i); }
+                    rows-area-width(w) => { root.rows-area-width(w); }
+                    rows-viewport-changed(t, h) => { root.rows-viewport-changed(t, h); }
+                    rubber-band-begin(m) => { root.rubber-band-begin(m); }
+                    rubber-band-update(a, b, c, d) => { root.rubber-band-update(a, b, c, d); }
+                    sort-clicked(id) => { root.sort-clicked(id); }
+                    toggle-section(k) => { root.toggle-section(k); }
+                    zoom-step(d, t, h, y) => { return root.zoom-step(d, t, h, y); }
+                }
+
+                // ===== Footer =====
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    height: 18px;
+                    Text {
+                        text: root.footer-text;
+                        font-size: 11px;
+                        color: Theme.foreground.with-alpha(0.6);
+                    }
+                }
             }
-            // Resize (bar on the RIGHT): width = bar's right edge
-            // (panel + width − padding 7) − mouse.
-            grip-moved(ax) => {
-                root.vbar-live-w = root.absolute-position.x + root.width - 7px - ax;
+
+            vbar-right := VTabBar {
+                width: root.tab-mode == 2 ? root.vbar-w : 0px;
+                visible: root.tab-mode == 2;
+                on-left: false;
+                tabs: root.view.tabs;
+                active-tab-idx: root.view.active-tab-idx;
+                overlay-open: root.overlay-open;
+                tab-drag-active: root.drag-active;
+                new-tab-tooltip: root.strings.tab-new-tooltip;
+                show-tooltip: root.tab-tooltip-enabled;
+                reorder-here: root.tab-mode == 2 && root.drag-active
+                    && root.drag-over && root.drag-in-bar;
+                reorder-cur: root.drag-abs-y - root.vtabs-col-y - self.vp-y;
+                cursor-in-bar-y: root.drag-abs-y - root.vtabs-col-y;
+                preview-idx: root.tab-mode == 2 ? root.drag-preview-idx : -1;
+                preview-pos: root.tab-drop-x;
+                claim-drop(g, gy) => { root.report-tab-drop(g, gy); }
+                tab-clicked(i) => { root.activate(); root.tab-clicked(i); }
+                tab-closed(i) => { root.activate(); root.tab-closed(i); }
+                tab-context(i, x, y) => { root.activate(); root.tab-context(i, x, y); }
+                tab-drag-progress(i, ax, ay) => { root.tab-drag-progress(i, ax, ay); }
+                tab-drag-completed(i, ax, ay) => {
+                    root.tab-drag-completed(i, root.drag-preview-idx, ax, ay);
+                }
+                tab-new => { root.activate(); root.close-ctx-menu(); root.tab-new(); }
+                bar-clicked => { root.activate(); root.close-ctx-menu(); }
+                bar-context(x, y) => { root.activate(); root.tab-bar-context(x, y); }
+                wheel(fwd) => { tabsbar.tab-wheel(fwd); }
+                scrolled(vy) => { root.tabs-scrolled(vy); }
+                scroll-target(ti, fwd, vp, vw) => {
+                    return root.scroll-target(ti, fwd, vp, vw);
+                }
+                // Resize (bar on the RIGHT): width = bar's right edge
+                // (panel + width − padding 7) − mouse.
+                grip-moved(ax) => {
+                    root.vbar-live-w = root.absolute-position.x + root.width - 7px - ax;
+                }
+                grip-done => { root.vbar-resized(root.vbar-w); }
             }
-            grip-done => { root.vbar-resized(root.vbar-w); }
-        }
-    } // closes the root row [left bar · content · right bar]
+        } // closes the root row [left bar · content · right bar]
 
     } // closes content-clip (rectangular clip wrapper = crisp)
 
