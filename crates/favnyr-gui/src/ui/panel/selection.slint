@@ -1,0 +1,751 @@
+// The pointer layer of one panel's list area: hover, click selection
+// (single / Ctrl / Shift / right / double), the rubber-band rectangle with
+// its edge auto-scroll, the middle-click auto-scroll, the deferred
+// Explorer-style rename, and the auto-scroll of a file drag near the edges.
+//
+// Extracted from panel.slint. Same frame as `list-area`, so the moved
+// coordinates land where they did. The rubber-band state is shared with the
+// panel's `gutter-strip` (the same gesture, started outside the clip) and the
+// scroll positions it writes cross the boundary two-way. It reads the rows
+// only through `hit-test`, which the panel answers from its exact geometry;
+// `update-pointer-hover` stays public because the panel's relayout watches
+// (zoom, revision, viewport reset) must re-run the hover test too.
+
+import { PanelView } from "../structs.slint";
+import { Dismiss, Theme, Tokens, WindowFocus } from "../theme.slint";
+import { DragEdgeScroller } from "../widgets/tabs.slint";
+
+export component PanelSelection inherits Rectangle {
+    in property <PanelView> view;
+    /// This view is the active one (gates the deferred rename).
+    in property <bool> active;
+    /// A modal overlay is open: the wheel is neutralized, gestures are cut.
+    in property <bool> overlay-open;
+    in property <bool> file-drag-active;
+    in property <bool> file-drag-over;
+    in property <length> file-drag-abs-y;
+    /// Global keystroke counter: any keystroke cancels a deferred rename.
+    in property <int> keyboard-interaction-gen;
+    // Frame measurements of the list / body Flickables (see panel.slint):
+    // the scroll bounds, the content heights and the widths the edge
+    // auto-scroll compares against.
+    in property <length> rows-vh;
+    in property <length> rows-h;
+    in property <length> flick-vw;
+    in property <length> flick-w;
+    /// `rb-cur-vy - rows-scroll.viewport-y`, computed by the panel.
+    in property <length> rb-cur-cy;
+    /// Lower (negative) bound of the viewport, computed by the panel.
+    in property <length> rb-min-vy;
+
+    // Scroll positions WRITTEN here (wheel, zoom anchor, edge auto-scroll)
+    // → two-way with the panel's Flickables.
+    in-out property <length> rows-vy: 0px;
+    in-out property <length> flick-vx: 0px;
+    // Rubber-band state. The panel's `gutter-strip` starts the SAME
+    // rectangle from outside the clip → two-way.
+    in-out property <bool> rb-active: false;
+    in-out property <length> rb-anchor-x;
+    in-out property <length> rb-anchor-cy;
+    in-out property <length> rb-cur-x;
+    in-out property <length> rb-cur-vy;
+
+    /// Row under the pointer, -1 = none. The rows' hover binding reads it.
+    out property <int> hovered-idx: -1;
+    /// Set around Ctrl+wheel's synchronous relayout: the rows' geometry
+    /// notification must not republish the old viewport.
+    out property <bool> zoom-adjusting: false;
+    // Pointer state, for the panel's `note-row`: the badge is drawn on the
+    // icon, so where the pointer is decides whether a note is asked for.
+    out property <bool> has-hover: sel-touch.has-hover;
+    out property <bool> pressed: sel-touch.pressed;
+    out property <length> mouse-x: sel-touch.mouse-x;
+
+    callback activate();
+    callback close-ctx-menu();
+    callback deselect-all();
+    callback empty-right-clicked(length, length);
+    callback file-drag-started(int /*row_idx*/, length /*abs_x*/, length /*abs_y*/);
+    callback file-drag-progress(length, length);
+    callback file-drag-dropped(length, length);
+    callback go-back();
+    callback go-forward();
+    callback rename-selected();
+    callback request-focus();
+    callback right-clicked(int, length, length);
+    callback row-activated(int);
+    callback row-clicked(int) -> bool;
+    callback row-ctrl-clicked(int);
+    callback row-shift-clicked(int);
+    callback rubber-band-begin(int /*mode: 0 replace, 1 add, 2 subtract*/);
+    callback rubber-band-update(length, length, length, length);
+    callback toggle-section(string /*key*/);
+    callback zoom-step(int /*delta*/, length /*top*/, length /*height*/,
+        length /*pointer-y*/) -> length;
+    /// Row index under (x, y) in list-area coordinates, answered by the
+    /// panel from the rows' exact geometry (dead zones included).
+    callback hit-test(length, length) -> int;
+    /// A column is being reordered: the panel is the one that owns its
+    /// flags, so the cancel runs there.
+    callback cancel-column-drag();
+    /// Coalesced viewport / drag-hover republish, as the panel does it.
+    callback report-rows-viewport();
+    callback update-drag-hover-row();
+
+    // Auto-scroll on middle-click held down (browser/PDF style): we
+    // store the cursor's origin on press; a Timer scrolls continuously at a
+    // speed proportional to the current offset — vertical AND horizontal.
+    property <bool> mid-scroll-active: false;
+    property <length> mid-origin-y;
+    // Horizontal axis: `sel-touch` SCROLLS horizontally with the Flickable,
+    // so `mouse-x` alone (relative to sel-touch) drifts as the view scrolls. The
+    // FIXED reference is `mouse-x + root.flick-vx`. We store it on every
+    // change of `mouse-x` (consistent instant); the Timer reads the stored value.
+    property <length> mid-origin-fx;   // fixed reference at click (origin)
+    property <length> mid-cur-fx;      // current fixed reference
+
+    // Recomputed on every relayout that can move a row under a stationary
+    // pointer. Public: the panel's watches call it across the boundary.
+    public function update-pointer-hover() {
+        if (sel-touch.has-hover && !sel-touch.pressed && !root.mid-scroll-active) {
+            let hover: int = root.hit-test(sel-touch.mouse-x, sel-touch.mouse-y);
+            root.hovered-idx = hover;
+            if (sel-touch.rename-pending && hover != sel-touch.rename-candidate-idx) {
+                sel-touch.cancel-rename-candidate();
+            }
+        }
+    }
+
+    // SINGLE, STABLE TouchArea above the viewport: handles hover,
+    // clicks (single / Ctrl / Shift / right / double) and rubber-band, by
+    // deducing the row index from `mouse-y` (see row-idx-at-y).
+    // Since it is never virtualized, mouse-up is always received
+    // → the rubber-band ends cleanly even after auto-scroll.
+    sel-touch := TouchArea {
+        // This TouchArea covers the viewport to handle clicks, hover, and
+        // the selection rectangle without depending on virtualized rows.
+        // It reserves 14px on the right for the native scrollbar in case of
+        // overflow, and keeps x=0 to keep local coordinates
+        // aligned. `gutter-strip` covers the inset outside the clip.
+        x: 0;
+        y: 0;
+        width: root.rows-vh > root.rows-h
+            ? parent.width - 14px
+            : parent.width;
+        height: parent.height;
+
+        property <length> down-x;
+        property <length> down-y;
+        property <bool> dragging: false;
+        // Was the press on a ROW (≥ gutter) → file drag;
+        // otherwise (dead zone) → selection rectangle.
+        property <bool> down-on-row: false;
+        property <int> down-idx: -1;
+        // Was the entry already selected AT THE TIME of the new
+        // press? This is the signature of Explorer's slow second click.
+        property <bool> down-was-selected: false;
+        // A click that primarily serves to ACTIVATE another view must never
+        // count as the slow second click of an Explorer rename.
+        property <bool> down-view-was-active: false;
+        // Same lock for a click that primarily serves to CLOSE a
+        // backdrop-less context menu. On release the menu is already closed,
+        // so its state must be stored BEFORE `close-ctx-menu()`.
+        property <bool> down-overlay-was-open: false;
+        // Modifiers stored on press (source: pointer event)
+        // → rubber-band mode robust to a keyboard focus loss.
+        property <bool> down-ctrl: false;
+        property <bool> down-shift: false;
+        property <bool> file-drag: false;
+        // A selection rectangle closed by something other than the
+        // release that drew it (an overlay taking the pointer). The
+        // release still arrives here and must then extend nothing.
+        property <bool> rb-cancelled: false;
+        // Did the gesture that just ended drag? `dragging` is reset when
+        // the release is handled, so it cannot answer for a backend that
+        // reports the double-click afterwards. This one is only re-armed
+        // by the NEXT press, which makes the answer valid whichever of
+        // the two arrives first.
+        property <bool> last-gesture-dragged: false;
+        // Rename candidate armed on release of the second click. The
+        // delay gives priority to a double-click; path + index make
+        // the check robust to a re-list/re-sort during the wait.
+        property <bool> rename-pending: false;
+        property <int> rename-candidate-idx: -1;
+        property <string> rename-candidate-dir: "";
+        property <string> rename-candidate-name: "";
+        property <int> rename-candidate-tab: -1;
+        property <int> rename-candidate-activation: -1;
+        // An activation (double-click) consumes the whole click sequence
+        // that produced it. The counter, captured on pointer-down, makes the
+        // decision independent of the backend's `double-clicked`/pointer-up
+        // ordering and of any reentrancy during ShellExecute.
+        property <int> activation-generation: 0;
+        property <int> activation-at-down: 0;
+        // Also prevents a fast third click from accidentally becoming
+        // a "slow second click" right after launching an entry.
+        property <bool> activation-cooldown: false;
+
+        function cancel-rename-candidate() {
+            self.rename-pending = false;
+            self.rename-candidate-idx = -1;
+            self.rename-candidate-activation = -1;
+        }
+        // Folder/tab change, overlay, active panel, keystroke, or
+        // click in the chrome: all invalidate the candidate's context.
+        property <string> dir-watch: root.view.current-path;
+        property <int> tab-watch: root.view.active-tab-idx;
+        property <int> dismiss-serial: Dismiss.serial;
+        // The click that brings the window back to the front is what
+        // the window manager asked for, not a second click on an entry.
+        // The view already refuses to read a click as a rename when it
+        // primarily served to activate another VIEW; a window that was
+        // not in front deserves exactly the same, and gets the same
+        // guard rather than a second one.
+        property <int> window-activations: WindowFocus.activations;
+        property <int> keyboard-serial: root.keyboard-interaction-gen;
+        property <bool> overlay-watch: root.overlay-open;
+        property <bool> active-watch: root.active;
+        changed dir-watch => { self.cancel-rename-candidate(); }
+        changed tab-watch => { self.cancel-rename-candidate(); }
+        changed dismiss-serial => { self.cancel-rename-candidate(); }
+        changed window-activations => {
+            self.cancel-rename-candidate();
+            self.activation-cooldown = true;
+            rename-activation-cooldown-timer.restart();
+        }
+        changed keyboard-serial => { self.cancel-rename-candidate(); }
+        changed overlay-watch => {
+            if (self.overlay-watch) {
+                self.cancel-rename-candidate();
+                // An overlay takes the pointer, so the left release that
+                // would have ended a selection rectangle may never reach
+                // this area. The rectangle is closed here, keeping what it
+                // had already selected. This covers the context menu
+                // opened with the left button still held down, and every
+                // other popup that can appear mid-gesture.
+                if (root.rb-active) {
+                    root.rb-active = false;
+                    self.rb-cancelled = true;
+                }
+                // A column being reordered is cut the same way. It lives
+                // in this panel rather than in the window, so the window's
+                // own cancel does not reach it; the header follows this
+                // flag going down and stops looking carried.
+root.cancel-column-drag();
+                // And the middle-click auto-scroll, which ends on the
+                // middle button coming up: lose that release and the
+                // view scrolls on its own with nothing to stop it.
+                root.mid-scroll-active = false;
+            }
+        }
+        changed active-watch => {
+            if (!self.active-watch) { self.cancel-rename-candidate(); }
+        }
+        // This gesture is over even though the button may still be
+        // down, so whatever is left of it is ignored until the NEXT
+        // press. Two ways in: the drag was externalized (native OLE),
+        // whose modal loop swallows the release, or it was cut short by
+        // a menu taking the pointer. Both would otherwise leave a
+        // "phantom" drag, or turn a stale release into a click.
+        property <bool> gesture-done: false;
+
+        // The window can cut the drag from under this area: a menu
+        // opening mid-gesture, Escape, or the handover to a native
+        // drag. The local gesture ends with it — otherwise a release
+        // that did arrive would still be read as a drop, and the same
+        // gesture would keep drawing a rectangle it no longer owns.
+        property <bool> fd-watch: root.file-drag-active;
+        changed fd-watch => {
+            if (!self.fd-watch && self.file-drag) {
+                self.dragging = false;
+                self.file-drag = false;
+                self.gesture-done = true;
+            }
+        }
+
+        // Wheel: Ctrl+wheel = zoom entries (growing size,
+        // switches to thumbnails past the threshold); otherwise normal scrolling
+        // (the viewport sits under this TouchArea, which captures the events).
+        scroll-event(ev) => {
+            // The row under a stationary pointer changes during a scroll:
+            // a deferred rename must never target the old entry.
+            self.cancel-rename-candidate();
+            // During a FILE DRAG: the wheel ALWAYS SCROLLS the
+            // hovered view (never zooms, even with Ctrl+drag) → reach an
+            // off-screen folder without releasing the drag. This branch
+            // precedes the overlay gate because the drag is itself part of
+            // `any-overlay-open`.
+            if (root.file-drag-active) {
+                if (root.file-drag-over) {
+                    root.rows-vy = clamp(
+                        root.rows-vy + ev.delta-y, root.rb-min-vy, 0px);
+                }
+                return accept;
+            }
+            // A modal overlay is open → we consume the wheel event without
+            // doing anything: the view must not scroll/zoom under the popup.
+            if (root.overlay-open) {
+                return accept;
+            }
+            // Ctrl+wheel = zoom. We read the modifier CARRIED BY
+            // THE EVENT (`ev.modifiers.control`), the AUTHORITATIVE
+            // keyboard state maintained by Slint's core, rather than
+            // `root.ctrl-down`: the latter is only up to date if
+            // `key-scope` has keyboard focus. Since an element can take it
+            // away (hover/click elsewhere), `ctrl-down` used to stay stuck
+            // at false → Ctrl+wheel stopped zooming and scrolled instead.
+            if (ev.modifiers.control && ev.delta-y != 0) {
+                root.activate();
+                root.zoom-adjusting = true;
+                let anchored-top: length = root.zoom-step(
+                    ev.delta-y > 0 ? 1 : -1,
+                    max(0px, -root.rows-vy),
+                    root.rows-h,
+                    self.mouse-y);
+                // The callback is synchronous: the rows' geometry is
+                // already the new one. Re-applying the anchor AFTER this relayout
+                // prevents an absolute scroll value from targeting other
+                // files when the heights change.
+                root.rows-vy = clamp(
+                    -anchored-top, root.rb-min-vy, 0px);
+                root.zoom-adjusting = false;
+                // Intermediate notifications were coalesced:
+                // a single final publish drives virtualization,
+                // thumbnail priority, drag-hover, and mouse hover.
+                root.report-rows-viewport();
+                root.update-drag-hover-row();
+                root.update-pointer-hover();
+                return accept;
+            }
+            root.rows-vy = clamp(
+                root.rows-vy + ev.delta-y, root.rb-min-vy, 0px);
+            return accept;
+        }
+
+        moved => {
+            // Externalized drag (native OLE): we ignore any movement
+            // until the next press — otherwise `self.pressed` staying true
+            // (release consumed by the modal loop) would restart a
+            // phantom drag.
+            if (self.gesture-done) { return; }
+            if (self.file-drag && self.dragging && !root.file-drag-active) {
+                self.gesture-done = true;
+                self.dragging = false;
+                self.file-drag = false;
+                return;
+            }
+            if (self.pressed) {
+                if (!self.dragging
+                        && (abs(self.mouse-x - self.down-x) > 4px
+                            || abs(self.mouse-y - self.down-y) > 4px)) {
+                    self.cancel-rename-candidate();
+                    self.dragging = true;
+                    if (self.down-on-row) {
+                        // Press on a file/folder → cross-view drag.
+                        self.file-drag = true;
+                        root.file-drag-started(self.down-idx,
+                            self.absolute-position.x + self.mouse-x,
+                            self.absolute-position.y + self.mouse-y);
+                    } else {
+                        // Dead zone → selection rectangle. Mode based on the
+                        // modifier: Ctrl = subtract, Shift = add,
+                        // otherwise replace. The bridge captures the base;
+                        // no more `deselect-all` here (the 1st UPDATE handles it
+                        // in replace mode).
+                        self.file-drag = false;
+                        root.rb-active = true;
+                        root.rubber-band-begin(self.down-ctrl ? 2 : (self.down-shift ? 1 : 0));
+                        root.rb-anchor-x = self.down-x;
+                        root.rb-anchor-cy = self.down-y - root.rows-vy;
+                    }
+                }
+                if (self.dragging && self.file-drag) {
+                    root.file-drag-progress(
+                        self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                } else if (self.dragging) {
+                    root.rb-cur-x = self.mouse-x;
+                    root.rb-cur-vy = self.mouse-y;
+                    root.rubber-band-update(
+                        min(root.rb-anchor-x, root.rb-cur-x),
+                        min(root.rb-anchor-cy, root.rb-cur-cy),
+                        max(root.rb-anchor-x, root.rb-cur-x),
+                        max(root.rb-anchor-cy, root.rb-cur-cy),
+                    );
+                }
+            }
+            // NB: `moved` fires ONLY during a press (drag);
+            // plain hover is handled by `changed mouse-y` below.
+        }
+
+        // Hover (no press): `mouse-y`/`mouse-x` update as the
+        // cursor moves → we highlight the row under the pointer.
+        // The left gutter (`Tokens.gutter`) is a dead zone: no
+        // hover (consistent with click/right-click, which also ignore it).
+        // `mouse-x` is handled in addition to `mouse-y` to cover a
+        // purely horizontal movement entering/exiting the gutter.
+        // (Not during middle-click auto-scroll, to avoid flickering.)
+        changed mouse-y => {
+            if (!self.pressed && !root.mid-scroll-active) {
+                let hover: int = root.hit-test(self.mouse-x, self.mouse-y);
+                root.hovered-idx = hover;
+                if (self.rename-pending && hover != self.rename-candidate-idx) {
+                    self.cancel-rename-candidate();
+                }
+            }
+        }
+        changed mouse-x => {
+            // Horizontal middle-click auto-scroll: stores the position
+            // in the FIXED reference `mouse-x + viewport-x` at this instant (where
+            // mouse-x is consistent with the geometry) → the Timer reads it without
+            // drift. Otherwise, row hover (horizontal movement).
+            if (root.mid-scroll-active) {
+                root.mid-cur-fx = self.mouse-x + root.flick-vx;
+            } else if (!self.pressed) {
+                let hover: int = root.hit-test(self.mouse-x, self.mouse-y);
+                root.hovered-idx = hover;
+                if (self.rename-pending && hover != self.rename-candidate-idx) {
+                    self.cancel-rename-candidate();
+                }
+            }
+        }
+
+        changed has-hover => {
+            if (!self.has-hover) {
+                self.cancel-rename-candidate();
+                root.hovered-idx = -1;
+                // Safety: if the cursor leaves the area (e.g. button
+                // released outside), we cut the middle-click auto-scroll.
+                root.mid-scroll-active = false;
+            }
+        }
+
+        pointer-event(ev) => {
+            // Any new interaction cancels a previous candidate.
+            // The current left click may arm a new one on up.
+            if (ev.kind == PointerEventKind.down) {
+                self.cancel-rename-candidate();
+            }
+            // SIDE mouse buttons (X1/X2) = Back / Forward
+            // in the panel's history, like Windows Explorer.
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.back) {
+                root.activate();
+                root.go-back();
+            }
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.forward) {
+                root.activate();
+                root.go-forward();
+            }
+            if (ev.kind == PointerEventKind.down
+                    && ev.button == PointerEventButton.left) {
+                // Modifiers stored from the EVENT (authoritative
+                // source, up to date even if `key-scope` doesn't have
+                // keyboard focus). The rubber-band mode captured a
+                // moment later in `moved` relies on this rather
+                // than `root.ctrl-down`/`shift-down` (which can be
+                // stuck after a focus loss).
+                self.down-ctrl = ev.modifiers.control;
+                self.down-shift = ev.modifiers.shift;
+                // Captured BEFORE `activate()`: after the call, `root.active`
+                // would already be true and the information would be lost.
+                self.down-view-was-active = root.active;
+                // Captured BEFORE `close-ctx-menu()` to distinguish a real
+                // second click from a click meant to dismiss the menu.
+                self.down-overlay-was-open = root.overlay-open;
+                root.activate();
+                // A left click closes the context menu (and still goes on
+                // to select the row on release).
+                root.close-ctx-menu();
+                self.down-x = self.mouse-x;
+                self.down-y = self.mouse-y;
+                self.dragging = false;
+                self.file-drag = false;
+                self.rb-cancelled = false;  // new press → re-arm
+                self.last-gesture-dragged = false;
+                self.gesture-done = false;  // new press → re-arm
+                self.activation-at-down = self.activation-generation;
+                // Is the press on a ROW that can be dragged (an entry,
+                // outside the dead zones)? A section header is not one:
+                // dragging from it draws a rubber-band.
+                self.down-idx = root.hit-test(self.mouse-x, self.mouse-y);
+                self.down-on-row = self.down-idx >= 0
+                    && root.view.rows[self.down-idx].role == 0;
+                self.down-was-selected = self.down-idx >= 0
+                    && self.down-idx < root.view.rows.length
+                    && root.view.rows[self.down-idx].selected;
+            }
+            if (ev.kind == PointerEventKind.up
+                    && ev.button == PointerEventButton.left) {
+                // The rectangle dies with the button that drew it,
+                // whichever branch below claims this release. Closing it
+                // inside the drag branch alone left it frozen on screen
+                // whenever another branch took the release first — and a
+                // rectangle still drawn once the mouse is up is the one
+                // outcome the user has no way to undo.
+                let rb-was-live: bool = root.rb-active && !self.rb-cancelled;
+                root.rb-active = false;
+                if (self.gesture-done) {
+                    // The gesture was ended elsewhere — handed to a
+                    // native drag, or cut short by a menu taking the
+                    // pointer. Its release selects nothing: reading it
+                    // as a click would move the selection under the very
+                    // menu the user just opened.
+                } else if (self.activation-at-down != self.activation-generation) {
+                    // End of a sequence consumed by `double-clicked`:
+                    // does not select the entry that appeared under the mouse
+                    // after a navigation, and never arms the rename.
+                } else if (self.dragging && self.file-drag) {
+                    // End of a file drag → MainWindow decides
+                    // (drop menu if ANOTHER view is under the cursor).
+                    root.file-drag-dropped(
+                        self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                    self.file-drag = false;
+                } else if (self.dragging) {
+                    if (rb-was-live) {
+                        // FINAL update at the RELEASE position before
+                        // closing: a fast drag often releases between two
+                        // coalesced `moved` events → the band was only extended
+                        // up to the last `moved`, leaving the last
+                        // swept rows out of the selection.
+                        root.rb-cur-x = self.mouse-x;
+                        root.rb-cur-vy = self.mouse-y;
+                        root.rubber-band-update(
+                            min(root.rb-anchor-x, root.rb-cur-x),
+                            min(root.rb-anchor-cy, root.rb-cur-cy),
+                            max(root.rb-anchor-x, root.rb-cur-x),
+                            max(root.rb-anchor-cy, root.rb-cur-cy),
+                        );
+                    }
+                    // A rectangle already cancelled extends nothing. The
+                    // branch is still taken so the release cannot fall
+                    // through to the click handling below, which would
+                    // discard the very selection the rectangle just made.
+                } else {
+                    // Left gutter AND right dead zone (beyond the
+                    // columns) are NOT entry click zones: a
+                    // left click there deselects (blank area).
+                    let idx: int = root.hit-test(self.mouse-x, self.mouse-y);
+                    if (idx < 0) {
+                        root.deselect-all();
+                    } else if (root.view.rows[idx].role == 1) {
+                        // A section header folds / unfolds its section:
+                        // it is never a selection and never a target.
+                        root.toggle-section(root.view.rows[idx].section);
+                    } else if (ev.modifiers.control) {
+                        root.row-ctrl-clicked(idx);
+                    } else if (ev.modifiers.shift) {
+                        root.row-shift-clicked(idx);
+                    } else {
+                        // The callback reports whether this row was
+                        // ALREADY the entire selection. A click that
+                        // collapses a multiple selection onto one entry
+                        // is the user DROPPING the others, not asking to
+                        // rename what they kept — and on the clicked row
+                        // alone the two are indistinguishable, since it
+                        // was selected before and after.
+                        let was-sole-selection: bool = root.row-clicked(idx);
+                        // A first click selects. Only a following click
+                        // on this already-selected entry arms the popup.
+                        // The Timer will still check hover, identity, and state.
+                        if (!self.activation-cooldown
+                                && self.down-view-was-active
+                                && !self.down-overlay-was-open
+                                && was-sole-selection
+                                && self.down-was-selected && idx == self.down-idx) {
+                            self.rename-candidate-idx = idx;
+                            self.rename-candidate-dir = root.view.current-path;
+                            self.rename-candidate-name = root.view.rows[idx].name;
+                            self.rename-candidate-tab = root.view.active-tab-idx;
+                            self.rename-candidate-activation = self.activation-generation;
+                            self.rename-pending = true;
+                        }
+                    }
+                }
+                self.last-gesture-dragged = self.dragging;
+                self.dragging = false;
+                root.request-focus();
+            }
+            // Middle-click held down → auto-scroll (origin = press
+            // position). Release (any button) → stop.
+            if (ev.kind == PointerEventKind.down
+                    && ev.button == PointerEventButton.middle) {
+                root.activate();
+                root.mid-origin-y = self.mouse-y;
+                root.mid-origin-fx = self.mouse-x + root.flick-vx;
+                root.mid-cur-fx = root.mid-origin-fx;
+                root.mid-scroll-active = true;
+            }
+            if (ev.kind == PointerEventKind.up
+                    && ev.button == PointerEventButton.middle) {
+                root.mid-scroll-active = false;
+            }
+            if (ev.kind == PointerEventKind.down
+                    && ev.button == PointerEventButton.right) {
+                root.activate();
+                // Right-click in the left gutter OR the right dead zone
+                // = background menu (Paste…) even if a row is there.
+                // A section header is not an entry either: the menu it
+                // would open acts on files, and it owns none.
+                let ridx: int = root.hit-test(self.mouse-x, self.mouse-y);
+                if (ridx < 0 || root.view.rows[ridx].role == 1) {
+                    root.empty-right-clicked(
+                        self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                } else {
+                    root.right-clicked(
+                        ridx,
+                        self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
+
+        double-clicked => {
+            // An entry opens on a double-click only when the second click
+            // was a plain click. A gesture that dragged is a selection
+            // rectangle: two of them drawn quickly across the same row are
+            // a coincidence of position, not a request to open it. Checked
+            // before the counter below moves, so the release still ends the
+            // rectangle through its normal branch.
+            if (self.dragging || self.last-gesture-dragged) { return; }
+            // Double-click keeps its opening semantics and always
+            // wins over the slow second-click. Incrementing BEFORE the
+            // application-level call also invalidates a Timer already queued if
+            // opening the file causes a focus loss or re-enters the
+            // native event loop.
+            self.cancel-rename-candidate();
+            self.activation-generation += 1;
+            self.activation-cooldown = true;
+            rename-activation-cooldown-timer.restart();
+            // Respects the dead zones (gutter / beyond the columns).
+            let idx: int = root.hit-test(self.mouse-x, self.mouse-y);
+            if (idx >= 0) {
+                root.activate();
+                root.row-activated(idx);
+            }
+        }
+    }
+
+    // Explorer-style rename: after the second click, wait a bit
+    // and only open if the pointer is still targeting EXACTLY the same
+    // entry. F2 and the context menu still use the same route.
+    rename-delay-timer := Timer {
+        interval: 500ms;
+        // IMPORTANT: the Timer's lifecycle must be driven by
+        // reactive state. A `running: false` + `restart()` gets canceled
+        // by the next Slint re-evaluation and makes the nominal case
+        // inoperative. `cancel-rename-candidate()` is enough to stop it.
+        running: sel-touch.rename-pending;
+        triggered => {
+            // `stop()` normally cancels the event. The explicit check
+            // additionally guards against a callback already queued during
+            // an external application activation.
+            let was-pending: bool = sel-touch.rename-pending;
+            let idx: int = sel-touch.rename-candidate-idx;
+            let activation: int = sel-touch.rename-candidate-activation;
+            sel-touch.cancel-rename-candidate();
+            if (was-pending
+                    && activation == sel-touch.activation-generation
+                    && root.active && !root.overlay-open && !root.file-drag-active
+                    && idx >= 0 && idx < root.view.rows.length
+                    && root.view.current-path == sel-touch.rename-candidate-dir
+                    && root.view.active-tab-idx == sel-touch.rename-candidate-tab
+                    && root.hovered-idx == idx
+                    && root.view.rows[idx].selected
+                    && root.view.rows[idx].name == sel-touch.rename-candidate-name) {
+                root.rename-selected();
+            }
+        }
+    }
+
+    rename-activation-cooldown-timer := Timer {
+        interval: 500ms;
+        // Same principle: the guard always returns to false after the
+        // delay, even if the activation modified the model or focus.
+        running: sel-touch.activation-cooldown;
+        triggered => { sel-touch.activation-cooldown = false; }
+    }
+
+    if root.rb-active : Rectangle {
+        // Converts the rectangle (in content coords) back to visible.
+        x: min(root.rb-anchor-x, root.rb-cur-x);
+        y: min(root.rb-anchor-cy, root.rb-cur-cy) + root.rows-vy;
+        width: abs(root.rb-cur-x - root.rb-anchor-x);
+        height: abs(root.rb-cur-cy - root.rb-anchor-cy);
+        background: Theme.accent-background.with-alpha(0.15);
+        border-width: 1px;
+        border-color: Theme.accent-background.with-alpha(0.55);
+    }
+
+    // Automatic scroll when the rectangle reaches an edge.
+    // As long as the rubber-band is active and the mouse is within the
+    // edge zone, we scroll the viewport; since `rb-cur-cy` is reactive to
+    // scroll, the selection extends on its own to the revealed rows.
+    Timer {
+        interval: 16ms;
+        running: root.rb-active;
+        triggered => {
+            if (root.rb-cur-vy < 24px && root.rows-vy < 0px) {
+                root.rows-vy = min(0px, root.rows-vy + 18px);
+                root.rubber-band-update(
+                    min(root.rb-anchor-x, root.rb-cur-x),
+                    min(root.rb-anchor-cy, root.rb-cur-cy),
+                    max(root.rb-anchor-x, root.rb-cur-x),
+                    max(root.rb-anchor-cy, root.rb-cur-cy),
+                );
+            } else if (root.rb-cur-vy > root.height - 24px
+                    && root.rows-vy > root.rb-min-vy) {
+                root.rows-vy = max(root.rb-min-vy, root.rows-vy - 18px);
+                root.rubber-band-update(
+                    min(root.rb-anchor-x, root.rb-cur-x),
+                    min(root.rb-anchor-cy, root.rb-cur-cy),
+                    max(root.rb-anchor-x, root.rb-cur-x),
+                    max(root.rb-anchor-cy, root.rb-cur-cy),
+                );
+            }
+        }
+    }
+
+    // Auto-scroll during a FILE DRAG when the cursor nears the top/bottom
+    // edge of the body → reaches an off-screen folder; `drag-folder-row`
+    // follows the scroll, so the target updates on its own. Active only on
+    // the hovered panel. `list-area` is the unscrolled body frame, so
+    // `file-drag-abs-y - list-area.y` is the in-body offset the edges use.
+    DragEdgeScroller {
+        active: root.file-drag-active && root.file-drag-over;
+        cursor-y: root.file-drag-abs-y;
+        frame-y: root.absolute-position.y;
+        frame-h: root.height;
+        min-vy: root.rb-min-vy;
+        viewport-y <=> root.rows-vy;
+    }
+
+    // Auto-scroll on middle-click held down (browser/PDF style):
+    // as long as the middle button is held, we scroll at a speed
+    // proportional to the gap between the mouse and the press point
+    // (10px dead zone to stay still near the origin). The
+    // two axes are independent → diagonal scrolling is possible.
+    Timer {
+        interval: 16ms;
+        running: root.mid-scroll-active;
+        triggered => {
+            let dead: length = 10px;
+            // --- Vertical (exact Flickable viewport-y) ---
+            if (root.rows-vh > root.rows-h) {
+                let d: length = sel-touch.mouse-y - root.mid-origin-y;
+                let eff: length = d > dead ? d - dead : (d < -dead ? d + dead : 0px);
+                root.rows-vy = clamp(
+                    root.rows-vy - eff / 6, root.rb-min-vy, 0px);
+            }
+            // Horizontal (Flickable viewport-x) — FIXED reference ---
+            if (root.flick-vw > root.flick-w) {
+                let dx: length = root.mid-cur-fx - root.mid-origin-fx;
+                let effx: length = dx > dead ? dx - dead : (dx < -dead ? dx + dead : 0px);
+                root.flick-vx = clamp(
+                    root.flick-vx - effx / 6,
+                    -(root.flick-vw - root.flick-w), 0px);
+            }
+        }
+    }
+}
