@@ -113,6 +113,10 @@ cargo run --release --bin favnyr
 
 The executable lands in `target/release/` (`favnyr` on Linux, `favnyr.exe` on Windows). Copy it anywhere. `cargo clean` reclaims the build directory, which is large.
 
+### Restricted networks
+
+If `static.rust-lang.org` or `index.crates.io` is unreachable on your machine — common on mainland-China links — the toolchain download and the dependency fetch both fail before the build starts. The repository ships a cargo configuration that routes crates.io through a mirror, and the toolchain mirror is a two-line environment change. Both, and how to turn them off, are in [docs/mirrors.md](docs/mirrors.md).
+
 ## License
 
 GNU General Public License v3.0 or later.

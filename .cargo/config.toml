@@ -1,0 +1,24 @@
+# Cargo configuration for the Favnyr repository.
+#
+# crates.io is not always reachable directly: on mainland-China links both
+# index.crates.io and static.crates.io routinely fail at the TLS handshake, so
+# a plain checkout cannot resolve a single dependency. This file replaces the
+# crates.io source with the rsproxy.cn sparse mirror so the repository builds on
+# a restricted connection with no per-machine setup.
+#
+# Trade-off: it applies to everyone who builds here, including GitHub Actions
+# runners, which reach crates.io natively and see the mirror only as a slower
+# detour. Any user-level ~/.cargo/config.toml or `cargo --config` value takes
+# precedence, so a machine that can reach crates.io can opt back out without
+# touching the repository. See docs/mirrors.md.
+
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+# Let the git CLI fetch git dependencies: it retries and honours system proxy
+# settings better than the built-in libgit2 transport on a flaky link.
+[net]
+git-fetch-with-cli = true
