@@ -80,7 +80,11 @@ pub(in crate::bridge) struct Panel {
 impl Panel {
     /// New panel with an explicit tab bar position (settings
     /// default, inherited on split, instance detached via tear-off).
-    pub(in crate::bridge) fn with_mode(initial: PathBuf, columns: Vec<ColumnSpec>, tab_bar_mode: u8) -> Self {
+    pub(in crate::bridge) fn with_mode(
+        initial: PathBuf,
+        columns: Vec<ColumnSpec>,
+        tab_bar_mode: u8,
+    ) -> Self {
         Self::from_tab(Tab::new(initial), columns, tab_bar_mode, 0.0)
     }
 

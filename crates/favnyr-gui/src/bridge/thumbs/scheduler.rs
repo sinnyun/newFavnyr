@@ -367,7 +367,11 @@ impl ThumbScheduler {
         }
     }
 
-    pub(in crate::bridge) fn in_flight_locations(&self, path: &Path, serial: i32) -> Vec<ThumbLocation> {
+    pub(in crate::bridge) fn in_flight_locations(
+        &self,
+        path: &Path,
+        serial: i32,
+    ) -> Vec<ThumbLocation> {
         self.queue
             .lock()
             .unwrap_or_else(|e| e.into_inner())

@@ -2,15 +2,15 @@ use super::*;
 
 mod clipdrop;
 mod nav;
-mod tab;
-mod panel;
 mod opreg;
+mod panel;
+mod tab;
 
 pub(super) use clipdrop::*;
 pub(super) use nav::*;
-pub(super) use tab::*;
-pub(super) use panel::*;
 pub(super) use opreg::*;
+pub(super) use panel::*;
+pub(super) use tab::*;
 
 /// Minimum ratio for one side of a split (guards against degenerate panels).
 pub(super) const MIN_SPLIT_RATIO: f32 = 0.08;
