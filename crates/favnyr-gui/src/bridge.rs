@@ -33,7 +33,7 @@ use favnyr_core::SidebarSection;
 use favnyr_core::favorites::{self, FlatFav};
 use favnyr_core::fs as rfs;
 use favnyr_core::fs::ops::{self};
-use favnyr_core::fs::{Entry, FileKind, GroupMode, SortColumn, SortOrder};
+use favnyr_core::fs::{Category, Entry, FileKind, GroupMode, SortColumn, SortOrder};
 use favnyr_core::layout::{Layout, LayoutNode, NodePath, Rect, SplitDir};
 use favnyr_core::openers;
 use favnyr_core::shortcuts::{self, Chord};
@@ -252,16 +252,24 @@ struct Tab {
     sort: SortState,
     /// Selection anchor for Shift+click. `-1` if none.
     selection_anchor: i32,
-    /// Display mode: `false` = list (icons), `true` = previews
-    /// (thumbnails). DERIVED from `zoom` (`preview = zoom >= THUMB_ZOOM`) and
-    /// persisted per tab in the workspace TOML alongside it — a workspace
-    /// written before the level existed carries only this flag.
-    preview: bool,
+    /// Display mode: list, previews (thumbnails), or grid. DERIVED from
+    /// `zoom` for the two historical modes (`previews = zoom >= THUMB_ZOOM`)
+    /// and persisted per tab in the workspace TOML — a workspace written
+    /// before the level existed carries only the old `preview` flag.
+    mode: ViewMode,
     /// Zoom level of entries (Ctrl+wheel). Mapped to a row height by
-    /// `zoom_to_height`, and persisted per tab in the workspace TOML: a view
-    /// left at a chosen thumbnail size reopens at that size, not at the
-    /// default for its mode.
+    /// `zoom_to_height` — or to a tile size in grid mode — and persisted per
+    /// tab in the workspace TOML: a view left at a chosen size reopens at that
+    /// size, not at the default for its mode.
     zoom: i32,
+    /// "Show subfolder contents": after the current folder's own entries, the
+    /// listing carries one section per direct subfolder holding its entries
+    /// (ONE level down, no recursion). Persisted per tab in the workspace TOML.
+    subfolders: bool,
+    /// Sections the user folded away, by section key ("cat:image",
+    /// "sub:C:\dir"). Keeps the listing itself untouched: folding only rebuilds
+    /// the rows. Persisted per tab in the workspace TOML.
+    collapsed: Vec<String>,
     /// Whether hidden files are shown (dotfiles + Windows HIDDEN attribute).
     /// `false` by default. Persisted per tab in the workspace TOML.
     show_hidden: bool,
@@ -290,10 +298,12 @@ impl Tab {
             history: h,
             sort: SortState::default(),
             selection_anchor: -1,
-            preview: false,
+            mode: ViewMode::List,
             zoom: LIST_DEFAULT_ZOOM,
             show_hidden: false,
             group_mode: GroupMode::FoldersFirst,
+            subfolders: false,
+            collapsed: Vec::new(),
             cursor: -1,
             scroll_gen: 0,
             ext_filter_on: false,
@@ -304,13 +314,16 @@ impl Tab {
     /// Builds a tab restored from a workspace: path + sort + display
     /// mode. History restarts with a single entry (back/forward not
     /// persisted).
+    #[allow(clippy::too_many_arguments)]
     fn restored(
         path: PathBuf,
         sort: SortState,
-        preview: bool,
+        mode: ViewMode,
         zoom: Option<i32>,
         show_hidden: bool,
         group_mode: GroupMode,
+        subfolders: bool,
+        collapsed: Vec<String>,
     ) -> Self {
         let mut h = NavHistory::default();
         h.push(path.clone());
@@ -319,21 +332,31 @@ impl Tab {
         // used to. A hand-edited file is clamped rather than trusted.
         let zoom = match zoom {
             Some(z) => z.clamp(MIN_ZOOM, MAX_ZOOM),
-            None if preview => THUMB_DEFAULT_ZOOM,
+            None if mode.thumbnails() => THUMB_DEFAULT_ZOOM,
             None => LIST_DEFAULT_ZOOM,
+        };
+        // The two historical modes stay derived from the level, never read
+        // back: the two are stored side by side and an edited workspace could
+        // hold a contradictory pair. The finer value wins. Only the grid is a
+        // mode of its own, so only it survives a zoom in the list range.
+        let mode = if mode.is_grid() {
+            mode
+        } else if zoom >= THUMB_ZOOM {
+            ViewMode::Previews
+        } else {
+            ViewMode::List
         };
         Self {
             current_path: path,
             history: h,
             sort,
             selection_anchor: -1,
-            // Derived from the level, never read back from the file: the two
-            // are stored side by side and an edited workspace could hold
-            // `preview = true` with a list-mode zoom. The finer value wins.
-            preview: zoom >= THUMB_ZOOM,
+            mode,
             zoom,
             show_hidden,
             group_mode,
+            subfolders,
+            collapsed,
             cursor: -1,
             scroll_gen: 0,
             ext_filter_on: false,
@@ -347,24 +370,45 @@ fn tab_to_state(tab: &Tab) -> TabState {
         path: tab.current_path.display().to_string(),
         sort_column: tab.sort.column,
         sort_order: tab.sort.order,
-        preview: tab.preview,
+        preview: tab.mode.thumbnails(),
         show_hidden: tab.show_hidden,
         group_mode: tab.group_mode,
         zoom: Some(tab.zoom),
+        view_mode: Some(tab.mode.code().to_string()),
+        subfolders: tab.subfolders,
+        collapsed: tab.collapsed.clone(),
     }
 }
 
+/// Display mode carried by a persisted tab: the explicit `view_mode` when it
+/// was written, the legacy `preview` flag otherwise (a workspace older than the
+/// grid). A hand-edited file with an unknown code falls back the same way.
+fn tab_mode_of(state: &TabState) -> ViewMode {
+    state
+        .view_mode
+        .as_deref()
+        .and_then(ViewMode::from_code)
+        .unwrap_or(if state.preview {
+            ViewMode::Previews
+        } else {
+            ViewMode::List
+        })
+}
+
 fn tab_from_state(tab: TabState) -> Tab {
+    let mode = tab_mode_of(&tab);
     Tab::restored(
         resolve_restored_path(&tab.path),
         SortState {
             column: tab.sort_column,
             order: tab.sort_order,
         },
-        tab.preview,
+        mode,
         tab.zoom,
         tab.show_hidden,
         tab.group_mode,
+        tab.subfolders,
+        tab.collapsed,
     )
 }
 
@@ -416,10 +460,12 @@ impl TabBook {
         let dup = Tab::restored(
             src.current_path.clone(),
             src.sort,
-            src.preview,
+            src.mode,
             Some(src.zoom),
             src.show_hidden,
             src.group_mode,
+            src.subfolders,
+            src.collapsed.clone(),
         );
         self.insert_after(idx, dup).is_some()
     }
@@ -483,6 +529,51 @@ impl TabBook {
 
 // View panel ----------
 
+/// Display mode of a tab: the shape a listing takes on screen.
+/// - `List`: one 28px line per entry, type icon + columns.
+/// - `Previews`: one full-width row per entry, thumbnail height from `zoom`.
+/// - `Grid`: tiles packed left to right, icon/thumbnail above the name.
+///
+/// Orthogonal to `GroupMode` (which decides the sections) and to `zoom`
+/// (which sizes a row or a tile). `Grid` is a layout, not a size, so it is
+/// kept as-is when the zoom changes; the two other modes are derived from the
+/// zoom level, exactly as they were before the grid existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    List,
+    Previews,
+    Grid,
+}
+
+impl ViewMode {
+    fn code(self) -> &'static str {
+        match self {
+            ViewMode::List => "list",
+            ViewMode::Previews => "previews",
+            ViewMode::Grid => "grid",
+        }
+    }
+
+    fn from_code(s: &str) -> Option<Self> {
+        Some(match s {
+            "list" => ViewMode::List,
+            "previews" => ViewMode::Previews,
+            "grid" => ViewMode::Grid,
+            _ => return None,
+        })
+    }
+
+    /// Does this mode display content thumbnails (and enlarged app icons)?
+    /// Every mode but the plain list.
+    fn thumbnails(self) -> bool {
+        self != ViewMode::List
+    }
+
+    fn is_grid(self) -> bool {
+        self == ViewMode::Grid
+    }
+}
+
 /// A panel represents an independent file view: tabs, row
 /// model, and selection. A global watcher tracks the active panel and rearms on
 /// each navigation.
@@ -543,6 +634,21 @@ struct Panel {
     listing_gen: u64,
     /// Child to select after an asynchronous upward navigation.
     pending_select: Option<String>,
+    /// Listing the row model was built from. Kept so that folding a section,
+    /// switching the display mode or resizing a grid never re-reads the disk.
+    source: RefCell<Option<RowsSource>>,
+    /// Entries actually listed (section headers excluded). The footer counts
+    /// what the listing holds, not what the virtualized model contains.
+    entry_count: Cell<usize>,
+    /// Width of the list area, last reported by the view. The grid packs its
+    /// tiles with it. `0` = never reported (a default width is used).
+    grid_width: Cell<f32>,
+    /// Columns of the last grid layout (0 outside grid mode); published to the
+    /// view for up/down-by-a-line moves.
+    grid_cols: Cell<i32>,
+    /// Generation of the subfolder scan worker, so a stale scan (folder left,
+    /// tab closed, option turned off meanwhile) is never delivered.
+    sub_gen: Cell<u64>,
 }
 
 impl Panel {
@@ -581,6 +687,11 @@ impl Panel {
             pending_listing: false,
             listing_gen: 0,
             pending_select: None,
+            source: RefCell::new(None),
+            entry_count: Cell::new(0),
+            grid_width: Cell::new(0.0),
+            grid_cols: Cell::new(0),
+            sub_gen: Cell::new(0),
         }
     }
 
@@ -622,6 +733,31 @@ fn new_row_models() -> (Rc<VecModel<FileRow>>, ModelRc<FileRow>) {
 
 type AsyncListingResult = std::result::Result<(Vec<Entry>, usize), bool>;
 
+/// One "show subfolder contents" scan of a view: every direct subfolder of the
+/// listing, read on a background thread. Send by construction — the worker
+/// never touches the AppState.
+struct SubScanJob {
+    panel: usize,
+    /// `Panel::sub_gen` at the time of the request: a scan whose view has moved
+    /// on is dropped instead of applied.
+    sub_gen: u64,
+    root: PathBuf,
+    /// Direct subfolders to read: `(name, path)`, in section order.
+    dirs: Vec<(String, PathBuf)>,
+    sort: (SortColumn, SortOrder),
+    group: GroupMode,
+    show_hidden: bool,
+}
+
+/// Result of one subfolder scan. `Err` = at least one subfolder could not be
+/// read (its section says so rather than pretending to be empty).
+struct SubScanDelivery {
+    panel: usize,
+    sub_gen: u64,
+    root: PathBuf,
+    dirs: Vec<SubFolder>,
+}
+
 /// Send delivery of a network listing. `Err(true)` = access denied; other
 /// errors become an unavailable path, same as in the synchronous path.
 struct AsyncListingDelivery {
@@ -630,9 +766,9 @@ struct AsyncListingDelivery {
     path: PathBuf,
     result: AsyncListingResult,
     lang: Lang,
-    big_icon: bool,
-    preserved_selected: Vec<String>,
-    preserved_anchor: Option<String>,
+    collapsed: Vec<String>,
+    preserved_selected: Vec<PathBuf>,
+    preserved_anchor: Option<PathBuf>,
 }
 
 /// Send events produced by the trash workers then consumed on the
@@ -1032,6 +1168,13 @@ pub struct AppState {
     /// In-memory cache (folder path → recursive total size in bytes). Session
     /// only. Separate from the mtime cache: the two options toggle independently.
     size_cache: Rc<RefCell<HashMap<String, u64>>>,
+    // "Show subfolder contents": one listing per direct subfolder -----
+    /// Queue of subfolder scans — one job per view, each reading every direct
+    /// subfolder — consumed by the background worker.
+    subscan_tx: mpsc::Sender<SubScanJob>,
+    subscan_rx: Rc<RefCell<Option<mpsc::Receiver<SubScanJob>>>>,
+    /// Results produced off the UI thread, drained via a Slint callback.
+    subscans: Arc<std::sync::Mutex<VecDeque<SubScanDelivery>>>,
     // Image metadata: resolution / depth -----
     /// Queue of image header reads (background worker).
     imgmeta_tx: mpsc::Sender<ImgMetaJob>,
@@ -1154,6 +1297,7 @@ impl AppState {
     pub fn new_at(config: Config, initial: PathBuf, tab_bar_mode: u8) -> Self {
         let (rmtime_tx, rmtime_rx) = mpsc::channel();
         let (imgmeta_tx, imgmeta_rx) = mpsc::channel();
+        let (subscan_tx, subscan_rx) = mpsc::channel();
         let default_cols = config.default_columns.clone();
         let keymap = shortcuts::Keymap::build(&config.shortcut_overrides);
         Self {
@@ -1198,6 +1342,9 @@ impl AppState {
             rmtime_gen: Arc::new(AtomicU64::new(0)),
             rmtime_cache: Rc::new(RefCell::new(HashMap::new())),
             size_cache: Rc::new(RefCell::new(HashMap::new())),
+            subscans: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            subscan_tx,
+            subscan_rx: Rc::new(RefCell::new(Some(subscan_rx))),
             imgmeta_tx,
             imgmeta_rx: Rc::new(RefCell::new(Some(imgmeta_rx))),
             imgmeta_gen: Arc::new(AtomicU64::new(0)),
@@ -1243,6 +1390,7 @@ impl AppState {
         let (panels, layout, active_panel) = build_panels(ws);
         let (rmtime_tx, rmtime_rx) = mpsc::channel();
         let (imgmeta_tx, imgmeta_rx) = mpsc::channel();
+        let (subscan_tx, subscan_rx) = mpsc::channel();
         let state = Self {
             config: Rc::new(RefCell::new(config)),
             panels: Rc::new(RefCell::new(panels)),
@@ -1281,6 +1429,9 @@ impl AppState {
             rmtime_gen: Arc::new(AtomicU64::new(0)),
             rmtime_cache: Rc::new(RefCell::new(HashMap::new())),
             size_cache: Rc::new(RefCell::new(HashMap::new())),
+            subscans: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            subscan_tx,
+            subscan_rx: Rc::new(RefCell::new(Some(subscan_rx))),
             imgmeta_tx,
             imgmeta_rx: Rc::new(RefCell::new(Some(imgmeta_rx))),
             imgmeta_gen: Arc::new(AtomicU64::new(0)),
@@ -3182,17 +3333,33 @@ pub fn install(window: &MainWindow, state: AppState) {
             if n == 0 {
                 return;
             }
-            let (cur, anchor) = st.with_tabs(|b| {
-                let a = b.active;
-                (b.tabs[a].cursor, b.tabs[a].selection_anchor)
-            });
-            let base = if cur < 0 { 0 } else { cur.min(n - 1) };
-            let new_cursor = match kind {
-                0 => (base - 1).max(0),     // up
-                1 => (base + 1).min(n - 1), // down
-                2 => 0,                     // start
-                3 => n - 1,                 // end
-                _ => base,
+            let (cur, anchor, grid) = {
+                let panels = st.panels.borrow();
+                let idx = *st.active_panel.borrow();
+                let tab = &panels[idx].tabs.tabs[panels[idx].tabs.active];
+                (tab.cursor, tab.selection_anchor, tab.mode.is_grid())
+            };
+            let start = if cur < 0 { 0 } else { cur.min(n - 1) };
+            // The cursor never rests on a section header.
+            let Some(base) =
+                walk_entries(&model, start, 1).or_else(|| walk_entries(&model, start, -1))
+            else {
+                return;
+            };
+            let target = match kind {
+                0 if grid => grid_neighbour(&model, base, 0, -1),
+                1 if grid => grid_neighbour(&model, base, 0, 1),
+                0 => walk_entries(&model, base - 1, -1), // up
+                1 => walk_entries(&model, base + 1, 1),  // down
+                2 => walk_entries(&model, 0, 1),         // first
+                3 => walk_entries(&model, n - 1, -1),    // last
+                4 if grid => grid_neighbour(&model, base, -1, 0), // left
+                5 if grid => grid_neighbour(&model, base, 1, 0), // right
+                // The single-column list has no tile beside: left/right are inert.
+                _ => None,
+            };
+            let Some(new_cursor) = target else {
+                return; // already at the edge of the listing
             };
             if extend {
                 // Extend from the anchor (set if absent) to the new cursor.
@@ -4431,7 +4598,8 @@ pub fn install(window: &MainWindow, state: AppState) {
             let Some(row) = rows.row_data(idx) else {
                 return;
             };
-            let source = st.current_path().join(row.name.as_str());
+            // A section header is not an entry: nothing to rename.
+            let Some(source) = row_path(&row) else { return };
             *st.rename_source.borrow_mut() = Some(source);
             w.set_rename_current_name(row.name.clone());
             w.set_rename_current_is_dir(row.is_dir);
@@ -5655,6 +5823,10 @@ pub fn install(window: &MainWindow, state: AppState) {
     if let Some(rx) = state.rmtime_rx.borrow_mut().take() {
         spawn_rmtime_worker(rx, state.rmtime_gen.clone(), window.as_weak());
     }
+    // Background worker for the "show subfolder contents" scans.
+    if let Some(rx) = state.subscan_rx.borrow_mut().take() {
+        spawn_subscan_worker(rx, state.subscans.clone(), window.as_weak());
+    }
     // Background worker for image metadata — same pattern.
     if let Some(rx) = state.imgmeta_rx.borrow_mut().take() {
         spawn_imgmeta_worker(rx, state.imgmeta_gen.clone(), window.as_weak());
@@ -5687,14 +5859,14 @@ pub fn install(window: &MainWindow, state: AppState) {
                 let Some(row_index) = usize::try_from(row_idx).ok() else {
                     return;
                 };
-                let dir = &panel.tabs.tabs[panel.tabs.active].current_path;
                 let model = &panel.rows_model;
                 let Some(mut row) = model.row_data(row_index) else {
                     return;
                 };
                 // A watcher/re-sort can recycle the index while reading:
                 // the full path remains authoritative before any mutation.
-                if row.resolution.is_empty() && dir.join(row.name.as_str()) == target {
+                if row.resolution.is_empty() && row_path(&row).as_deref() == Some(target.as_path())
+                {
                     row.resolution = resolution.clone();
                     row.depth = depth.clone();
                     model.set_row_data(row_index, row);
@@ -5702,41 +5874,170 @@ pub fn install(window: &MainWindow, state: AppState) {
             },
         );
     }
-    // Toggles list <-> previews for panel `idx`'s active tab.
+    // Sets the display mode of panel `idx`'s active tab: "list" / "previews" /
+    // "grid" (the 3-option menu of the view button).
     {
         let st = state.clone();
         let weak = window.as_weak();
-        window.on_toggle_preview_mode(move |idx: i32| {
+        window.on_set_view_mode(move |idx: i32, code: SharedString| {
             let Some(w) = weak.upgrade() else { return };
-            let idx = idx as usize;
-            let compact = st.config.borrow().compact_icon_rows_in_preview;
-            let preview_now = {
-                let mut panels = st.panels.borrow_mut();
-                if idx >= panels.len() {
+            let Some(mode) = ViewMode::from_code(code.as_str()) else {
+                return; // unknown code: keep the current mode
+            };
+            let idx = idx.max(0) as usize;
+            if idx >= st.panels.borrow().len() {
+                return;
+            }
+            apply_view_mode(&w, &st, idx, mode);
+        });
+    }
+    // Ctrl+P / the keyboard route of the view button: list → previews → grid.
+    {
+        let st = state.clone();
+        let weak = window.as_weak();
+        window.on_cycle_view_mode(move |idx: i32| {
+            let Some(w) = weak.upgrade() else { return };
+            let idx = idx.max(0) as usize;
+            // Read the current mode under the same borrow that checks the panel
+            // exists: the cycle is derived from it, never from a stale copy.
+            let next = {
+                let panels = st.panels.borrow();
+                let Some(panel) = panels.get(idx) else {
                     return;
-                }
-                let active = panels[idx].tabs.active;
-                let (preview, zoom) = {
-                    let t = &mut panels[idx].tabs.tabs[active];
-                    t.preview = !t.preview;
-                    // The button toggles between the list/thumbnail default levels.
-                    t.zoom = if t.preview {
-                        THUMB_DEFAULT_ZOOM
-                    } else {
-                        LIST_DEFAULT_ZOOM
-                    };
-                    (t.preview, t.zoom)
                 };
-                refresh_panel_visuals(&panels[idx], preview, zoom, compact);
-                preview
+                match panel.tabs.tabs[panel.tabs.active].mode {
+                    ViewMode::List => ViewMode::Previews,
+                    ViewMode::Previews => ViewMode::Grid,
+                    ViewMode::Grid => ViewMode::List,
+                }
+            };
+            apply_view_mode(&w, &st, idx, next);
+        });
+    }
+    // Folds / unfolds a section by its key (click on a section header). Shape
+    // only: the rows are rebuilt from the cached listing, no disk access.
+    {
+        let st = state.clone();
+        let weak = window.as_weak();
+        window.on_toggle_section(move |idx: i32, key: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            if key.is_empty() {
+                return; // the unlabelled section has nothing to fold
+            }
+            let idx = idx.max(0) as usize;
+            let compact = st.config.borrow().compact_icon_rows_in_preview;
+            {
+                let mut panels = st.panels.borrow_mut();
+                let Some(panel) = panels.get_mut(idx) else {
+                    return;
+                };
+                let active = panel.tabs.active;
+                let t = &mut panel.tabs.tabs[active];
+                match t.collapsed.iter().position(|k| k == key.as_str()) {
+                    Some(pos) => {
+                        t.collapsed.remove(pos);
+                    }
+                    None => t.collapsed.push(key.to_string()),
+                }
+                rebuild_panel_rows(
+                    panel,
+                    st.config.borrow().language,
+                    compact,
+                    &annotations_now(&st),
+                    &st.clipboard.borrow(),
+                );
+            }
+            update_panels_ui(&w, &st);
+            request_thumbnails(&st);
+        });
+    }
+    // "Show subfolder contents" of panel `idx`'s active tab: one section per
+    // direct subfolder, each listing read on a background thread.
+    {
+        let st = state.clone();
+        let weak = window.as_weak();
+        window.on_toggle_subfolder_contents(move |idx: i32| {
+            let Some(w) = weak.upgrade() else { return };
+            let idx = idx.max(0) as usize;
+            let compact = st.config.borrow().compact_icon_rows_in_preview;
+            let on = {
+                let mut panels = st.panels.borrow_mut();
+                let Some(panel) = panels.get_mut(idx) else {
+                    return;
+                };
+                let active = panel.tabs.active;
+                let t = &mut panel.tabs.tabs[active];
+                t.subfolders = !t.subfolders;
+                let on = t.subfolders;
+                // Turning the feature on primes one pending section per direct
+                // subfolder, so the view shows them at once and the scan only
+                // has to fill them in. Turning it off just hides them: the
+                // cached source keeps them, so flipping back is instant.
+                if on {
+                    let mut source = panel.source.borrow_mut();
+                    if let Some(source) = source.as_mut() {
+                        source.dirs = pending_subfolders(&source.root, &source.own);
+                    }
+                }
+                // Whatever is in flight describes the state we just left.
+                panel.sub_gen.set(panel.sub_gen.get() + 1);
+                rebuild_panel_rows(
+                    panel,
+                    st.config.borrow().language,
+                    compact,
+                    &annotations_now(&st),
+                    &st.clipboard.borrow(),
+                );
+                on
             };
             update_panels_ui(&w, &st);
             request_thumbnails(&st);
-            // Turning on Previews is when thumbnails matter: it's
-            // when we warn (once) if `ffmpeg` is missing for video (Linux).
-            if preview_now {
-                maybe_warn_ffmpeg_missing(&w, &st);
+            if on {
+                request_subfolder_scan(&st, idx);
             }
+        });
+    }
+    // Width of a view's list area: the grid packs its tiles with it. Only a
+    // grid re-packs — the other modes' rows span whatever width they are given.
+    {
+        let st = state.clone();
+        let weak = window.as_weak();
+        window.on_rows_area_width(move |idx: i32, width: f32| {
+            let Some(w) = weak.upgrade() else { return };
+            let idx = idx.max(0) as usize;
+            let width = width.max(0.0);
+            let compact = st.config.borrow().compact_icon_rows_in_preview;
+            {
+                let mut panels = st.panels.borrow_mut();
+                let Some(panel) = panels.get_mut(idx) else {
+                    return;
+                };
+                // Sub-pixel churn (fractional scaling, scrollbar toggling) must
+                // not re-pack the grid.
+                if (panel.grid_width.get() - width).abs() < 0.5 {
+                    return;
+                }
+                let tab = &panel.tabs.tabs[panel.tabs.active];
+                let before = grid_metrics(tab.zoom, panel.grid_width.get());
+                let after = grid_metrics(tab.zoom, width);
+                panel.grid_width.set(width);
+                if !tab.mode.is_grid() {
+                    return; // remembered; the next rebuild will use it
+                }
+                // Two widths of the same "packing bucket" yield the exact same
+                // geometry: resizing across one must not rebuild the rows.
+                if before == after {
+                    return;
+                }
+                rebuild_panel_rows(
+                    panel,
+                    st.config.borrow().language,
+                    compact,
+                    &annotations_now(&st),
+                    &st.clipboard.borrow(),
+                );
+            }
+            update_panels_ui(&w, &st);
         });
     }
     // Entry zoom (Ctrl+wheel): adjusts the level of panel `idx`'s
@@ -5763,25 +6064,32 @@ pub fn install(window: &MainWindow, state: AppState) {
                     if new_zoom == t.zoom {
                         return top.max(0.0); // already at the bounds → nothing to do
                     }
-                    let was_preview = t.preview;
+                    // The grid is a LAYOUT: the wheel only resizes its tiles.
+                    // The two other modes follow the level (list below the
+                    // thumbnail floor, previews at or above it).
+                    let was_thumbnails = t.mode.thumbnails();
                     t.zoom = new_zoom;
-                    t.preview = new_zoom >= THUMB_ZOOM;
-                    crossed_mode = t.preview != was_preview;
+                    if t.mode != ViewMode::Grid {
+                        t.mode = if new_zoom >= THUMB_ZOOM {
+                            ViewMode::Previews
+                        } else {
+                            ViewMode::List
+                        };
+                    }
+                    crossed_mode = t.mode.thumbnails() != was_thumbnails;
                 }
                 let compact = st.config.borrow().compact_icon_rows_in_preview;
                 {
                     let panels = st.panels.borrow();
                     if let Some(panel) = panels.get(idx) {
-                        let tab = &panel.tabs.tabs[panel.tabs.active];
+                        let style = panel_row_style(panel, compact);
                         // Captures the anchor on the old geometry and performs the
                         // relayout in the SAME pass over the rows. A single visible
                         // selection takes priority; otherwise the row under the pointer, then
                         // the viewport's center. No listing or disk access.
                         let anchored_top = zoom_panel_visuals(
                             panel,
-                            tab.preview,
-                            tab.zoom,
-                            compact,
+                            style,
                             crossed_mode,
                             ZoomViewport {
                                 top,
@@ -5863,10 +6171,9 @@ pub fn install(window: &MainWindow, state: AppState) {
                     continue;
                 };
                 let tab = &panel.tabs.tabs[panel.tabs.active];
-                if !tab.preview {
+                if !tab.mode.thumbnails() {
                     continue;
                 }
-                let dir = tab.current_path.clone();
                 let model = &panel.rows_model;
                 let Some(mut row) = model.row_data(location.row) else {
                     continue;
@@ -5875,7 +6182,7 @@ pub fn install(window: &MainWindow, state: AppState) {
                 // authoritative. A row outside the window keeps only the LRU.
                 if row.rendered
                     && row.thumbnail.size().width == 0
-                    && dir.join(row.name.as_str()) == target
+                    && row_path(&row).as_deref() == Some(target.as_path())
                 {
                     row.thumbnail = img.clone();
                     model.set_row_data(location.row, row);
@@ -5924,12 +6231,11 @@ pub fn install(window: &MainWindow, state: AppState) {
                 let Some(row_index) = usize::try_from(row_idx).ok() else {
                     return;
                 };
-                let dir = &panel.tabs.tabs[panel.tabs.active].current_path;
                 let model = &panel.rows_model;
                 let Some(mut row) = model.row_data(row_index) else {
                     return;
                 };
-                if row.is_dir && dir.join(row.name.as_str()) == target {
+                if row.is_dir && row_path(&row).as_deref() == Some(target.as_path()) {
                     if let Some(m) = m {
                         apply_rmtime_to_row(&mut row, m, now, lang);
                     }
@@ -6404,6 +6710,24 @@ pub fn install(window: &MainWindow, state: AppState) {
             }
         });
     }
+    // Delivery of the subfolder scans. Same shape as the network listings:
+    // the worker wakes Slint, every model mutation stays on the UI thread.
+    {
+        let st = state.clone();
+        let weak = window.as_weak();
+        window.on_subfolders_drain(move || {
+            let Some(w) = weak.upgrade() else { return };
+            loop {
+                let next = st
+                    .subscans
+                    .lock()
+                    .ok()
+                    .and_then(|mut queue| queue.pop_front());
+                let Some(delivery) = next else { break };
+                apply_subfolder_scan(&w, &st, delivery);
+            }
+        });
+    }
     {
         let st = state.clone();
         let weak = window.as_weak();
@@ -6841,6 +7165,9 @@ type TabSig = (
     bool,
     GroupMode,
     Option<i32>,
+    String,
+    bool,
+    Vec<String>,
 );
 type WorkspaceSig = (Vec<(Vec<TabSig>, u8)>, SidebarSectionsState);
 fn workspace_signature(ws: &WorkspaceState) -> WorkspaceSig {
@@ -6860,6 +7187,9 @@ fn workspace_signature(ws: &WorkspaceState) -> WorkspaceSig {
                         t.show_hidden,
                         t.group_mode,
                         t.zoom,
+                        t.view_mode.clone().unwrap_or_default(),
+                        t.subfolders,
+                        t.collapsed.clone(),
                     )
                 })
                 .collect();
@@ -8135,11 +8465,10 @@ fn first_file_in_active_panel(state: &AppState) -> Option<PathBuf> {
     let active = *state.active_panel.borrow();
     let panels = state.panels.borrow();
     let p = panels.get(active)?;
-    let dir = p.tabs.tabs[p.tabs.active].current_path.clone();
     (0..p.rows_model.row_count())
         .filter_map(|i| p.rows_model.row_data(i))
-        .find(|r| !r.is_dir)
-        .map(|r| dir.join(r.name.as_str()))
+        .filter(|r| !r.is_dir)
+        .find_map(|r| row_path(&r))
 }
 
 /// LAZY probe of the shell menu — called when the "Detected Windows
@@ -9381,30 +9710,34 @@ fn apply_initial_listing(
         if !p.pending_initial || tab.current_path != path {
             return; // stale delivery (the user has already navigated / listed)
         }
-        let big_icon = tab.preview;
-        let zoom = tab.zoom;
+        let style = panel_row_style(p, compact_icon_rows);
+        let group = tab.group_mode;
+        let collapsed = tab.collapsed.clone();
+        let subfolders = tab.subfolders;
         p.pending_initial = false;
         match res {
             Ok((entries, hidden_count)) => {
-                let parent_display = path.display().to_string();
-                let now = now_unix();
-                let rows = entries_to_rows(
-                    &entries,
-                    &parent_display,
-                    &RowContext {
-                        lang,
-                        now_unix: now,
-                        big_icon,
-                        zoom,
-                        compact_icon_rows,
-                        annotations: &annotations_now(state),
-                    },
+                install_rows(
+                    p,
+                    path,
+                    entries,
+                    style,
+                    group,
+                    &collapsed,
+                    subfolders,
+                    lang,
+                    &annotations_now(state),
+                    &state.clipboard.borrow(),
+                    &[],
+                    None,
                 );
-                p.replace_rows(rows);
                 p.hidden_count = hidden_count;
                 p.unavailable = false;
             }
             Err(denied) => {
+                *p.source.borrow_mut() = None;
+                p.entry_count.set(0);
+                p.grid_cols.set(0);
                 p.replace_rows(Vec::new());
                 p.hidden_count = 0;
                 p.unavailable = !denied;
@@ -9420,6 +9753,9 @@ fn apply_initial_listing(
     // global preview request must therefore be rebuilt even if this panel
     // isn't active (its listing may have arrived after the active panel's).
     request_thumbnails(state);
+    // A tab that shows subfolder contents restarts its scan on every fresh
+    // listing: the previous one described the previous listing.
+    request_subfolder_scan(state, idx);
     // ACTIVE panel: watcher + other background work tied to navigation.
     if is_active {
         install_watcher(state, window, path);
@@ -9501,78 +9837,38 @@ fn relist_panel(state: &AppState, i: usize) {
     let sort = panel.tabs.tabs[panel.tabs.active].sort;
     let show_hidden = panel.tabs.tabs[panel.tabs.active].show_hidden;
     let group_mode = panel.tabs.tabs[panel.tabs.active].group_mode;
-    let big_icon = panel.tabs.tabs[panel.tabs.active].preview;
-    let zoom = panel.tabs.tabs[panel.tabs.active].zoom;
+    let collapsed = panel.tabs.tabs[panel.tabs.active].collapsed.clone();
+    let subfolders = panel.tabs.tabs[panel.tabs.active].subfolders;
+    let style = panel_row_style(panel, compact_icon_rows);
     let ext_on = panel.tabs.tabs[panel.tabs.active].ext_filter_on;
     let ext_txt = panel.tabs.tabs[panel.tabs.active].ext_filter.clone();
     let same_dir = panel.displayed_path == path;
     if !same_dir {
         panel.reset_rows_viewport();
     }
-    let selected: std::collections::HashSet<String> = if same_dir {
-        (0..panel.rows_model.row_count())
-            .filter_map(|index| panel.rows_model.row_data(index))
-            .filter(|row| row.selected)
-            .map(|row| row.name.to_string())
-            .collect()
-    } else {
-        std::collections::HashSet::new()
-    };
-    let anchor_name = if same_dir {
-        let anchor = panel.tabs.tabs[panel.tabs.active].selection_anchor;
-        usize::try_from(anchor)
-            .ok()
-            .and_then(|index| panel.rows_model.row_data(index))
-            .map(|row| row.name.to_string())
-    } else {
-        None
-    };
     match rfs::list_dir_counted(&path, show_hidden) {
         Ok((mut entries, hidden_count)) => {
             rfs::sort(&mut entries, sort.column, sort.order, group_mode);
             apply_ext_filter(&mut entries, ext_on, &ext_txt);
-            let parent_display = path.display().to_string();
-            let now = now_unix();
-            let mut rows = entries_to_rows(
-                &entries,
-                &parent_display,
-                &RowContext {
-                    lang,
-                    now_unix: now,
-                    big_icon,
-                    zoom,
-                    compact_icon_rows,
-                    annotations: &annotations_now(state),
-                },
+            let (selected, anchor) = if same_dir {
+                preserved_selection_of(panel)
+            } else {
+                (Vec::new(), None)
+            };
+            install_rows(
+                panel,
+                &path,
+                entries,
+                style,
+                group_mode,
+                &collapsed,
+                subfolders,
+                lang,
+                &annotations_now(state),
+                &state.clipboard.borrow(),
+                &selected,
+                anchor.as_deref(),
             );
-            for row in &mut rows {
-                row.selected = selected.contains(row.name.as_str());
-            }
-            {
-                let clipboard = state.clipboard.borrow();
-                if matches!(clipboard.op, Some(ClipOp::Cut)) {
-                    let cut_names: std::collections::HashSet<&str> = clipboard
-                        .paths
-                        .iter()
-                        .filter(|candidate| candidate.parent() == Some(path.as_path()))
-                        .filter_map(|candidate| {
-                            candidate.file_name().and_then(|name| name.to_str())
-                        })
-                        .collect();
-                    for row in &mut rows {
-                        row.cut = cut_names.contains(row.name.as_str());
-                    }
-                }
-            }
-            let anchor = anchor_name
-                .as_deref()
-                .and_then(|name| rows.iter().position(|row| row.name.as_str() == name))
-                .map(|index| index as i32)
-                .unwrap_or(-1);
-            panel.replace_rows(rows);
-            let active = panel.tabs.active;
-            panel.tabs.tabs[active].selection_anchor = anchor;
-            panel.tabs.tabs[active].cursor = anchor;
             panel.hidden_count = hidden_count;
             panel.unavailable = false;
             panel.displayed_path = path;
@@ -9584,6 +9880,9 @@ fn relist_panel(state: &AppState, i: usize) {
                     if io.kind() == std::io::ErrorKind::PermissionDenied
             );
             error!(error = %err, path = %path.display(), "panel relist failed");
+            *panel.source.borrow_mut() = None;
+            panel.entry_count.set(0);
+            panel.grid_cols.set(0);
             panel.replace_rows(Vec::new());
             let active = panel.tabs.active;
             panel.tabs.tabs[active].selection_anchor = -1;
@@ -9593,6 +9892,9 @@ fn relist_panel(state: &AppState, i: usize) {
             panel.displayed_path = path;
         }
     }
+    drop(panels);
+    // A tab showing subfolder contents re-reads them along with the folder.
+    request_subfolder_scan(state, i);
 }
 
 /// Re-checks "unavailable" panels (network/missing folder): those whose
@@ -9886,16 +10188,18 @@ fn serialize_tab(tab: &Tab, drop: (i32, i32)) -> String {
         // stay compatible between instances of different versions: an older
         // receiver reads the fields it knows and ignores the extra one, a
         // newer receiver finds nothing at that index and falls back.
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         tab.current_path.display(),
         tab.sort.column.code(),
         u8::from(matches!(tab.sort.order, SortOrder::Asc)),
-        u8::from(tab.preview),
+        u8::from(tab.mode.thumbnails()),
         u8::from(tab.show_hidden),
         tab.group_mode.code(),
         drop.0,
         drop.1,
         tab.zoom,
+        tab.mode.code(),
+        u8::from(tab.subfolders),
     )
 }
 
@@ -9912,13 +10216,25 @@ fn deserialize_tab(payload: &str) -> Option<(Tab, Option<(i32, i32)>)> {
     } else {
         SortOrder::Desc
     };
+    // The display mode is APPENDED after the zoom: a sender that predates the
+    // grid (or the mode field) is read through its legacy `preview` flag.
+    let mode = p
+        .get(9)
+        .and_then(|code| ViewMode::from_code(code))
+        .unwrap_or(if p[3] == "1" {
+            ViewMode::Previews
+        } else {
+            ViewMode::List
+        });
     let tab = Tab::restored(
         PathBuf::from(p[0]),
         SortState { column, order },
-        p[3] == "1",
+        mode,
         p.get(8).and_then(|z| z.parse().ok()),
         p[4] == "1",
         GroupMode::from_code(p[5]).unwrap_or(GroupMode::FoldersFirst),
+        p.get(10) == Some(&"1"),
+        Vec::new(),
     );
     let drop = match (p.get(6), p.get(7)) {
         (Some(x), Some(y)) => x.parse().ok().zip(y.parse().ok()),
@@ -11583,7 +11899,7 @@ fn request_async_panel_listing(
         show_hidden,
         sort,
         group,
-        big_icon,
+        collapsed,
         ext_on,
         ext_text,
         preserved_selected,
@@ -11597,18 +11913,12 @@ fn request_async_panel_listing(
         let same_dir = panel.displayed_path == path;
         let model = panel.rows_model.clone();
         let selected = if same_dir {
-            (0..model.row_count())
-                .filter_map(|i| model.row_data(i))
-                .filter(|row| row.selected)
-                .map(|row| row.name.to_string())
-                .collect()
+            selected_paths_of(&*model)
         } else {
             Vec::new()
         };
-        let anchor = if same_dir && tab.selection_anchor >= 0 {
-            model
-                .row_data(tab.selection_anchor as usize)
-                .map(|row| row.name.to_string())
+        let anchor = if same_dir {
+            anchor_path_of(&*model, tab.selection_anchor)
         } else {
             None
         };
@@ -11617,7 +11927,7 @@ fn request_async_panel_listing(
             tab.show_hidden,
             tab.sort,
             tab.group_mode,
-            tab.preview,
+            tab.collapsed.clone(),
             tab.ext_filter_on,
             tab.ext_filter.clone(),
             selected,
@@ -11688,7 +11998,7 @@ fn request_async_panel_listing(
             path,
             result,
             lang,
-            big_icon,
+            collapsed,
             preserved_selected,
             preserved_anchor,
         };
@@ -11720,72 +12030,49 @@ fn apply_async_listing(window: &MainWindow, state: &AppState, delivery: AsyncLis
         if !async_listing_is_current(panel, delivery.r#gen, &delivery.path) {
             return; // stale response: a more recent navigation has won
         }
-        let zoom = panel.tabs.tabs[active].zoom;
+        let style = panel_row_style(panel, compact_icon_rows);
+        let group = panel.tabs.tabs[active].group_mode;
+        let subfolders = panel.tabs.tabs[active].subfolders;
         panel.pending_listing = false;
         let pending_select = panel.pending_select.take();
         let pending_focus = pending_select.clone();
         match delivery.result {
             Ok((entries, hidden_count)) => {
-                let parent_display = delivery.path.display().to_string();
-                let now = now_unix();
-                let mut rows = entries_to_rows(
-                    &entries,
-                    &parent_display,
-                    &RowContext {
-                        lang: delivery.lang,
-                        now_unix: now,
-                        big_icon: delivery.big_icon,
-                        zoom,
-                        compact_icon_rows,
-                        annotations: &annotations_now(state),
-                    },
-                );
-
-                let selected: std::collections::HashSet<&str> = delivery
-                    .preserved_selected
-                    .iter()
-                    .map(String::as_str)
-                    .collect();
-                for row in &mut rows {
-                    if selected.contains(row.name.as_str()) {
-                        row.selected = true;
-                    }
-                }
-                let select_pending = pending_select.is_some();
-                let anchor_name = pending_select.or(delivery.preserved_anchor);
-                let anchor = anchor_name
+                // A focus request (upward navigation) replaces the preserved
+                // selection: exactly the child left behind stays selected. It
+                // arrives as a name, relative to the folder being listed.
+                let focus_path = pending_select
                     .as_deref()
-                    .and_then(|name| rows.iter().position(|row| row.name.as_str() == name))
-                    .map(|idx| idx as i32)
-                    .unwrap_or(-1);
-                if select_pending {
-                    for row in &mut rows {
-                        row.selected = Some(row.name.as_str()) == anchor_name.as_deref();
-                    }
-                }
-
-                let clip = state.clipboard.borrow();
-                if matches!(clip.op, Some(ClipOp::Cut)) {
-                    let cut_names: std::collections::HashSet<&str> = clip
-                        .paths
-                        .iter()
-                        .filter(|p| p.parent() == Some(delivery.path.as_path()))
-                        .filter_map(|p| p.file_name().and_then(|name| name.to_str()))
-                        .collect();
-                    for row in &mut rows {
-                        if cut_names.contains(row.name.as_str()) {
-                            row.cut = true;
-                        }
-                    }
-                }
-                count = rows.len();
-                panel.replace_rows(rows);
-                panel.tabs.tabs[active].selection_anchor = anchor;
-                panel.tabs.tabs[active].cursor = anchor;
+                    .map(|name| delivery.path.join(name));
+                let anchor = focus_path
+                    .clone()
+                    .or_else(|| delivery.preserved_anchor.clone());
+                let preserved: &[PathBuf] = match &focus_path {
+                    Some(path) => std::slice::from_ref(path),
+                    None => &delivery.preserved_selected,
+                };
+                install_rows(
+                    panel,
+                    &delivery.path,
+                    entries,
+                    style,
+                    group,
+                    &delivery.collapsed,
+                    subfolders,
+                    delivery.lang,
+                    &annotations_now(state),
+                    &state.clipboard.borrow(),
+                    preserved,
+                    anchor.as_deref(),
+                );
+                count = panel.entry_count.get();
                 panel.hidden_count = hidden_count;
                 panel.unavailable = false;
             }
             Err(denied) => {
+                *panel.source.borrow_mut() = None;
+                panel.entry_count.set(0);
+                panel.grid_cols.set(0);
                 panel.replace_rows(Vec::new());
                 panel.tabs.tabs[active].selection_anchor = -1;
                 panel.tabs.tabs[active].cursor = -1;
@@ -11809,6 +12096,7 @@ fn apply_async_listing(window: &MainWindow, state: &AppState, delivery: AsyncLis
     request_thumbnails(state);
     request_folder_stats(state);
     request_imgmeta(state);
+    request_subfolder_scan(state, delivery.panel);
     if is_active {
         install_watcher(state, window, &delivery.path);
     }
@@ -11845,23 +12133,12 @@ fn refresh_listing_sync(window: &MainWindow, state: &AppState, path: &Path) {
     };
 
     // Preservation: we read from the active panel's model if same_dir.
-    let model = state.active_rows_model();
-    let (preserved_selected, preserved_anchor_name) = if same_dir {
-        let preserved: Vec<String> = (0..model.row_count())
-            .filter_map(|i| model.row_data(i))
-            .filter(|r| r.selected)
-            .map(|r| r.name.to_string())
-            .collect();
-        let anchor_name = state.with_tabs(|book| {
-            let a = book.active;
-            let anchor = book.tabs[a].selection_anchor;
-            if anchor >= 0 {
-                model.row_data(anchor as usize).map(|r| r.name.to_string())
-            } else {
-                None
-            }
-        });
-        (preserved, anchor_name)
+    let (preserved_selected, preserved_anchor) = if same_dir {
+        let panels = state.panels.borrow();
+        panels
+            .get(active_idx)
+            .map(preserved_selection_of)
+            .unwrap_or_default()
     } else {
         (Vec::new(), None)
     };
@@ -11891,7 +12168,11 @@ fn refresh_listing_sync(window: &MainWindow, state: &AppState, path: &Path) {
             }
             {
                 let panels = state.panels.borrow();
-                panels[active_idx].replace_rows(Vec::new());
+                let panel = &panels[active_idx];
+                *panel.source.borrow_mut() = None;
+                panel.entry_count.set(0);
+                panel.grid_cols.set(0);
+                panel.replace_rows(Vec::new());
             }
             state.with_tabs_mut(|book| {
                 let a = book.active;
@@ -11914,9 +12195,22 @@ fn refresh_listing_sync(window: &MainWindow, state: &AppState, path: &Path) {
         let a = book.active;
         book.tabs[a].sort
     });
-    let group_mode = state.with_tabs(|book| book.tabs[book.active].group_mode);
-    let big_icon = state.with_tabs(|book| book.tabs[book.active].preview);
-    let zoom = state.with_tabs(|book| book.tabs[book.active].zoom);
+    let (group_mode, collapsed, subfolders) = state.with_tabs(|book| {
+        let tab = &book.tabs[book.active];
+        (tab.group_mode, tab.collapsed.clone(), tab.subfolders)
+    });
+    let style = {
+        let panels = state.panels.borrow();
+        panels
+            .get(active_idx)
+            .map(|panel| panel_row_style(panel, cfg.compact_icon_rows_in_preview))
+            .unwrap_or(RowStyle {
+                mode: ViewMode::List,
+                zoom: LIST_DEFAULT_ZOOM,
+                compact_icon_rows: cfg.compact_icon_rows_in_preview,
+                width: 0.0,
+            })
+    };
     rfs::sort(
         &mut entries,
         sort_state.column,
@@ -11937,63 +12231,33 @@ fn refresh_listing_sync(window: &MainWindow, state: &AppState, path: &Path) {
         apply_ext_filter(&mut entries, on, &txt);
     }
 
-    let parent_display = path.display().to_string();
-    let now = now_unix();
-    let mut rows = entries_to_rows(
-        &entries,
-        &parent_display,
-        &RowContext {
+    let count = {
+        let mut panels = state.panels.borrow_mut();
+        let Some(panel) = panels.get_mut(active_idx) else {
+            return;
+        };
+        install_rows(
+            panel,
+            path,
+            entries,
+            style,
+            group_mode,
+            &collapsed,
+            subfolders,
             lang,
-            now_unix: now,
-            big_icon,
-            zoom,
-            compact_icon_rows: cfg.compact_icon_rows_in_preview,
-            annotations: &annotations_now(state),
-        },
-    );
-
-    if !preserved_selected.is_empty() {
-        let set: std::collections::HashSet<&str> =
-            preserved_selected.iter().map(|s| s.as_str()).collect();
-        for r in rows.iter_mut() {
-            if set.contains(r.name.as_str()) {
-                r.selected = true;
-            }
-        }
-    }
-    {
-        let clip = state.clipboard.borrow();
-        if matches!(clip.op, Some(ClipOp::Cut)) {
-            let cut_names: std::collections::HashSet<&str> = clip
-                .paths
-                .iter()
-                .filter(|p| p.parent() == Some(path))
-                .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-                .collect();
-            for r in rows.iter_mut() {
-                if cut_names.contains(r.name.as_str()) {
-                    r.cut = true;
-                }
-            }
-        }
-    }
-
-    let count = rows.len();
-    let new_anchor: i32 = preserved_anchor_name
-        .and_then(|n| rows.iter().position(|r| r.name.as_str() == n))
-        .map(|p| p as i32)
-        .unwrap_or(-1);
+            &annotations_now(state),
+            &state.clipboard.borrow(),
+            &preserved_selected,
+            preserved_anchor.as_deref(),
+        )
+    };
 
     state.with_tabs_mut(|book| {
         let a = book.active;
-        let t = &mut book.tabs[a];
-        t.current_path = path.to_path_buf();
-        t.selection_anchor = new_anchor;
-        t.cursor = new_anchor;
+        book.tabs[a].current_path = path.to_path_buf();
     });
     {
         let mut panels = state.panels.borrow_mut();
-        panels[active_idx].replace_rows(rows);
         panels[active_idx].displayed_path = path.to_path_buf();
         panels[active_idx].hidden_count = hidden_count;
         panels[active_idx].unavailable = false; // listing OK → available again
@@ -12004,6 +12268,7 @@ fn refresh_listing_sync(window: &MainWindow, state: &AppState, path: &Path) {
     request_thumbnails(state);
     request_folder_stats(state);
     request_imgmeta(state);
+    request_subfolder_scan(state, active_idx);
 
     debug!(path = %path.display(), count, "listing refreshed");
 }
@@ -12363,7 +12628,11 @@ fn update_panels_ui(window: &MainWindow, state: &AppState) {
                         .map(|c| column_info_explicit(&strings, c, 0.0))
                         .collect::<Vec<_>>(),
                 )),
-                preview_mode: tab.preview,
+                preview_mode: tab.mode.thumbnails(),
+                view_mode: tab.mode.code().into(),
+                grid_mode: tab.mode.is_grid(),
+                grid_cols: p.grid_cols.get(),
+                show_subfolders: tab.subfolders,
                 content_width: content_w,
                 show_hidden: tab.show_hidden,
                 group_mode: tab.group_mode.code().into(),
@@ -13189,13 +13458,12 @@ fn active_thumbnail_paths(state: &AppState) -> Vec<PathBuf> {
     let Some(panel) = panels.get(active) else {
         return Vec::new();
     };
-    let dir = &panel.tabs.tabs[panel.tabs.active].current_path;
     (0..panel.rows_model.row_count())
         .filter_map(|index| panel.rows_model.row_data(index))
         // `.lnk` rows can preview an image/audio/video/PDF target even though the
         // shortcut itself is not classified as preview-capable.
         .filter(|row| row.preview_capable || row.ext.eq_ignore_ascii_case("lnk"))
-        .map(|row| dir.join(row.name.as_str()))
+        .filter_map(|row| row_path(&row))
         .collect()
 }
 
@@ -13206,46 +13474,37 @@ fn image_from_thumb(t: &Thumbnail) -> Image {
     Image::from_rgba8(buf)
 }
 
-/// Selects the thumbnail source based on the platform and type. On
-/// **Windows**, audio/video/PDF fallbacks go through native APIs
-/// (`winthumb`): OS providers → standalone (no ffmpeg/poppler) and
-/// **no console window**. Images remain decoded in Rust (`image`).
+/// Selects the thumbnail source.
+///
+/// On **Windows** the **system shell thumbnail API** is the single source of
+/// truth (`winthumb::shell_thumbnail`, `IShellItemImageFactory`): Explorer's
+/// own providers — and therefore the system thumbnail cache — cover every type
+/// the OS knows how to preview (photos, video, PDF, Office documents, e-books,
+/// fonts…), including `.lnk` shortcuts, which the shell resolves itself. Favnyr
+/// therefore reimplements none of them. Its own decoders
+/// (`thumbnail::generate`) are consulted only when the shell produced no
+/// thumbnail — a type the shell doesn't cover; PDF keeps the built-in WinRT
+/// engine as a last resort, since the core path drives poppler, which is
+/// Linux-only. `SIIGBF_THUMBNAILONLY` guarantees a failed lookup yields the
+/// plain type icon instead of a fake thumbnail.
+///
 /// On **Linux**, everything goes through `thumbnail::generate` (images and
-/// MP3/FLAC covers are in-process; video/PDF use their best-effort CLIs).
+/// MP3/FLAC covers in-process; video/PDF via their best-effort CLIs).
 fn generate_thumb(path: &Path, kind: FileKind, max_px: u32) -> Option<Thumbnail> {
     #[cfg(windows)]
     {
-        // A `.lnk` shortcut → the shell thumbnail API on the link itself: the
-        // shell resolves the target and returns ITS thumbnail (an image shortcut
-        // previews the image) or its icon, exactly like Explorer.
-        if path
-            .extension()
-            .map(|e| e.eq_ignore_ascii_case("lnk"))
-            .unwrap_or(false)
-        {
-            return crate::winthumb::shell_thumbnail(path, max_px);
+        if let Some(thumb) = crate::winthumb::shell_thumbnail(path, max_px) {
+            return Some(thumb);
         }
-        match kind {
-            // MP3/FLAC: embedded cover first; the shell can supply artwork for
-            // tags/providers outside Favnyr's deliberately small parsers.
-            FileKind::Audio => {
-                return thumbnail::generate(path, kind, max_px)
-                    .or_else(|| crate::winthumb::shell_thumbnail(path, max_px));
-            }
-            // Video: shell thumbnail API (frame via OS providers).
-            FileKind::Video => return crate::winthumb::shell_thumbnail(path, max_px),
-            // PDF: Windows's built-in PDF engine (WinRT) → no external binary.
-            FileKind::Document => return crate::winthumb::pdf_thumbnail(path, max_px),
-            // Image: Rust decoding first (common formats plus bounded embedded
-            // PSD/Affinity previews); on failure, fall back to the shell API.
-            FileKind::Image => {
-                return thumbnail::generate(path, kind, max_px)
-                    .or_else(|| crate::winthumb::shell_thumbnail(path, max_px));
-            }
-            _ => {}
+        if kind == FileKind::Document {
+            return crate::winthumb::pdf_thumbnail(path, max_px);
         }
+        thumbnail::generate(path, kind, max_px)
     }
-    thumbnail::generate(path, kind, max_px)
+    #[cfg(not(windows))]
+    {
+        thumbnail::generate(path, kind, max_px)
+    }
 }
 
 /// Size of the thumbnail worker pool. The dominant cost (image decoding, or
@@ -13322,19 +13581,35 @@ fn spawn_thumb_worker(scheduler: Arc<ThumbScheduler>, weak: slint::Weak<MainWind
     });
 }
 
-/// For each panel in preview mode: applies the cached thumbnails to
-/// image/audio-cover/video/PDF/SVG rows, then atomically replaces the request for the
-/// missing ones. To be called after a (re)population of fresh rows.
+/// Maps a listed row (its `kind` wire code and extension) to the thumbnail
+/// request it raises, plus whether it is an SVG (rendered by Slint, not decoded).
+///
+/// - **Windows**: EVERY non-folder entry is offered a preview. The system shell
+///   thumbnail API (`winthumb::shell_thumbnail`) covers far more types than
+///   Favnyr decodes itself — Office documents, e-books, fonts, archives, PDFs,
+///   media — so no whitelist is kept here: the OS decides. When it has no
+///   thumbnail for the file, `SIIGBF_THUMBNAILONLY` returns nothing and the row
+///   keeps its type icon.
+/// - **Other platforms**: no universal thumbnail service exists, so only the
+///   types Favnyr can actually render keep a preview (image, video, MP3/FLAC
+///   cover, PDF). Folders never request one.
 fn thumbnail_kind_for_row(kind: i32, ext: &str) -> Option<(FileKind, bool)> {
-    let svg = kind == 6 && ext.eq_ignore_ascii_case("svg");
-    let file_kind = match kind {
-        4 if ext.eq_ignore_ascii_case("mp3") || ext.eq_ignore_ascii_case("flac") => FileKind::Audio,
-        6 => FileKind::Image,
-        7 => FileKind::Video,
-        5 if ext.eq_ignore_ascii_case("pdf") => FileKind::Document,
-        _ => return None,
-    };
-    Some((file_kind, svg))
+    let file_kind = FileKind::from_code(kind)?;
+    let svg = file_kind == FileKind::Image && ext.eq_ignore_ascii_case("svg");
+    #[cfg(windows)]
+    {
+        (file_kind != FileKind::Folder).then_some((file_kind, svg))
+    }
+    #[cfg(not(windows))]
+    {
+        let previewable = match file_kind {
+            FileKind::Image | FileKind::Video => true,
+            FileKind::Audio => ext.eq_ignore_ascii_case("mp3") || ext.eq_ignore_ascii_case("flac"),
+            FileKind::Document => ext.eq_ignore_ascii_case("pdf"),
+            _ => false,
+        };
+        previewable.then_some((file_kind, svg))
+    }
 }
 
 /// Merges a local request before touching the shared scheduler. The same
@@ -13367,10 +13642,9 @@ fn request_thumbnails(state: &AppState) {
     let panels = state.panels.borrow();
     for (panel_idx, panel) in panels.iter().enumerate() {
         let tab = &panel.tabs.tabs[panel.tabs.active];
-        if !tab.preview {
+        if !tab.mode.thumbnails() {
             continue;
         }
-        let dir = tab.current_path.clone();
         let model = &panel.rows_model;
         for i in 0..model.row_count() {
             let Some(mut row) = model.row_data(i) else {
@@ -13386,20 +13660,17 @@ fn request_thumbnails(state: &AppState) {
                 row.thumbnail = Image::default();
                 model.set_row_data(i, row.clone());
             }
-            let full = dir.join(row.name.as_str());
+            let Some(full) = row_path(&row) else {
+                continue; // section header: never a preview target
+            };
             let key = full.to_string_lossy().to_string();
 
-            // Shared source of truth with the row geometry: only these
-            // types are capable of receiving a content texture.
-            let (kind, svg) = match thumbnail_kind_for_row(row.kind, row.ext.as_str()) {
-                Some(k) => k,
-                // A `.lnk` to an image/audio/video/PDF previews the TARGET (the shell
-                // thumbnail API resolves the link). Only `.lnk` rows pay the lookup.
-                None if row.ext.eq_ignore_ascii_case("lnk") => match lnk_thumbnail_kind(&full) {
-                    Some(kind) => (kind, false),
-                    None => continue,
-                },
-                None => continue,
+            // Shared source of truth with the row geometry: only the entries
+            // this returns can receive a content texture. On Windows it accepts
+            // every non-folder file (the shell decides), so `.lnk` shortcuts go
+            // the same way as everything else — the shell resolves the link.
+            let Some((kind, svg)) = thumbnail_kind_for_row(row.kind, row.ext.as_str()) else {
+                continue;
             };
             if row.rendered {
                 if let Some(img) = state.thumb_cache.borrow_mut().get(&key) {
@@ -13443,7 +13714,7 @@ fn update_panel_render_window(
 ) -> (i32, i32) {
     let top = top.max(0.0);
     let height = height.max(0.0);
-    let Some((model, dir, preview, old_first, old_end, new_first, new_end, visible)) =
+    let Some((model, preview, old_first, old_end, new_first, new_end, visible)) =
         state.panels.try_borrow().ok().and_then(|panels| {
             let panel = panels.get(panel_idx)?;
             panel.viewport_top.set(top);
@@ -13463,8 +13734,7 @@ fn update_panel_render_window(
             let old_end = panel.rendered_end.replace(new_end);
             Some((
                 panel.rows_model.clone(),
-                panel.tabs.tabs[panel.tabs.active].current_path.clone(),
-                panel.tabs.tabs[panel.tabs.active].preview,
+                panel.tabs.tabs[panel.tabs.active].mode.thumbnails(),
                 old_first,
                 old_end,
                 new_first,
@@ -13515,7 +13785,9 @@ fn update_panel_render_window(
                 row_changed = true;
             }
         } else if preview && row.preview_capable && row.thumbnail.size().width == 0 {
-            let full = dir.join(row.name.as_str());
+            let Some(full) = row_path(&row) else {
+                continue; // section header
+            };
             let key = full.to_string_lossy().to_string();
             if let Some(img) = state.thumb_cache.borrow_mut().get(&key) {
                 row.thumbnail = img;
@@ -13648,7 +13920,9 @@ fn request_folder_stats(state: &AppState) {
             if !row.is_dir {
                 continue; // only folders have recursive stats
             }
-            let full = dir.join(row.name.as_str());
+            let Some(full) = row_path(&row) else {
+                continue; // section header
+            };
             let key = full.to_string_lossy().to_string();
             let m_cached = (mtime_depth > 0)
                 .then(|| state.rmtime_cache.borrow().get(&key).copied())
@@ -13789,7 +14063,6 @@ fn request_imgmeta(state: &AppState) {
         if !shows {
             continue;
         }
-        let dir = panel.tabs.tabs[panel.tabs.active].current_path.clone();
         let model = &panel.rows_model;
         for i in 0..model.row_count() {
             let Some(mut row) = model.row_data(i) else {
@@ -13798,7 +14071,9 @@ fn request_imgmeta(state: &AppState) {
             if row.kind != 6 || !row.resolution.is_empty() {
                 continue; // images only, and not already filled in
             }
-            let full = dir.join(row.name.as_str());
+            let Some(full) = row_path(&row) else {
+                continue; // section header
+            };
             let key = full.to_string_lossy().to_string();
             let cached = state.imgmeta_cache.borrow().get(&key).cloned();
             // The cache is only valid if the mtime STILL matches the file
@@ -13868,18 +14143,124 @@ fn effective_row_height(preview_capable: bool, zoom: i32, compact_icon_rows: boo
     }
 }
 
+// ===== Sections =====
+// A section is a band of the view introduced by a header row: the categories
+// of `GroupMode::Category`, or one direct subfolder in "show subfolder
+// contents" mode. Folding a section (header click) drops its entries from the
+// row model — the listing behind it never moves.
+/// Row role: a plain entry (clickable, selectable, operable).
+const ROW_ROLE_ENTRY: i32 = 0;
+/// Row role: a section header (click folds/unfolds, never selected, never an
+/// operation target).
+const ROW_ROLE_SECTION: i32 = 1;
+/// Height of a section header band, in every display mode.
+const SECTION_HEADER_H: f32 = 26.0;
+
+// ===== Grid =====
+/// Gap between two tiles (both axes) and the padding around the packed grid.
+const GRID_GAP: f32 = 8.0;
+const GRID_PAD: f32 = 10.0;
+/// Band under the icon that carries the name (and size) of a tile.
+const GRID_NAME_BAND: f32 = 34.0;
+/// Width used by the grid before Slint publishes the list area's real width.
+const DEFAULT_GRID_WIDTH: f32 = 560.0;
+
+/// Layout inputs of a listing: the display mode, the zoom level, and the
+/// width available to the rows (the grid packs its tiles with it).
+#[derive(Debug, Clone, Copy)]
+struct RowStyle {
+    mode: ViewMode,
+    zoom: i32,
+    compact_icon_rows: bool,
+    /// Width of the list area in logical px. `0` = not published yet.
+    width: f32,
+}
+
+impl RowStyle {
+    fn width_or_default(self) -> f32 {
+        if self.width > 0.0 {
+            self.width
+        } else {
+            DEFAULT_GRID_WIDTH
+        }
+    }
+}
+
+/// Tile metrics of the grid for a zoom level and an available width:
+/// `(cell_w, cell_h, columns)`. The tile is a square icon box (the zoom's row
+/// height) plus a fixed band for the name, and is never wider than what the
+/// list area can hold — a very narrow view gets a single, narrower column.
+fn grid_metrics(zoom: i32, width: f32) -> (f32, f32, i32) {
+    let side = zoom_to_height(zoom);
+    let cell_h = side + GRID_NAME_BAND;
+    let avail = (width - 2.0 * GRID_PAD).max(1.0);
+    let cell_w = (side + 28.0).max(72.0).min(avail);
+    let cols = (((avail + GRID_GAP) / (cell_w + GRID_GAP)).floor() as i32).max(1);
+    (cell_w, cell_h, cols)
+}
+
 /// Computes the full vertical geometry once. The same values are
 /// then consumed by Slint and by all the Rust hit-tests: no parallel
 /// formula can drift when the heights become heterogeneous.
-fn layout_rows(rows: &mut [FileRow], zoom: i32, compact_icon_rows: bool) {
+/// Returns the number of grid columns (0 outside grid mode).
+fn layout_rows(rows: &mut [FileRow], style: RowStyle) -> i32 {
+    if style.mode.is_grid() {
+        return layout_rows_grid(rows, style);
+    }
+    let width = style.width_or_default();
     let mut y = 0.0_f32;
     for (index, row) in rows.iter_mut().enumerate() {
         row.model_index = index as i32;
+        row.visual_x = 0.0;
+        row.visual_w = width;
         row.visual_y = y;
-        row.visual_h = effective_row_height(row.preview_capable, zoom, compact_icon_rows);
+        row.visual_h = if row.role == ROW_ROLE_SECTION {
+            SECTION_HEADER_H
+        } else {
+            effective_row_height(row.preview_capable, style.zoom, style.compact_icon_rows)
+        };
         row.rendered = false;
         y += row.visual_h;
     }
+    0
+}
+
+/// Grid geometry: tiles packed left to right, a section header taking a
+/// full-width band and restarting the line under it. Rows keep a
+/// non-decreasing `visual_y` — a whole line shares one band — so every
+/// binary search over the geometry (render window, hit-test, band selection)
+/// stays valid.
+fn layout_rows_grid(rows: &mut [FileRow], style: RowStyle) -> i32 {
+    let (cell_w, cell_h, cols) = grid_metrics(style.zoom, style.width_or_default());
+    let width = style.width_or_default();
+    let mut y = 0.0_f32;
+    let mut col = 0i32;
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.model_index = index as i32;
+        row.rendered = false;
+        if row.role == ROW_ROLE_SECTION {
+            if col > 0 {
+                y += cell_h + GRID_GAP;
+                col = 0;
+            }
+            row.visual_x = 0.0;
+            row.visual_w = width;
+            row.visual_y = y;
+            row.visual_h = SECTION_HEADER_H;
+            y += SECTION_HEADER_H;
+            continue;
+        }
+        if col >= cols {
+            y += cell_h + GRID_GAP;
+            col = 0;
+        }
+        row.visual_x = GRID_PAD + col as f32 * (cell_w + GRID_GAP);
+        row.visual_w = cell_w;
+        row.visual_y = y;
+        row.visual_h = cell_h;
+        col += 1;
+    }
+    cols
 }
 
 /// Half-open interval of rows that intersect `[low_y, high_y)`.
@@ -14077,9 +14458,7 @@ fn restore_zoom_viewport_top(
 /// to the hot path of notches staying within the same mode.
 fn zoom_panel_visuals(
     panel: &Panel,
-    preview: bool,
-    zoom: i32,
-    compact_icon_rows: bool,
+    style: RowStyle,
     crossed_mode: bool,
     viewport: ZoomViewport,
 ) -> f32 {
@@ -14093,10 +14472,11 @@ fn zoom_panel_visuals(
         .collect();
 
     if crossed_mode {
-        refresh_rows_visuals(&mut rows, preview, compact_icon_rows);
+        refresh_rows_visuals(&mut rows, style.mode.thumbnails(), style.compact_icon_rows);
     }
 
-    layout_rows(&mut rows, zoom, compact_icon_rows);
+    let cols = layout_rows(&mut rows, style);
+    panel.grid_cols.set(cols);
     let geometry_changed = rows.iter().zip(previous).any(|(row, (y, h))| {
         (row.visual_y - y).abs() > f32::EPSILON || (row.visual_h - h).abs() > f32::EPSILON
     });
@@ -14114,6 +14494,9 @@ fn zoom_panel_visuals(
 
 fn refresh_rows_visuals(rows: &mut [FileRow], preview: bool, compact_icon_rows: bool) {
     for row in rows {
+        if row.role != ROW_ROLE_ENTRY {
+            continue; // a section header has no icon of its own
+        }
         let use_large_icon = preview && (!compact_icon_rows || row.preview_capable);
         let (app_icon, link_folder) = row_app_icon(
             row.path.as_str(),
@@ -14130,23 +14513,26 @@ fn refresh_rows_visuals(rows: &mut [FileRow], preview: bool, compact_icon_rows: 
     }
 }
 
-fn refresh_panel_visuals(panel: &Panel, preview: bool, zoom: i32, compact_icon_rows: bool) {
-    let mut rows: Vec<FileRow> = (0..panel.rows_model.row_count())
-        .filter_map(|index| panel.rows_model.row_data(index))
-        .collect();
-    refresh_rows_visuals(&mut rows, preview, compact_icon_rows);
-    layout_rows(&mut rows, zoom, compact_icon_rows);
-    panel.replace_rows(rows);
-}
-
+/// Re-derives the visuals of every thumbnail-bearing panel (the "compact icon
+/// rows" setting changed). Rebuilds from the cached listing: no disk I/O, and
+/// the textures come back from the LRU with the next thumbnail pass.
 fn refresh_preview_panel_visuals(state: &AppState) {
-    let compact = state.config.borrow().compact_icon_rows_in_preview;
-    let panels = state.panels.borrow();
-    for panel in panels.iter() {
-        let tab = &panel.tabs.tabs[panel.tabs.active];
-        if tab.preview {
-            refresh_panel_visuals(panel, true, tab.zoom, compact);
+    let (compact, lang) = {
+        let config = state.config.borrow();
+        (config.compact_icon_rows_in_preview, config.language)
+    };
+    let mut panels = state.panels.borrow_mut();
+    for panel in panels.iter_mut() {
+        if !panel.tabs.tabs[panel.tabs.active].mode.thumbnails() {
+            continue;
         }
+        rebuild_panel_rows(
+            panel,
+            lang,
+            compact,
+            &annotations_now(state),
+            &state.clipboard.borrow(),
+        );
     }
 }
 
@@ -14399,46 +14785,6 @@ fn resolve_lnk_icon(parent_display: &str, name: &str, big: bool) -> Option<(Imag
     }
 }
 
-/// If `lnk_path` is a Windows `.lnk` pointing at a file Favnyr can preview
-/// (image / audio / video / PDF), returns the TARGET's thumbnail kind — so an image
-/// shortcut previews the image, like Explorer. Reuses the icon path's
-/// `LNK_TARGET_CACHE`, so it adds no COM call the icon didn't already make.
-/// `None` on non-Windows, for a folder target, or a non-previewable one.
-fn lnk_thumbnail_kind(lnk_path: &Path) -> Option<FileKind> {
-    #[cfg(windows)]
-    {
-        let key = lnk_path.display().to_string();
-        let cached = LNK_TARGET_CACHE.with(|c| c.borrow().get(&key).cloned());
-        let (is_dir, ext) = match cached {
-            Some(v) => v?,
-            None => {
-                let resolved = openwith::resolve_shortcut(lnk_path).map(|t| {
-                    let e = t
-                        .extension()
-                        .map(|x| x.to_string_lossy().to_ascii_lowercase())
-                        .unwrap_or_default();
-                    (t.is_dir(), e)
-                });
-                LNK_TARGET_CACHE.with(|c| c.borrow_mut().insert(key, resolved.clone()));
-                resolved?
-            }
-        };
-        if is_dir {
-            return None;
-        }
-        thumbnail_kind_for_row(rfs::classify_kind(Some(&ext), false).as_i32(), &ext)
-            .map(|(kind, _)| kind)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = lnk_path;
-        None
-    }
-}
-
-/// Resolves a row's OS icon from only the information already present
-/// in the model. This route is shared by the initial listing and the
-/// List/Previews toggle, which therefore no longer need to re-read the folder.
 fn row_app_icon(
     parent_display: &str,
     name: &str,
@@ -14508,21 +14854,720 @@ fn apply_ext_filter(entries: &mut Vec<Entry>, on: bool, filter: &str) {
 struct RowContext<'a> {
     lang: Lang,
     now_unix: i64,
-    big_icon: bool,
-    zoom: i32,
-    compact_icon_rows: bool,
+    style: RowStyle,
     annotations: &'a favnyr_core::annotations::AnnotationStore,
+    /// The tab asks for "show subfolder contents": the source's subfolder
+    /// sections are part of the row model.
+    subfolders: bool,
+}
+
+/// One direct subfolder of the displayed folder, with its own entries: the
+/// unit of the "show subfolder contents" sections. `pending` marks a scan
+/// still running for it (the header then shows "…" instead of a count).
+#[derive(Debug, Clone)]
+struct SubFolder {
+    name: String,
+    path: PathBuf,
+    entries: Vec<Entry>,
+    pending: bool,
+}
+
+/// Everything a rebuild of the row model needs. Kept beside the model so that
+/// folding a section, switching the display mode or resizing a grid panel
+/// never re-reads the disk.
+#[derive(Debug, Clone)]
+struct RowsSource {
+    root: PathBuf,
+    /// The current folder's own entries, already sorted and filtered.
+    own: Vec<Entry>,
+    /// One level of direct subfolders, in section order. Empty unless the tab
+    /// asks for "show subfolder contents".
+    dirs: Vec<SubFolder>,
+}
+
+/// One block of the view: an optional header (label empty = none) followed by
+/// its entries.
+struct Section {
+    /// Stable key of the section, used to remember that it is folded. Empty
+    /// for the unlabelled section.
+    key: String,
+    label: String,
+    /// Folder the section's entries live in (`entry_to_row` reads its parent
+    /// path from there: a section is exactly one folder).
+    parent: PathBuf,
+    /// Header carries a folder glyph (subfolder sections do).
+    is_folder: bool,
+    /// Header shows "…" instead of a count (its scan is still running).
+    pending: bool,
+    entries: Vec<Entry>,
+}
+
+/// Section key of a subfolder. Path-based: two subfolders can share a name
+/// across a network path and a local one, the fold must follow the folder.
+fn sub_section_key(path: &Path) -> String {
+    format!("sub:{}", path.display())
+}
+
+fn category_section_key(category: Category) -> String {
+    format!("cat:{}", category.code())
+}
+
+/// Label of a category section, translated.
+fn category_label(lang: Lang, category: Category) -> String {
+    let key = match category {
+        Category::Folder => "category_folder",
+        Category::Image => "category_image",
+        Category::Video => "category_video",
+        Category::Audio => "category_audio",
+        Category::Document => "category_document",
+        Category::Other => "category_other",
+    };
+    i18n::tr(lang, key)
+}
+
+/// Splits the sections of a listing: the current folder's own entries (grouped
+/// by category when the tab asks for it), then one section per direct
+/// subfolder when "show subfolder contents" is on.
+fn build_sections(source: &RowsSource, group: GroupMode, ctx: &RowContext) -> Vec<Section> {
+    let lang = ctx.lang;
+    let mut sections: Vec<Section> = Vec::new();
+    let root = source.root.clone();
+    if group == GroupMode::Category {
+        // `rfs::sort` ranked the entries by category: they arrive as
+        // consecutive runs, in the section order.
+        for entry in &source.own {
+            let category = Category::of(entry.kind);
+            let key = category_section_key(category);
+            match sections.last_mut() {
+                Some(last) if last.key == key => last.entries.push(entry.clone()),
+                _ => sections.push(Section {
+                    key,
+                    label: category_label(lang, category),
+                    parent: root.clone(),
+                    is_folder: false,
+                    pending: false,
+                    entries: vec![entry.clone()],
+                }),
+            }
+        }
+    } else if !source.own.is_empty() {
+        sections.push(Section {
+            key: String::new(),
+            label: String::new(),
+            parent: root.clone(),
+            is_folder: false,
+            pending: false,
+            entries: source.own.clone(),
+        });
+    }
+    for dir in source.dirs.iter().filter(|_| ctx.subfolders) {
+        sections.push(Section {
+            key: sub_section_key(&dir.path),
+            label: dir.name.clone(),
+            parent: dir.path.clone(),
+            is_folder: true,
+            pending: dir.pending,
+            entries: dir.entries.clone(),
+        });
+    }
+    sections
+}
+
+/// The "show subfolder contents" sections of a fresh listing: every direct
+/// subfolder of `own`, waiting for its scan (`pending`). Shown immediately so
+/// the view never stays blank while the background scan runs.
+fn pending_subfolders(root: &Path, own: &[Entry]) -> Vec<SubFolder> {
+    own.iter()
+        .filter(|entry| entry.is_dir)
+        .map(|entry| SubFolder {
+            name: entry.name.clone(),
+            path: root.join(&entry.name),
+            entries: Vec::new(),
+            pending: true,
+        })
+        .collect()
+}
+
+/// A section header row. `name` stays empty on purpose: every name-based
+/// lookup (type-ahead, focus after navigation, rename) then walks past a
+/// header instead of matching its label.
+fn section_row(section: &Section, lang: Lang) -> FileRow {
+    FileRow {
+        name: SharedString::default(),
+        name_base: SharedString::default(),
+        name_ext: SharedString::default(),
+        ext: SharedString::default(),
+        path: SharedString::default(),
+        size: SharedString::default(),
+        modified: SharedString::default(),
+        is_dir: section.is_folder,
+        drop_runnable: false,
+        is_symlink: false,
+        folder_slot: 0,
+        comment: SharedString::default(),
+        // No kind: `FileKind::from_code` rejects it, so no thumbnail is ever
+        // requested for a header.
+        kind: -1,
+        selected: false,
+        cut: false,
+        hidden: false,
+        age: SharedString::default(),
+        age_bucket: -1,
+        resolution: SharedString::default(),
+        depth: SharedString::default(),
+        thumbnail: Image::default(),
+        app_icon: Image::default(),
+        link_folder: false,
+        preview_capable: false,
+        visual_x: 0.0,
+        visual_w: 0.0,
+        visual_y: 0.0,
+        visual_h: SECTION_HEADER_H,
+        model_index: 0,
+        rendered: false,
+        role: ROW_ROLE_SECTION,
+        section: section.key.clone().into(),
+        section_label: section.label.clone().into(),
+        section_count_text: if section.pending {
+            // The scan is still running: the count is not known yet.
+            i18n::tr(lang, "list_ellipsis").into()
+        } else {
+            i18n::footer_items_text(lang, section.entries.len()).into()
+        },
+        section_pending: section.pending,
+    }
+}
+
+/// Builds the whole row model of a listing: one header per labelled section
+/// (the folded ones keep their header and drop their entries), then the
+/// entries, then the geometry for the current display mode.
+fn build_rows(
+    source: &RowsSource,
+    group: GroupMode,
+    ctx: &RowContext,
+    collapsed: &[String],
+) -> (Vec<FileRow>, i32) {
+    let sections = build_sections(source, group, ctx);
+    let mut rows: Vec<FileRow> = Vec::new();
+    for section in &sections {
+        let folded = !section.key.is_empty() && collapsed.iter().any(|k| k == &section.key);
+        if !section.label.is_empty() {
+            rows.push(section_row(section, ctx.lang));
+        }
+        if folded {
+            continue;
+        }
+        let parent_display = section.parent.display().to_string();
+        for entry in &section.entries {
+            rows.push(entry_to_row(entry, &parent_display, ctx));
+        }
+    }
+    let cols = layout_rows(&mut rows, ctx.style);
+    (rows, cols)
+}
+
+/// Full path of an entry row. `None` for a section header: they carry no path
+/// on purpose (see `section_row`), so every path-keyed walk skips them.
+fn row_path(row: &FileRow) -> Option<PathBuf> {
+    if row.role != ROW_ROLE_ENTRY || row.name.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(row.path.as_str()).join(row.name.as_str()))
+}
+
+/// Index of the first row holding `path`, headers skipped.
+fn row_index_of_path(rows: &[FileRow], path: &Path) -> Option<usize> {
+    rows.iter()
+        .position(|row| row_path(row).as_deref() == Some(path))
+}
+
+/// First ENTRY (a row that is not a section header) at or after `from` when
+/// `step` is 1, at or before it when it is -1. `None` when the walk leaves the
+/// model. Section headers are not entries: the keyboard cursor never rests on
+/// one, and neither does a selection.
+fn walk_entries<M: Model<Data = FileRow>>(model: &M, from: i32, step: i32) -> Option<i32> {
+    let n = model.row_count() as i32;
+    let mut i = from;
+    while i >= 0 && i < n {
+        if model
+            .row_data(i as usize)
+            .is_some_and(|row| row.role == ROW_ROLE_ENTRY)
+        {
+            return Some(i);
+        }
+        i += step;
+    }
+    None
+}
+
+/// Grid neighbour of entry `base`: `dy` steps to the line above/below (`dx` to
+/// the tile beside it, same line). Reads the geometry the layout published, so
+/// a section header — which restarts the packing — is an edge, and the target
+/// keeps the column as closely as its (possibly shorter) line allows.
+fn grid_neighbour<M: Model<Data = FileRow>>(model: &M, base: i32, dx: i32, dy: i32) -> Option<i32> {
+    let row = model.row_data(usize::try_from(base).ok()?)?;
+    if dx != 0 {
+        let i = usize::try_from(base + dx).ok()?;
+        let other = model.row_data(i)?;
+        return (other.role == ROW_ROLE_ENTRY && other.visual_y == row.visual_y)
+            .then_some(i as i32);
+    }
+    // The line of `base`: the contiguous run of entries sharing its band.
+    let mut lo = base;
+    while lo > 0 {
+        match model.row_data((lo - 1) as usize) {
+            Some(prev) if prev.role == ROW_ROLE_ENTRY && prev.visual_y == row.visual_y => lo -= 1,
+            _ => break,
+        }
+    }
+    let mut hi = base;
+    while hi + 1 < model.row_count() as i32 {
+        match model.row_data((hi + 1) as usize) {
+            Some(next) if next.role == ROW_ROLE_ENTRY && next.visual_y == row.visual_y => hi += 1,
+            _ => break,
+        }
+    }
+    let n = model.row_count() as i32;
+    let probe = if dy < 0 { lo - 1 } else { hi + 1 };
+    let first = model.row_data(usize::try_from(probe).ok()?)?;
+    if first.role != ROW_ROLE_ENTRY {
+        return None; // a header (or the end of the listing) borders the line
+    }
+    // Bounds of that line, its own run of tiles.
+    let (mut start, mut end) = (probe, probe);
+    if dy < 0 {
+        while start > 0 {
+            match model.row_data((start - 1) as usize) {
+                Some(prev) if prev.role == ROW_ROLE_ENTRY && prev.visual_y == first.visual_y => {
+                    start -= 1;
+                }
+                _ => break,
+            }
+        }
+    } else {
+        while end + 1 < n {
+            match model.row_data((end + 1) as usize) {
+                Some(next) if next.role == ROW_ROLE_ENTRY && next.visual_y == first.visual_y => {
+                    end += 1;
+                }
+                _ => break,
+            }
+        }
+    }
+    // The nearest tile of that line to the current column.
+    let mut best: Option<(f32, i32)> = None;
+    for i in start..=end {
+        let Some(r) = model.row_data(i as usize) else {
+            continue;
+        };
+        let d = (r.visual_x - row.visual_x).abs();
+        if best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, i));
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
+/// Paths of the selected rows of a model, headers excluded.
+fn selected_paths_of<M: Model<Data = FileRow>>(model: &M) -> Vec<PathBuf> {
+    (0..model.row_count())
+        .filter_map(|index| model.row_data(index))
+        .filter(|row| row.selected)
+        .filter_map(|row| row_path(&row))
+        .collect()
+}
+
+/// Path of the row a selection anchor points at, headers excluded.
+fn anchor_path_of<M: Model<Data = FileRow>>(model: &M, anchor: i32) -> Option<PathBuf> {
+    let index = usize::try_from(anchor).ok()?;
+    row_path(&model.row_data(index)?)
+}
+
+/// Re-applies a preserved selection and the cut marks after a re-listing, by
+/// PATH: a row model can now hold entries of several folders (subfolder
+/// sections), where two different files may share one name.
+fn apply_preserved_marks(rows: &mut [FileRow], selected: &[PathBuf], cut: &[PathBuf]) {
+    if !selected.is_empty() {
+        let set: HashSet<&Path> = selected.iter().map(PathBuf::as_path).collect();
+        for row in rows.iter_mut() {
+            if row_path(row).is_some_and(|path| set.contains(path.as_path())) {
+                row.selected = true;
+            }
+        }
+    }
+    if !cut.is_empty() {
+        let set: HashSet<&Path> = cut.iter().map(PathBuf::as_path).collect();
+        for row in rows.iter_mut() {
+            if row_path(row).is_some_and(|path| set.contains(path.as_path())) {
+                row.cut = true;
+            }
+        }
+    }
+}
+
+/// Entries the clipboard holds as cut. Marked by full path, so an entry of a
+/// subfolder section is marked exactly when it is itself a cut item.
+fn clipboard_cut_paths(clipboard: &ClipboardState) -> Vec<PathBuf> {
+    if matches!(clipboard.op, Some(ClipOp::Cut)) {
+        clipboard.paths.clone()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Row style of a panel right now: the active tab's mode and zoom, and the
+/// list-area width last reported by the view.
+fn panel_row_style(panel: &Panel, compact_icon_rows: bool) -> RowStyle {
+    let tab = &panel.tabs.tabs[panel.tabs.active];
+    RowStyle {
+        mode: tab.mode,
+        zoom: tab.zoom,
+        compact_icon_rows,
+        width: panel.grid_width.get(),
+    }
+}
+
+/// Rebuilds a panel's row model from its CACHED listing. This is the single
+/// path of every change that touches only the SHAPE of the view — folding a
+/// section, switching the display mode or the grouping, zooming, resizing a
+/// grid — and it reads no disk. Selection and cut marks survive, keyed by path.
+/// Returns the number of grid columns.
+fn rebuild_panel_rows(
+    panel: &mut Panel,
+    lang: Lang,
+    compact_icon_rows: bool,
+    annotations: &favnyr_core::annotations::AnnotationStore,
+    clipboard: &ClipboardState,
+) -> i32 {
+    let style = panel_row_style(panel, compact_icon_rows);
+    let (group, collapsed, anchor, subfolders) = {
+        let tab = &panel.tabs.tabs[panel.tabs.active];
+        (
+            tab.group_mode,
+            tab.collapsed.clone(),
+            tab.selection_anchor,
+            tab.subfolders,
+        )
+    };
+    let selected = selected_paths_of(&*panel.rows_model);
+    let anchor_path = anchor_path_of(&*panel.rows_model, anchor);
+    let cut = clipboard_cut_paths(clipboard);
+    if panel.source.borrow().is_none() {
+        return 0;
+    }
+    let mut cols = 0;
+    let mut rows = Vec::new();
+    {
+        let source = panel.source.borrow();
+        if let Some(source) = source.as_ref() {
+            let ctx = RowContext {
+                lang,
+                now_unix: now_unix(),
+                style,
+                annotations,
+                subfolders,
+            };
+            let built = build_rows(source, group, &ctx, &collapsed);
+            rows = built.0;
+            cols = built.1;
+        }
+    }
+    apply_preserved_marks(&mut rows, &selected, &cut);
+    let new_anchor = anchor_path
+        .as_deref()
+        .and_then(|path| row_index_of_path(&rows, path))
+        .map(|index| index as i32)
+        .unwrap_or(-1);
+    {
+        let active = panel.tabs.active;
+        panel.tabs.tabs[active].selection_anchor = new_anchor;
+        panel.tabs.tabs[active].cursor = new_anchor;
+    }
+    panel.grid_cols.set(cols);
+    panel.replace_rows(rows);
+    cols
+}
+
+/// Installs a fresh listing into a panel: keeps it as the panel's source (what
+/// every shape-only rebuild reads), then builds and publishes the row model and
+/// the counts. The result of the previous subfolder scan is DROPPED — the
+/// caller restarts the scan if the tab still asks for it.
+///
+/// `selected` / `anchor` are paths captured before the listing came back: a
+/// re-listing of the same folder re-selects what survived, a context change
+/// passes nothing. The anchor is re-indexed and becomes the cursor.
+#[allow(clippy::too_many_arguments)]
+fn install_rows(
+    panel: &mut Panel,
+    path: &Path,
+    own: Vec<Entry>,
+    style: RowStyle,
+    group: GroupMode,
+    collapsed: &[String],
+    subfolders: bool,
+    lang: Lang,
+    annotations: &favnyr_core::annotations::AnnotationStore,
+    clipboard: &ClipboardState,
+    selected: &[PathBuf],
+    anchor: Option<&Path>,
+) -> usize {
+    let count = own.len();
+    let cut = clipboard_cut_paths(clipboard);
+    let ctx = RowContext {
+        lang,
+        now_unix: now_unix(),
+        style,
+        annotations,
+        subfolders,
+    };
+    let (mut rows, cols) = {
+        let mut source = RowsSource {
+            root: path.to_path_buf(),
+            own,
+            dirs: Vec::new(),
+        };
+        // The subfolder sections appear at once, each waiting for its scan:
+        // the background pass then only fills them in.
+        if subfolders {
+            source.dirs = pending_subfolders(&source.root, &source.own);
+        }
+        let built = build_rows(&source, group, &ctx, collapsed);
+        *panel.source.borrow_mut() = Some(source);
+        built
+    };
+    apply_preserved_marks(&mut rows, selected, &cut);
+    let new_anchor = anchor
+        .and_then(|path| row_index_of_path(&rows, path))
+        .map(|index| index as i32)
+        .unwrap_or(-1);
+    {
+        let active = panel.tabs.active;
+        panel.tabs.tabs[active].selection_anchor = new_anchor;
+        panel.tabs.tabs[active].cursor = new_anchor;
+    }
+    // A scan in flight belongs to the listing it was started for: it is
+    // stale now, delivery-side, without any bookkeeping.
+    panel.sub_gen.set(panel.sub_gen.get() + 1);
+    panel.entry_count.set(count);
+    panel.grid_cols.set(cols);
+    panel.replace_rows(rows);
+    count
+}
+
+/// Selection of a panel's model right now, plus the path its anchor points at:
+/// what a re-listing of the same folder must hand back to `install_rows`.
+fn preserved_selection_of(panel: &Panel) -> (Vec<PathBuf>, Option<PathBuf>) {
+    let anchor = panel.tabs.tabs[panel.tabs.active].selection_anchor;
+    (
+        selected_paths_of(&*panel.rows_model),
+        anchor_path_of(&*panel.rows_model, anchor),
+    )
+}
+
+/// Requests the "show subfolder contents" scan of a panel: one listing per
+/// direct subfolder, on a background thread. Called when the feature is turned
+/// on and after every fresh listing of a tab that uses it; the sections already
+/// exist (pending) by the time the results come back, so they only get filled.
+fn request_subfolder_scan(state: &AppState, panel_idx: usize) {
+    let job = {
+        let panels = state.panels.borrow();
+        let Some(panel) = panels.get(panel_idx) else {
+            return;
+        };
+        let tab = &panel.tabs.tabs[panel.tabs.active];
+        if !tab.subfolders {
+            return;
+        }
+        let source = panel.source.borrow();
+        let Some(source) = source.as_ref() else {
+            return;
+        };
+        // One level only: the direct subfolders of the listing.
+        let dirs: Vec<(String, PathBuf)> = source
+            .own
+            .iter()
+            .filter(|entry| entry.is_dir)
+            .map(|entry| (entry.name.clone(), source.root.join(&entry.name)))
+            .collect();
+        if dirs.is_empty() {
+            return;
+        }
+        SubScanJob {
+            panel: panel_idx,
+            sub_gen: panel.sub_gen.get(),
+            root: source.root.clone(),
+            dirs,
+            sort: (tab.sort.column, tab.sort.order),
+            group: subfolder_group(tab.group_mode),
+            show_hidden: tab.show_hidden,
+        }
+    };
+    let _ = state.subscan_tx.send(job);
+}
+
+/// Sort criterion used INSIDE a subfolder section. The category grouping has no
+/// header of its own down there, so its rank order would read as noise: a
+/// subfolder keeps the folders-first ordering instead.
+fn subfolder_group(group: GroupMode) -> GroupMode {
+    if group == GroupMode::Category {
+        GroupMode::FoldersFirst
+    } else {
+        group
+    }
+}
+
+/// Reads every direct subfolder of one job, then hands the result to the UI
+/// thread through the shared queue. A subfolder that cannot be read yields an
+/// empty section rather than failing the whole scan.
+fn spawn_subscan_worker(
+    rx: mpsc::Receiver<SubScanJob>,
+    queue: Arc<std::sync::Mutex<VecDeque<SubScanDelivery>>>,
+    weak: slint::Weak<MainWindow>,
+) {
+    std::thread::spawn(move || {
+        while let Ok(job) = rx.recv() {
+            let mut dirs = Vec::with_capacity(job.dirs.len());
+            for (name, path) in &job.dirs {
+                let mut entries = match rfs::list_dir_counted(path, job.show_hidden) {
+                    Ok((entries, _hidden)) => entries,
+                    Err(err) => {
+                        debug!(error = %err, path = %path.display(), "subfolder scan failed");
+                        Vec::new()
+                    }
+                };
+                rfs::sort(&mut entries, job.sort.0, job.sort.1, job.group);
+                dirs.push(SubFolder {
+                    name: name.clone(),
+                    path: path.to_path_buf(),
+                    entries,
+                    pending: false,
+                });
+            }
+            let delivery = SubScanDelivery {
+                panel: job.panel,
+                sub_gen: job.sub_gen,
+                root: job.root,
+                dirs,
+            };
+            let queued = queue
+                .lock()
+                .map(|mut pending| pending.push_back(delivery))
+                .is_ok();
+            if queued {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.invoke_subfolders_drain();
+                    }
+                });
+            }
+        }
+    });
+}
+
+/// Fills the pending subfolder sections of a panel with a finished scan. A
+/// delivery whose view has navigated, re-listed, or turned the feature off is
+/// dropped: it describes a listing that is no longer on screen.
+fn apply_subfolder_scan(window: &MainWindow, state: &AppState, delivery: SubScanDelivery) {
+    let compact = state.config.borrow().compact_icon_rows_in_preview;
+    let lang = state.config.borrow().language;
+    {
+        let mut panels = state.panels.borrow_mut();
+        let Some(panel) = panels.get_mut(delivery.panel) else {
+            return;
+        };
+        let active = panel.tabs.active;
+        if panel.sub_gen.get() != delivery.sub_gen || !panel.tabs.tabs[active].subfolders {
+            return;
+        }
+        {
+            let mut source = panel.source.borrow_mut();
+            let Some(source) = source.as_mut() else {
+                return;
+            };
+            if source.root != delivery.root {
+                return;
+            }
+            source.dirs = delivery.dirs;
+        }
+        // The rows are rebuilt from the filled source: selection and cut marks
+        // come back by path, section folds are preserved as they are.
+        rebuild_panel_rows(
+            panel,
+            lang,
+            compact,
+            &annotations_now(state),
+            &state.clipboard.borrow(),
+        );
+    }
+    debug!(panel = delivery.panel, "subfolder scan applied");
+    update_panels_ui(window, state);
+    request_thumbnails(state);
+}
+
+/// Applies a display mode to a panel's active tab. The mode change drives the
+/// zoom level (the list sits at the floor, previews restore the thumbnail
+/// default, the grid keeps whatever level it had — its tile size IS that
+/// level), then the rows are laid out again from the cached listing. Shared by
+/// the 3-option view menu and the Ctrl+P cycle so the two can never disagree.
+fn apply_view_mode(w: &MainWindow, st: &AppState, idx: usize, mode: ViewMode) {
+    let compact = st.config.borrow().compact_icon_rows_in_preview;
+    let thumbnails = {
+        let mut panels = st.panels.borrow_mut();
+        let Some(panel) = panels.get_mut(idx) else {
+            return;
+        };
+        let active = panel.tabs.active;
+        let changed = {
+            let t = &mut panel.tabs.tabs[active];
+            if t.mode == mode {
+                false
+            } else {
+                t.mode = mode;
+                t.zoom = match mode {
+                    ViewMode::List => LIST_DEFAULT_ZOOM,
+                    ViewMode::Previews => {
+                        if t.zoom < THUMB_ZOOM {
+                            THUMB_DEFAULT_ZOOM
+                        } else {
+                            t.zoom
+                        }
+                    }
+                    ViewMode::Grid => t.zoom.max(THUMB_ZOOM),
+                };
+                true
+            }
+        };
+        if changed {
+            rebuild_panel_rows(
+                panel,
+                st.config.borrow().language,
+                compact,
+                &annotations_now(st),
+                &st.clipboard.borrow(),
+            );
+        }
+        panel.tabs.tabs[active].mode.thumbnails()
+    };
+    update_panels_ui(w, st);
+    request_thumbnails(st);
+    // Turning thumbnails on is when they matter: it's when we warn (once)
+    // if `ffmpeg` is missing for video (Linux).
+    if thumbnails {
+        maybe_warn_ffmpeg_missing(w, st);
+    }
 }
 
 fn entry_to_row(e: &Entry, parent_display: &str, ctx: &RowContext) -> FileRow {
     let RowContext {
         lang,
         now_unix,
-        big_icon,
-        compact_icon_rows,
+        style,
         annotations,
         ..
     } = *ctx;
+    let big_icon = style.mode.thumbnails();
+    let compact_icon_rows = style.compact_icon_rows;
     let size = if e.is_dir {
         "—".to_string()
     } else {
@@ -14608,25 +15653,18 @@ fn entry_to_row(e: &Entry, parent_display: &str, ctx: &RowContext) -> FileRow {
         app_icon,
         link_folder,
         preview_capable,
+        visual_x: 0.0,
+        visual_w: 0.0,
         visual_y: 0.0,
         visual_h: COMPACT_ICON_ROW_HEIGHT,
         model_index: 0,
         rendered: false,
+        role: ROW_ROLE_ENTRY,
+        section: SharedString::default(),
+        section_label: SharedString::default(),
+        section_count_text: SharedString::default(),
+        section_pending: false,
     }
-}
-
-fn entries_to_rows(entries: &[Entry], parent_display: &str, ctx: &RowContext) -> Vec<FileRow> {
-    let RowContext {
-        zoom,
-        compact_icon_rows,
-        ..
-    } = *ctx;
-    let mut rows: Vec<FileRow> = entries
-        .iter()
-        .map(|entry| entry_to_row(entry, parent_display, ctx))
-        .collect();
-    layout_rows(&mut rows, zoom, compact_icon_rows);
-    rows
 }
 
 // ---------- Selection helpers (Slint model manipulation) ----------
@@ -14664,7 +15702,7 @@ fn selection_set_only<M: slint::Model<Data = FileRow>>(model: &M, idx: i32) -> (
     let n = model.row_count();
     for i in 0..n {
         if let Some(mut row) = model.row_data(i) {
-            let should = i as i32 == idx;
+            let should = i as i32 == idx && row.role == ROW_ROLE_ENTRY;
             // Tracked apart from the write: a re-push that changes nothing must
             // not read as a selection that moved, or a click collapsing a wider
             // selection would stop being told from a plain one — which is what
@@ -14723,16 +15761,19 @@ fn selection_apply_band<M: slint::Model<Data = FileRow>>(
     let mut count = 0i32;
     let n = model.row_count();
     for i in 0..n {
-        let in_band = (i as i32) >= lo && (i as i32) <= hi;
+        let Some(row) = model.row_data(i) else {
+            continue;
+        };
+        // A header caught in the band is not an entry: it stays unselected.
+        let in_band = (i as i32) >= lo && (i as i32) <= hi && row.role == ROW_ROLE_ENTRY;
         let based = base.get(i).copied().unwrap_or(false);
         let want = match mode {
             1 => based || in_band,  // Shift: add the band to the base selection
             2 => based && !in_band, // Ctrl: subtract the band from the base
             _ => in_band,           // replace
         };
-        if let Some(mut row) = model.row_data(i)
-            && row.selected != want
-        {
+        if row.selected != want {
+            let mut row = row;
             row.selected = want;
             model.set_row_data(i, row);
         }
@@ -14750,7 +15791,8 @@ fn selection_set_range<M: slint::Model<Data = FileRow>>(model: &M, a: i32, b: i3
     let n = model.row_count();
     for i in 0..n {
         if let Some(mut row) = model.row_data(i) {
-            let in_range = (i as i32) >= lo && (i as i32) <= hi;
+            // A header caught in the range is not an entry: it stays unselected.
+            let in_range = (i as i32) >= lo && (i as i32) <= hi && row.role == ROW_ROLE_ENTRY;
             if selection_needs_write(&row, in_range) {
                 row.selected = in_range;
                 model.set_row_data(i, row);
@@ -14765,15 +15807,22 @@ fn selection_set_range<M: slint::Model<Data = FileRow>>(model: &M, a: i32, b: i3
 
 fn selection_set_all<M: slint::Model<Data = FileRow>>(model: &M, value: bool) -> i32 {
     let n = model.row_count();
+    let mut count = 0i32;
     for i in 0..n {
-        if let Some(mut row) = model.row_data(i)
-            && row.selected != value
-        {
+        // Section headers are not entries: "all" never means them.
+        let Some(mut row) = model.row_data(i) else {
+            continue;
+        };
+        let value = value && row.role == ROW_ROLE_ENTRY;
+        if row.selected != value {
             row.selected = value;
             model.set_row_data(i, row);
         }
+        if value {
+            count += 1;
+        }
     }
-    if value { n as i32 } else { 0 }
+    count
 }
 
 fn count_selected<M: slint::Model<Data = FileRow>>(model: &M) -> i32 {
@@ -14782,6 +15831,7 @@ fn count_selected<M: slint::Model<Data = FileRow>>(model: &M) -> i32 {
     for i in 0..n {
         if let Some(row) = model.row_data(i)
             && row.selected
+            && row.role == ROW_ROLE_ENTRY
         {
             c += 1;
         }
@@ -14914,11 +15964,10 @@ fn name_contains_filter(name: &str, needle: &str) -> bool {
 /// Absolute paths of the active panel's selected rows.
 fn selected_paths(state: &AppState) -> Vec<PathBuf> {
     let rows = state.active_rows_model();
-    let cur_dir = state.current_path();
     (0..rows.row_count())
         .filter_map(|i| rows.row_data(i))
         .filter(|r| r.selected)
-        .map(|r| cur_dir.join(r.name.as_str()))
+        .filter_map(|r| row_path(&r))
         .collect()
 }
 
@@ -14941,11 +15990,7 @@ fn panel_folder_at_row(state: &AppState, panel: usize, row: usize) -> Option<Pat
     if !r.is_dir {
         return None;
     }
-    Some(
-        p.tabs.tabs[p.tabs.active]
-            .current_path
-            .join(r.name.as_str()),
-    )
+    row_path(&r)
 }
 
 /// Path of row `row` (file OR folder) of panel `panel`.
@@ -14953,11 +15998,7 @@ fn panel_path_at_row(state: &AppState, panel: usize, row: usize) -> Option<PathB
     let panels = state.panels.borrow();
     let p = panels.get(panel)?;
     let r = p.rows_model.row_data(row)?;
-    Some(
-        p.tabs.tabs[p.tabs.active]
-            .current_path
-            .join(r.name.as_str()),
-    )
+    row_path(&r)
 }
 
 /// Paths selected in a GIVEN panel (not necessarily the active one) — used
@@ -14967,11 +16008,10 @@ fn panel_selected_paths(state: &AppState, panel: usize) -> Vec<PathBuf> {
     let Some(p) = panels.get(panel) else {
         return Vec::new();
     };
-    let dir = p.tabs.tabs[p.tabs.active].current_path.clone();
     (0..p.rows_model.row_count())
         .filter_map(|i| p.rows_model.row_data(i))
         .filter(|r| r.selected)
-        .map(|r| dir.join(r.name.as_str()))
+        .filter_map(|r| row_path(&r))
         .collect()
 }
 
@@ -15101,10 +16141,12 @@ fn build_panels(ws: WorkspaceState) -> (Vec<Panel>, LayoutNode, usize) {
             tabs.push(Tab::restored(
                 path,
                 sort,
-                ts.preview,
+                tab_mode_of(ts),
                 ts.zoom,
                 ts.show_hidden,
                 ts.group_mode,
+                ts.subfolders,
+                ts.collapsed.clone(),
             ));
         }
         // `tabs` guaranteed non-empty (sanitized removes empty panels).
@@ -15132,6 +16174,11 @@ fn build_panels(ws: WorkspaceState) -> (Vec<Panel>, LayoutNode, usize) {
             pending_listing: false,
             listing_gen: 0,
             pending_select: None,
+            source: RefCell::new(None),
+            entry_count: Cell::new(0),
+            grid_width: Cell::new(0.0),
+            grid_cols: Cell::new(0),
+            sub_gen: Cell::new(0),
         });
     }
     let active_panel = ws.active_panel.min(panels.len() - 1);
@@ -15603,6 +16650,22 @@ pub fn persist_window_size(window: &MainWindow, state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A list/previews style: the two modes lay their rows out identically, so
+    /// the geometry tests only name the zoom and the compact flag.
+    fn plain_style(zoom: i32, compact_icon_rows: bool) -> RowStyle {
+        RowStyle {
+            mode: ViewMode::List,
+            zoom,
+            compact_icon_rows,
+            width: 0.0,
+        }
+    }
+
+    /// Lays rows out for the geometry tests (see `plain_style`).
+    fn layout_at(rows: &mut [FileRow], zoom: i32, compact_icon_rows: bool) -> i32 {
+        layout_rows(rows, plain_style(zoom, compact_icon_rows))
+    }
 
     /// Stand-in for the user's per-extension defaults.
     fn opener_for(ext: &str) -> Option<String> {
@@ -16607,19 +17670,23 @@ mod tests {
         let (top, height, expected) = {
             let mut panels = state.panels.borrow_mut();
             let panel = &mut panels[0];
-            panel.tabs.tabs[0].preview = true;
+            panel.tabs.tabs[0].mode = ViewMode::Previews;
             panel.tabs.tabs[0].zoom = THUMB_DEFAULT_ZOOM;
 
             let mut rows: Vec<FileRow> = (0..100)
                 .map(|index| FileRow {
                     name: format!("image-{index:03}.png").into(),
+                    // A row carries its parent: the thumbnail key is
+                    // `row.path`, so a subfolder section can hold the entries
+                    // of another folder.
+                    path: gallery.display().to_string().into(),
                     ext: "png".into(),
                     kind: FileKind::Image.as_i32(),
                     preview_capable: true,
                     ..Default::default()
                 })
                 .collect();
-            layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+            layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
             let top = rows[50].visual_y;
             let height = rows[50].visual_h * 2.0;
             let visible = row_range_for_slice(&rows, top, top + height);
@@ -16670,19 +17737,20 @@ mod tests {
         {
             let mut panels = state.panels.borrow_mut();
             let panel = &mut panels[0];
-            panel.tabs.tabs[0].preview = true;
+            panel.tabs.tabs[0].mode = ViewMode::Previews;
             panel.tabs.tabs[0].zoom = THUMB_DEFAULT_ZOOM;
             panel.viewport_height.set(76.0);
             let mut rows: Vec<FileRow> = (0..40)
                 .map(|index| FileRow {
                     name: format!("cached-{index:02}.png").into(),
+                    path: gallery.display().to_string().into(),
                     ext: "png".into(),
                     kind: FileKind::Image.as_i32(),
                     preview_capable: true,
                     ..Default::default()
                 })
                 .collect();
-            layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+            layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
             panel.replace_rows(rows);
         }
         for index in 0..40 {
@@ -16854,7 +17922,15 @@ mod tests {
             thumbnail_kind_for_row(FileKind::Audio.as_i32(), "FLAC"),
             Some((FileKind::Audio, false))
         );
-        assert!(thumbnail_kind_for_row(FileKind::Document.as_i32(), "docx").is_none());
+        // Folders never request a preview, on any platform.
+        assert!(thumbnail_kind_for_row(FileKind::Folder.as_i32(), "").is_none());
+        // A document Favnyr can't render itself: on Windows it is handed to the
+        // shell (which decides whether it has a thumbnail), elsewhere skipped.
+        let docx = thumbnail_kind_for_row(FileKind::Document.as_i32(), "docx");
+        #[cfg(windows)]
+        assert_eq!(docx, Some((FileKind::Document, false)));
+        #[cfg(not(windows))]
+        assert!(docx.is_none());
 
         assert_eq!(effective_row_height(true, THUMB_DEFAULT_ZOOM, true), 76.0);
         assert_eq!(effective_row_height(false, THUMB_DEFAULT_ZOOM, true), 28.0);
@@ -16881,7 +17957,15 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, false);
+        layout_rows(
+            &mut rows,
+            RowStyle {
+                mode: ViewMode::Previews,
+                zoom: THUMB_DEFAULT_ZOOM,
+                compact_icon_rows: false,
+                width: 0.0,
+            },
+        );
         let viewport = ZoomViewport {
             top: rows[20].visual_y + 10.0,
             height: 420.0,
@@ -16896,7 +17980,13 @@ mod tests {
         panel.viewport_height.set(viewport.height);
         panel.replace_rows(rows);
 
-        let new_top = zoom_panel_visuals(&panel, true, MAX_ZOOM, false, false, viewport);
+        let style = RowStyle {
+            mode: ViewMode::Previews,
+            zoom: MAX_ZOOM,
+            compact_icon_rows: false,
+            width: 0.0,
+        };
+        let new_top = zoom_panel_visuals(&panel, style, false, viewport);
         let selected = panel.rows_model.row_data(anchor.row_index).unwrap();
         let selected_anchor_y =
             selected.visual_y + selected.visual_h * anchor.row_fraction - new_top;
@@ -16922,7 +18012,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         let top = rows[30].visual_y;
         let height = 360.0;
         let pointer_y = 95.0;
@@ -16931,7 +18021,7 @@ mod tests {
         let anchor = capture_zoom_anchor(&rows, top, height, pointer_y).unwrap();
         assert_eq!(anchor.row_index, expected_row);
 
-        layout_rows(&mut rows, MAX_ZOOM, true);
+        layout_at(&mut rows, MAX_ZOOM, true);
         let new_top = restore_zoom_viewport_top(&rows, Some(anchor), top, height);
         let row = &rows[anchor.row_index];
         let restored_pointer_y = row.visual_y + row.visual_h * anchor.row_fraction - new_top;
@@ -16959,14 +18049,14 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, LIST_DEFAULT_ZOOM, false);
+        layout_at(&mut rows, LIST_DEFAULT_ZOOM, false);
         let viewport_height = 500.0;
         // The pointer is in the blank space below the 280 px of content; the center
         // (250 px), however, stays on a valid row.
         let anchor = capture_zoom_anchor(&rows, 0.0, viewport_height, 450.0).unwrap();
         assert_eq!(anchor.viewport_y, viewport_height * 0.5);
 
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, false);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, false);
         let top = restore_zoom_viewport_top(&rows, Some(anchor), 0.0, viewport_height);
         let row = &rows[anchor.row_index];
         let max_top =
@@ -16977,7 +18067,7 @@ mod tests {
 
         // If the content fits in the view again, no negative position or
         // one above the maximum can leak out to the Slint scrollbar.
-        layout_rows(&mut rows, LIST_DEFAULT_ZOOM, false);
+        layout_at(&mut rows, LIST_DEFAULT_ZOOM, false);
         assert_eq!(
             restore_zoom_viewport_top(&rows, Some(anchor), 9_999.0, viewport_height),
             0.0
@@ -17000,7 +18090,7 @@ mod tests {
                 ..Default::default()
             },
         ];
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         let model = VecModel::from(rows);
 
         assert_eq!(row_index_at_content_y(&model, 75.0), 0);
@@ -17019,7 +18109,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         let total_height = rows.last().map(|row| row.visual_y + row.visual_h).unwrap();
         let model = VecModel::from(rows.clone());
 
@@ -17051,7 +18141,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         let top = rows[8_500].visual_y;
         let height = 720.0;
         let expected = row_range_for_slice(&rows, top - height, top + height * 2.0);
@@ -17094,7 +18184,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         let top = rows[80].visual_y;
         let (first, end) = mark_render_window(&mut rows, top, 300.0);
         rows_model.set_vec(rows);
@@ -17125,7 +18215,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         panel.viewport_top.set(rows[1_500].visual_y);
         panel.viewport_height.set(600.0);
         panel.replace_rows(rows.clone());
@@ -17148,7 +18238,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        layout_rows(&mut rows, THUMB_DEFAULT_ZOOM, true);
+        layout_at(&mut rows, THUMB_DEFAULT_ZOOM, true);
         let model = VecModel::from(rows);
         let base = snapshot_selection(&model);
 
@@ -17491,6 +18581,9 @@ mod tests {
             show_hidden: false,
             group_mode: GroupMode::FoldersFirst,
             zoom: None,
+            view_mode: None,
+            subfolders: false,
+            collapsed: Vec::new(),
         }
     }
 
@@ -17638,5 +18731,271 @@ mod tests {
     fn differ_reflexive() {
         let a = ws(vec![panel(vec![tab(r"C:\a"), tab(r"C:\b")])]);
         assert!(!workspaces_differ(&a, &a.clone()));
+    }
+
+    // ----- Grid, sections and subfolder contents -----
+
+    /// Grid style of the tests: zoom 2 (76px tiles) in a 400px list area,
+    /// which packs exactly THREE 104px cells per line.
+    fn grid_style(width: f32) -> RowStyle {
+        RowStyle {
+            mode: ViewMode::Grid,
+            zoom: THUMB_DEFAULT_ZOOM,
+            compact_icon_rows: false,
+            width,
+        }
+    }
+
+    fn named_row(name: &str) -> FileRow {
+        FileRow {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    /// A section header row, as `section_row` builds it.
+    fn header_row(key: &str, label: &str) -> FileRow {
+        FileRow {
+            kind: -1,
+            visual_h: SECTION_HEADER_H,
+            role: ROW_ROLE_SECTION,
+            section: key.into(),
+            section_label: label.into(),
+            ..Default::default()
+        }
+    }
+
+    fn test_entry(name: &str, is_dir: bool) -> Entry {
+        Entry {
+            kind: rfs::classify_kind(
+                Path::new(name).extension().and_then(|ext| ext.to_str()),
+                is_dir,
+            ),
+            name: name.to_string(),
+            path: PathBuf::from("/gallery").join(name),
+            size_bytes: None,
+            mtime_unix: None,
+            is_dir,
+            hidden: false,
+            is_symlink: false,
+            executable: false,
+        }
+    }
+
+    #[test]
+    fn the_grid_packs_a_line_per_band_and_a_header_opens_a_new_one() {
+        let style = grid_style(400.0);
+        let mut rows: Vec<FileRow> = (0..7).map(|i| named_row(&format!("f{i}"))).collect();
+        rows.insert(3, header_row("cat:image", "Images"));
+        let cols = layout_rows(&mut rows, style);
+        assert_eq!(cols, 3);
+
+        // First line: three tiles sharing one band.
+        assert_eq!(rows[0].visual_x, GRID_PAD);
+        assert_eq!(rows[0].visual_y, 0.0);
+        assert_eq!(
+            rows[0].visual_h,
+            zoom_to_height(THUMB_DEFAULT_ZOOM) + GRID_NAME_BAND
+        );
+        for i in 1..3 {
+            assert_eq!(rows[i].visual_y, rows[0].visual_y, "a line shares one band");
+            assert!(rows[i].visual_x > rows[i - 1].visual_x);
+        }
+        // The header spans the whole width and restarts the packing under it.
+        assert_eq!((rows[3].visual_x, rows[3].visual_w), (0.0, 400.0));
+        assert_eq!(rows[3].visual_h, SECTION_HEADER_H);
+        assert!(rows[4].visual_y >= rows[3].visual_y + SECTION_HEADER_H);
+        assert_eq!(rows[4].visual_x, GRID_PAD);
+        // The invariant every binary search over the geometry rests on.
+        assert!(
+            rows.windows(2)
+                .all(|pair| pair[1].visual_y >= pair[0].visual_y)
+        );
+        // A tile never sticks out of the list area, however many share a line.
+        for width in [180.0_f32, 320.0, 640.0, 1280.0] {
+            let mut probe: Vec<FileRow> = (0..12).map(|_| named_row("x")).collect();
+            let cols = layout_rows(&mut probe, grid_style(width));
+            assert!(cols >= 1);
+            for row in &probe {
+                assert!(
+                    row.visual_x + row.visual_w <= width + 0.01,
+                    "width={width} x={} w={}",
+                    row.visual_x,
+                    row.visual_w
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_grid_cursor_walks_lines_and_stops_at_a_header() {
+        let mut rows = vec![header_row("cat:image", "Images")];
+        rows.extend((0..6).map(|i| named_row(&format!("f{i}"))));
+        rows.push(header_row("cat:other", "Other"));
+        rows.push(named_row("f6"));
+        layout_rows(&mut rows, grid_style(400.0));
+        let model = VecModel::from(rows);
+        // 0 = header, 1..=6 = f0..f5 (two lines of three), 7 = header, 8 = f6.
+        assert_eq!(grid_neighbour(&model, 1, 1, 0), Some(2)); // right, same line
+        assert_eq!(grid_neighbour(&model, 1, -1, 0), None); // the line's left edge
+        assert_eq!(grid_neighbour(&model, 3, 1, 0), None); // the line's right edge
+        assert_eq!(grid_neighbour(&model, 1, 0, 1), Some(4)); // down keeps the column
+        assert_eq!(grid_neighbour(&model, 4, 0, -1), Some(1)); // and up comes back
+        assert_eq!(grid_neighbour(&model, 4, 0, 1), None); // a header borders the line
+        assert_eq!(grid_neighbour(&model, 8, 0, -1), None);
+        assert_eq!(grid_neighbour(&model, 8, 0, 1), None);
+    }
+
+    #[test]
+    fn the_keyboard_cursor_never_rests_on_a_header() {
+        let mut rows = vec![header_row("cat:image", "Images")];
+        rows.extend((0..2).map(|i| named_row(&format!("f{i}"))));
+        rows.push(header_row("cat:other", "Other"));
+        rows.push(named_row("f2"));
+        let model = VecModel::from(rows);
+        assert_eq!(walk_entries(&model, 0, 1), Some(1)); // the header is stepped over
+        assert_eq!(walk_entries(&model, 3, 1), Some(4)); // and so is the second one
+        assert_eq!(walk_entries(&model, 2, 1), Some(2)); // an entry stays where it is
+        assert_eq!(walk_entries(&model, 3, -1), Some(2));
+        assert_eq!(walk_entries(&model, 4, 1), Some(4)); // the last entry
+        assert_eq!(walk_entries(&model, 5, 1), None); // out of the model
+        assert_eq!(walk_entries(&model, -1, 1), None);
+    }
+
+    #[test]
+    fn a_section_header_is_never_part_of_a_selection() {
+        let mut rows = vec![header_row("cat:image", "Images")];
+        rows.extend((0..2).map(|i| named_row(&format!("f{i}"))));
+        rows.push(header_row("cat:other", "Other"));
+        rows.push(named_row("f2"));
+        let model = VecModel::from(rows);
+
+        assert_eq!(selection_set_all(&model, true), 3);
+        assert_eq!(count_selected(&model), 3);
+        assert!(!model.row_data(0).unwrap().selected);
+        assert!(!model.row_data(3).unwrap().selected);
+
+        // A range or a band that covers a header selects the entries around it.
+        assert_eq!(selection_set_range(&model, 0, 4), 3);
+        let base = snapshot_selection(&model);
+        assert_eq!(selection_apply_band(&model, 0, 4, 2, &base), 0); // Ctrl: remove
+        assert_eq!(count_selected(&model), 0);
+    }
+
+    #[test]
+    fn a_subfolder_section_waits_pending_and_only_one_level_is_spanned() {
+        let root = PathBuf::from("/gallery");
+        let own = vec![
+            test_entry("album", true),
+            test_entry("zeta", true),
+            test_entry("photo.png", false),
+        ];
+        let dirs = pending_subfolders(&root, &own);
+        assert_eq!(dirs.len(), 2, "one section per DIRECT subfolder");
+        assert!(dirs.iter().all(|dir| dir.pending && dir.entries.is_empty()));
+        assert_eq!(dirs[0].path, root.join("album"));
+        assert_eq!(
+            sub_section_key(&dirs[0].path),
+            sub_section_key(&root.join("album"))
+        );
+        assert!(sub_section_key(&dirs[0].path).starts_with("sub:"));
+    }
+
+    #[test]
+    fn the_category_grouping_heads_every_bucket_it_finds() {
+        let mut own = vec![
+            test_entry("notes.txt", false),
+            test_entry("zulu", true),
+            test_entry("photo.png", false),
+            test_entry("misc.bin", false),
+            test_entry("alpha", true),
+        ];
+        rfs::sort(
+            &mut own,
+            SortColumn::Name,
+            SortOrder::Asc,
+            GroupMode::Category,
+        );
+        let annotations = favnyr_core::annotations::AnnotationStore::default();
+        let ctx = RowContext {
+            lang: Lang::En,
+            now_unix: 0,
+            style: plain_style(LIST_DEFAULT_ZOOM, false),
+            annotations: &annotations,
+            subfolders: false,
+        };
+        let (rows, _) = build_rows(
+            &RowsSource {
+                root: PathBuf::from("/gallery"),
+                own,
+                dirs: Vec::new(),
+            },
+            GroupMode::Category,
+            &ctx,
+            &[],
+        );
+        let heads: Vec<String> = rows
+            .iter()
+            .filter(|row| row.role == ROW_ROLE_SECTION)
+            .map(|row| row.section.to_string())
+            .collect();
+        assert_eq!(
+            heads,
+            ["cat:folder", "cat:image", "cat:document", "cat:other"]
+        );
+        // The count of a header is the localized "N items", and the entries
+        // follow their header in the ranked order the sorter produced.
+        let names: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.role == ROW_ROLE_ENTRY)
+            .map(|row| row.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["alpha", "zulu", "photo.png", "notes.txt", "misc.bin"]
+        );
+        assert_eq!(
+            rows[0].section_count_text,
+            i18n::footer_items_text(Lang::En, 2)
+        );
+        assert_eq!(rows[0].section_label, i18n::tr(Lang::En, "category_folder"));
+    }
+
+    #[test]
+    fn a_tab_carries_its_display_state_through_a_workspace_round_trip() {
+        let tab = Tab::restored(
+            PathBuf::from("/gallery"),
+            SortState {
+                column: SortColumn::Name,
+                order: SortOrder::Asc,
+            },
+            ViewMode::Grid,
+            Some(4),
+            true,
+            GroupMode::Category,
+            true,
+            vec!["cat:image".to_string()],
+        );
+        let state = tab_to_state(&tab);
+        assert_eq!(state.view_mode.as_deref(), Some("grid"));
+        assert!(state.preview, "grid asks its rows for thumbnails");
+        assert_eq!(state.zoom, Some(4));
+        assert!(state.subfolders);
+        assert_eq!(state.collapsed, ["cat:image"]);
+
+        let back = tab_from_state(state);
+        assert_eq!(back.mode, ViewMode::Grid);
+        assert_eq!(back.zoom, 4);
+        assert!(back.subfolders);
+        assert_eq!(back.collapsed, ["cat:image"]);
+
+        // A workspace older than the grid has no `view_mode`; its `preview`
+        // flag still names the mode the tab was left in.
+        let legacy = TabState {
+            view_mode: None,
+            preview: true,
+            ..tab_to_state(&tab)
+        };
+        assert_eq!(tab_mode_of(&legacy), ViewMode::Previews);
     }
 }

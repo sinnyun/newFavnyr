@@ -21,7 +21,7 @@ Favnyr makes no network request. There is no account, no telemetry, no update ch
 
 Its settings, favourites and workspaces are plain TOML files in the usual per-user folders. You do not have to guess where: **Settings → Storage locations** lists the exact paths and opens them.
 
-Thumbnails live in a bounded memory cache for the length of the session. Nothing is written to a thumbnail database on disk.
+Thumbnails live in a bounded memory cache for the length of the session. Favnyr itself writes nothing to disk: on Windows it reads the thumbnail cache the operating system already maintains.
 
 Favnyr runs with ordinary user permissions. It installs no service and no background process. It still obeys the permissions of the files you ask it to touch, obviously.
 
@@ -51,6 +51,14 @@ Ready-made recipes fill the editor for you when the tool is installed — for in
 
 ## Previews
 
+**Windows** previews come from the system, not from Favnyr. The shell's
+thumbnail providers — the same ones Explorer uses, backed by the OS thumbnail
+cache — are asked for every non-folder file, so any type Windows knows how to
+preview gets a thumbnail: photos, video, PDF, Office documents, e-books, fonts,
+`.lnk` shortcuts… with no decoder shipped or maintained by Favnyr. A file the
+system has no thumbnail for simply keeps its file-type icon.
+
+**Linux** has no equivalent system service, so Favnyr renders previews itself.
 Images are decoded in pure Rust, no C library and no network:
 
 `.jpg` `.jpeg` · `.png` · `.gif` · `.webp` · `.bmp` · `.tif` `.tiff` · `.tga` · `.hdr` · `.ico`
@@ -58,17 +66,16 @@ Images are decoded in pure Rust, no C library and no network:
 `.svg` is rendered by Slint's own vector engine.
 
 PSD files (`.psd`) display Photoshop's embedded JPEG thumbnail when one is
-present. This is deliberately best-effort.
+present, and Affinity files (`.afphoto`, `.afdesign`, `.afpub`, `.af`) get the
+same lightweight treatment — both deliberately best-effort. MP3 and FLAC files
+(`.mp3`, `.flac`) display their embedded cover art; a track without artwork
+keeps the normal audio icon. Videos (`.mp4` `.mkv` `.mov` `.avi` `.webm` `.wmv`
+`.flv` `.m4v` `.mpg` `.mpeg` `.ts` `.3gp`) use `ffmpeg`, and PDFs use Poppler
+(`pdftoppm` or `pdftocairo`). Both are optional: without them Favnyr shows the
+file-type icon.
 
-Affinity Photo, Designer and Publisher files (`.afphoto`, `.afdesign`, `.afpub`
-and `.af`) receive the same lightweight treatment.
-
-MP3 and FLAC files (`.mp3`, `.flac`) display their embedded cover art. A track without embedded artwork simply keeps the normal audio icon.
-
-Videos (`.mp4` `.mkv` `.mov` `.avi` `.webm` `.wmv` `.flv` `.m4v` `.mpg` `.mpeg` `.ts` `.3gp`) and PDFs get a preview too, through a different route on each system:
-
-- **Windows** — the shell's thumbnail providers, so nothing extra to install.
-- **Linux** — `ffmpeg` for video, Poppler (`pdftoppm` or `pdftocairo`) for PDF. Both optional; without them Favnyr simply shows the file-type icon.
+On Windows the same in-house decoders remain as a fallback, reached only when
+the shell returns no thumbnail for the file.
 
 
 ## About AI-assisted development

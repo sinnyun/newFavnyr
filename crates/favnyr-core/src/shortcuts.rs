@@ -57,6 +57,18 @@ pub const ACTIONS: &[ActionDef] = &[
         group: ActionGroup::Navigation,
         default: "ArrowDown",
     },
+    // Left/right walk the columns of the grid; the single-column list has
+    // nothing to walk, so there they are a no-op.
+    ActionDef {
+        id: "cursor-left",
+        group: ActionGroup::Navigation,
+        default: "ArrowLeft",
+    },
+    ActionDef {
+        id: "cursor-right",
+        group: ActionGroup::Navigation,
+        default: "ArrowRight",
+    },
     ActionDef {
         id: "cursor-first",
         group: ActionGroup::Navigation,
@@ -112,6 +124,16 @@ pub const ACTIONS: &[ActionDef] = &[
         id: "extend-down",
         group: ActionGroup::Selection,
         default: "Shift+ArrowDown",
+    },
+    ActionDef {
+        id: "extend-left",
+        group: ActionGroup::Selection,
+        default: "Shift+ArrowLeft",
+    },
+    ActionDef {
+        id: "extend-right",
+        group: ActionGroup::Selection,
+        default: "Shift+ArrowRight",
     },
     // ----- Tabs & views -----
     ActionDef {

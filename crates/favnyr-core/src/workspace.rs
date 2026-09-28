@@ -54,6 +54,21 @@ pub struct TabState {
     /// interface, which clamps on restore — the core only carries the value.
     #[serde(default)]
     pub zoom: Option<i32>,
+    /// Display mode of this tab: `"list"`, `"previews"` or `"grid"`.
+    ///
+    /// `None` for a workspace written before the grid existed: the interface
+    /// then reads the legacy `preview` flag, which stands for the two modes it
+    /// knew. Kept as a string so the core never has to know the mode set.
+    #[serde(default)]
+    pub view_mode: Option<String>,
+    /// "Show subfolder contents": the listing carries one section per direct
+    /// subfolder, holding its own entries (one level down).
+    #[serde(default)]
+    pub subfolders: bool,
+    /// Sections folded away by the user, by key ("cat:image", "sub:C:\dir").
+    /// Folding only changes the rows on screen, never the listing.
+    #[serde(default)]
+    pub collapsed: Vec<String>,
 }
 
 fn default_group_mode() -> GroupMode {
@@ -219,6 +234,9 @@ impl WorkspaceState {
                     show_hidden: false,
                     group_mode: GroupMode::FoldersFirst,
                     zoom: None,
+                    view_mode: None,
+                    subfolders: false,
+                    collapsed: Vec::new(),
                 }],
                 columns: crate::columns::default_columns(),
                 tab_bar_mode: 0,
@@ -478,6 +496,9 @@ mod tests {
                         show_hidden: false,
                         group_mode: GroupMode::FoldersFirst,
                         zoom: None,
+                        view_mode: None,
+                        subfolders: false,
+                        collapsed: Vec::new(),
                     }],
                     columns: crate::columns::default_columns(),
                     tab_bar_mode: 0,
@@ -495,6 +516,9 @@ mod tests {
                             show_hidden: false,
                             group_mode: GroupMode::FoldersFirst,
                             zoom: None,
+                            view_mode: None,
+                            subfolders: false,
+                            collapsed: Vec::new(),
                         },
                         TabState {
                             path: "/etc".into(),
@@ -504,6 +528,9 @@ mod tests {
                             show_hidden: false,
                             group_mode: GroupMode::FoldersFirst,
                             zoom: None,
+                            view_mode: None,
+                            subfolders: false,
+                            collapsed: Vec::new(),
                         },
                     ],
                     columns: crate::columns::default_columns(),
@@ -557,6 +584,44 @@ mod tests {
         assert_eq!(back.panels[0].tabs[0].zoom, Some(5));
     }
 
+    /// The display mode, the subfolder sections and the folded sections travel
+    /// with the tab. A file written before any of them existed still loads: the
+    /// interface then reads the legacy `preview` flag, which stands for the two
+    /// modes its author knew.
+    #[test]
+    fn view_mode_subfolders_and_folds_travel_with_the_tab() {
+        let older = r#"
+            active_panel = 0
+            [[panels]]
+            stretch = 1.0
+            active_tab = 0
+            [[panels.tabs]]
+            path = "/tmp"
+            sort_column = "name"
+            sort_order = "asc"
+            preview = true
+            show_hidden = false
+            group_mode = "foldersfirst"
+        "#;
+        let ws: WorkspaceState = toml::from_str(older).unwrap();
+        let tab = &ws.panels[0].tabs[0];
+        assert_eq!(tab.view_mode, None);
+        assert!(!tab.subfolders);
+        assert!(tab.collapsed.is_empty());
+
+        let mut current = ws.clone();
+        current.panels[0].tabs[0].view_mode = Some("grid".into());
+        current.panels[0].tabs[0].subfolders = true;
+        current.panels[0].tabs[0].collapsed =
+            vec!["cat:image".to_string(), "sub:/tmp/album".to_string()];
+        let text = toml::to_string_pretty(&current).unwrap();
+        let back: WorkspaceState = toml::from_str(&text).unwrap();
+        let tab = &back.panels[0].tabs[0];
+        assert_eq!(tab.view_mode.as_deref(), Some("grid"));
+        assert!(tab.subfolders);
+        assert_eq!(tab.collapsed, ["cat:image", "sub:/tmp/album"]);
+    }
+
     #[test]
     fn closed_tabs_are_backward_compatible_persisted_and_capped() {
         let serialized_without_history = toml::to_string_pretty(&sample()).unwrap();
@@ -574,6 +639,9 @@ mod tests {
                 show_hidden: false,
                 group_mode: GroupMode::FoldersFirst,
                 zoom: None,
+                view_mode: None,
+                subfolders: false,
+                collapsed: Vec::new(),
             })
             .collect();
 
@@ -686,6 +754,9 @@ mod tests {
                     show_hidden: false,
                     group_mode: GroupMode::FoldersFirst,
                     zoom: None,
+                    view_mode: None,
+                    subfolders: false,
+                    collapsed: Vec::new(),
                 }],
                 columns: crate::columns::default_columns(),
                 tab_bar_mode: 0,
@@ -726,6 +797,9 @@ mod tests {
                         show_hidden: false,
                         group_mode: GroupMode::FoldersFirst,
                         zoom: None,
+                        view_mode: None,
+                        subfolders: false,
+                        collapsed: Vec::new(),
                     }],
                     columns: crate::columns::default_columns(),
                     tab_bar_mode: 0,
@@ -796,6 +870,9 @@ mod tests {
                     show_hidden: false,
                     group_mode: GroupMode::FoldersFirst,
                     zoom: None,
+                    view_mode: None,
+                    subfolders: false,
+                    collapsed: Vec::new(),
                 }],
                 columns: crate::columns::default_columns(),
                 tab_bar_mode: 0,

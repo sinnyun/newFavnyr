@@ -238,12 +238,29 @@ export struct FileRow {
     preview-capable: bool,
     // Vertical geometry precomputed by the bridge. It is the shared
     // source for rendering, hit-testing, keyboard scrolling, and rubber-band selection.
+    // Horizontal geometry is precomputed too: a grid tile carries its own
+    // x/width (the whole line is laid out by the bridge), a list row spans
+    // the view.
+    visual-x: length,
+    visual-w: length,
     visual-y: length,
     visual-h: length,
     // Index in the full logical model. `rendered` only drives the
     // virtualized window: neither one participates in operations.
     model-index: int,
     rendered: bool,
+    // Row role: 0 = entry (an operation target) · 1 = section header
+    // (click folds/unfolds its section, never selected).
+    role: int,
+    // Section the row belongs to: header and its entries share the key
+    // ("cat:image", "sub:C:\dir"); empty outside a grouped view.
+    // `section-label` is non-empty on a header — that is what it displays.
+    section: string,
+    section-label: string,
+    // Localized item count of the section ("12 items", "12 个项目"),
+    // formatted by the bridge. Empty = no count chip.
+    section-count-text: string,
+    section-pending: bool,      // scan of the section still running → "…"
 }
 
 // Complete view of a panel for Slint rendering.
@@ -297,9 +314,20 @@ export struct PanelView {
     // `columns-menu` = ALL of them (for the check/uncheck menu).
     columns: [ColumnInfo],
     columns-menu: [ColumnInfo],
-    // Display mode: false = list (icons), true = previews (thumbnails).
-    // Derived from the zoom level: `preview = zoom >= threshold`.
+    // Display mode: false = list (icons), true = previews OR grid — both show
+    // thumbnails. Drives the row visuals; the layout itself comes from the
+    // bridge (`visual-y`/`visual-h`, and `grid-mode` for tiles).
     preview-mode: bool,
+    // Display mode as a code: "list" / "previews" / "grid".
+    view-mode: string,
+    // Grid display: rows are tiles packed left to right, each carrying its
+    // own x/width. Click routing depends on it (a tile owns its x range).
+    grid-mode: bool,
+    // Columns of the grid (0 outside grid mode) — up/down move by one line.
+    grid-cols: int,
+    // "Show subfolder contents": the listing carries a section per direct
+    // subfolder. Drives the button's lit state.
+    show-subfolders: bool,
     // Total width of VISIBLE columns (px) — computed by the bridge
     // (accurate, unlike a hardcoded sum) → drives horizontal scrolling.
     content-width: length,
@@ -451,11 +479,22 @@ export struct Strings {
     nav-parent: string,
     nav-refresh: string,
     view-mode-tooltip: string,
+    view-mode-list: string,        // view mode menu option: list
+    view-mode-previews: string,    // … previews (thumbnails)
+    view-mode-grid: string,        // … grid (tiles)
     show-hidden-tooltip: string,
+    show-subfolders-tooltip: string,   // "show subfolder contents" button
     group-section: string,
     group-folders-first: string,
     group-files-first: string,
     group-mixed: string,
+    group-category: string,        // grouping by file category
+    category-folder: string,       // section headers of the category grouping
+    category-image: string,
+    category-video: string,
+    category-audio: string,
+    category-document: string,
+    category-other: string,
 
     tab-new-tooltip: string,
     tab-scroll-left: string,   // left-scroll chevron tooltip
@@ -1159,6 +1198,9 @@ component NavIconButton inherits Rectangle {
     in property <bool> enabled: true;
     /// Unicode glyph size (ignored if `icon` is set).
     in property <length> glyph-size: 18px;
+    /// true = the button is currently ON (highlighted background + accent
+    /// icon). Used by latching toggles such as "show subfolder contents".
+    in property <bool> lit: false;
     /// false = does NOT increment the global Dismiss counter on click. REQUIRED for
     /// a button that OPENS a menu: MainWindow's (deferred) `changed dismiss-watch`
     /// would otherwise close the menu right AFTER it opens — the same
@@ -1168,16 +1210,18 @@ component NavIconButton inherits Rectangle {
     width: 32px;
     height: 28px;
     border-radius: 6px;
-    background: touch.has-hover && root.enabled
-        ? Theme.alternate-background
-        : transparent;
+    background: root.lit
+        ? Theme.accent-background.with-alpha(0.18)
+        : (touch.has-hover && root.enabled
+            ? Theme.alternate-background
+            : transparent);
     opacity: root.enabled ? 1.0 : 0.35;
 
     if root.icon.width > 0 : Image {
         source: root.icon;
         width: 16px;
         height: 16px;
-        colorize: Theme.foreground;
+        colorize: root.lit ? Theme.accent-background : Theme.foreground;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -1186,7 +1230,7 @@ component NavIconButton inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
         font-size: root.glyph-size;
-        color: Theme.foreground;
+        color: root.lit ? Theme.accent-background : Theme.foreground;
     }
 
     touch := TouchArea {
@@ -1830,6 +1874,232 @@ component FileRowView inherits Rectangle {
         }
     }
 
+}
+
+// Section header of a grouped view (subfolder contents, category grouping).
+// PURELY visual like FileRowView: hover/click are handled by the shared
+// `sel-touch`, which routes a click on a header to `toggle-section`.
+component SectionHeaderView inherits Rectangle {
+    in property <Strings> strings;
+    in property <string> label;
+    in property <string> count-text;   // localized "12 items"; "" = none
+    in property <bool> pending;        // scan still running → spinner-ish "…"
+    in property <bool> collapsed;
+    in property <bool> is-folder;      // subfolder section (vs category)
+    in property <bool> hovered;
+    in property <length> indent;       // left inset (nesting under the header)
+    /// Icon of the section: folder (subfolder sections) or category glyph.
+    in property <image> icon;
+    in property <color> icon-color;
+
+    height: 26px;
+    // The whole band is the click target; only a light wash marks hover —
+    // a header must never compete with the selected entry pills below it.
+    background: root.hovered
+        ? Theme.alternate-background.with-alpha(0.6)
+        : transparent;
+
+    HorizontalLayout {
+        padding-left: root.indent + Tokens.gutter-content;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: start;
+
+        // Fold caret: points right when collapsed, down when expanded.
+        Image {
+            source: root.collapsed
+                ? @image-url("../../assets/icons/chevron-right.svg")
+                : @image-url("../../assets/icons/chevron-down.svg");
+            width: 12px;
+            height: 12px;
+            colorize: Theme.foreground.with-alpha(0.6);
+            vertical-alignment: center;
+        }
+        Image {
+            source: root.icon;
+            width: 14px;
+            height: 14px;
+            colorize: root.icon-color;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            color: Theme.foreground.with-alpha(0.85);
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.count-text;
+            font-size: 11px;
+            color: Theme.foreground.with-alpha(0.5);
+            vertical-alignment: center;
+        }
+    }
+    // Thin hairline under the band, keeping the section boundary readable
+    // even when two sections' entries sit next to each other.
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Tokens.hairline;
+    }
+}
+
+// Grid tile — PURELY visual, like FileRowView: a thumbnail/icon over the
+// name, sized by the geometry the bridge computed (`visual-w`/`visual-h`).
+component FileTileView inherits Rectangle {
+    in property <string> name-base;
+    in property <string> name-ext;
+    in property <bool> is-dir;
+    in property <bool> is-symlink;
+    in property <int> folder-slot;
+    in property <int> kind;
+    in property <bool> selected;
+    in property <bool> cut;
+    in property <bool> hovered;
+    in property <bool> hidden;
+    in property <string> comment;
+    in property <image> thumbnail;
+    in property <image> app-icon;
+    in property <bool> link-folder;
+    in property <bool> preview-mode;   // thumbnails on (always true in grid)
+    in property <length> row-h;
+
+    property <float> hidden-content-alpha: (!root.cut && root.hidden
+        && !root.selected && !root.hovered) ? Theme.hidden-opacity : 1.0;
+    // Picture area: whatever the tile gets minus the name band below it.
+    property <length> art-size: max(16px, root.row-h - 34px);
+    property <bool> show-thumb: root.thumbnail.width > 0;
+    property <bool> show-app-icon: !root.show-thumb && root.kind != 0
+        && root.app-icon.width > 0;
+
+    height: root.row-h;
+    opacity: root.cut ? 0.45 : 1.0;
+
+    // Card: the tile's own hit area is the shared `sel-touch` above, so this
+    // is just the surface. Selection = accent tint + outline, hover = plain.
+    Rectangle {
+        x: 0;
+        y: 2px;
+        width: parent.width;
+        height: parent.height - 4px;
+        border-radius: Tokens.radius-row;
+        background: root.selected
+            ? Theme.accent-background.with-alpha(0.20)
+            : (root.hovered ? Theme.alternate-background : transparent);
+        border-width: root.selected ? 1px : 0px;
+        border-color: Theme.accent-background.with-alpha(0.45);
+
+        VerticalLayout {
+            padding-top: 6px;
+            padding-bottom: 4px;
+            spacing: 2px;
+
+            Rectangle {   // art slot
+                vertical-stretch: 1;
+                horizontal-stretch: 1;
+                if root.show-thumb : Image {
+                    source: root.thumbnail;
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size);
+                    height: min(parent.height - 6px, root.art-size);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if root.show-app-icon : Image {
+                    source: root.app-icon;
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size * 0.75);
+                    height: min(parent.height - 6px, root.art-size * 0.75);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if (root.link-folder || root.kind == 0) && root.folder-slot > 0
+                        && !root.show-thumb && !root.show-app-icon : Image {
+                    source: @image-url("../../assets/icons/folder-fill.svg");
+                    colorize: Tokens.folder-color(root.folder-slot).with-alpha(0.35);
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size * 0.78);
+                    height: min(parent.height - 6px, root.art-size * 0.78);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if !root.show-thumb && !root.show-app-icon : Image {
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size * 0.78);
+                    height: min(parent.height - 6px, root.art-size * 0.78);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    source: root.link-folder ? @image-url("../../assets/icons/folder-symlink.svg")
+                        : root.kind == 0 && root.is-symlink ? @image-url("../../assets/icons/folder-symlink.svg")
+                        : root.kind == 0 ? @image-url("../../assets/icons/folder.svg")
+                        : root.kind == 2 ? @image-url("../../assets/icons/application.svg")
+                        : root.kind == 3 ? @image-url("../../assets/icons/archive.svg")
+                        : root.kind == 4 ? @image-url("../../assets/icons/audio.svg")
+                        : root.kind == 5 ? @image-url("../../assets/icons/document.svg")
+                        : root.kind == 6 ? @image-url("../../assets/icons/image.svg")
+                        : root.kind == 7 ? @image-url("../../assets/icons/video.svg")
+                        : root.kind == 8 ? @image-url("../../assets/icons/reg.svg")
+                        : @image-url("../../assets/icons/file.svg");
+                    colorize: (root.link-folder || root.kind == 0)
+                            ? Tokens.folder-color(root.folder-slot)
+                        : root.kind == 2 ? #a3be8c
+                        : root.kind == 3 ? #d08770
+                        : root.kind == 4 ? #b48ead
+                        : root.kind == 5 ? #81a1c1
+                        : root.kind == 6 ? #bf616a
+                        : root.kind == 7 ? #8fbcbb
+                        : root.kind == 8 ? #8b95a7
+                        : Theme.foreground.with-alpha(0.55);
+                }
+                // Note badge, top-right of the art slot (same polarity as the list).
+                if root.comment != "" : Image {
+                    source: @image-url("../../assets/icons/note-emblem.svg");
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: 14px;
+                    height: 14px;
+                    x: parent.width - self.width;
+                    y: 0px;
+                }
+                // Link badge, bottom-right, declared last so it paints on top.
+                if root.is-symlink && root.kind != 0 : Image {
+                    source: @image-url("../../assets/icons/link-emblem.svg");
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: 14px;
+                    height: 14px;
+                    x: parent.width - self.width;
+                    y: parent.height - self.height;
+                }
+            }
+            // Name = stem + colored extension, joined like the list rows.
+            HorizontalLayout {
+                height: 16px;
+                spacing: 0px;
+                alignment: center;
+                Text {
+                    text: root.name-base;
+                    font-size: 12px;
+                    color: Theme.foreground.with-alpha(root.hidden-content-alpha);
+                    overflow: elide;
+                    horizontal-alignment: right;
+                    width: min(self.preferred-width,
+                        max(0px, parent.width - tile-ext.preferred-width));
+                }
+                tile-ext := Text {
+                    text: root.name-ext;
+                    font-size: 12px;
+                    color: Tokens.ext.with-alpha(root.hidden-content-alpha);
+                }
+            }
+        }
+    }
 }
 
 // Shared deferred focus for LineEdits created inside a conditional popup.
@@ -3917,8 +4187,21 @@ component PanelComponent inherits Rectangle {
     /// Emitted on click of the "tab bar position" button —
     /// requests opening the 3-option menu at (abs_x, abs_y) below the button.
     callback open-tabbar-menu(length, length);
-    /// Toggles the active tab's display mode (list ↔ preview).
-    callback toggle-preview-mode();
+    /// Sets the display mode of the active tab (mode menu of the view button):
+    /// "list", "previews" (thumbnails) or "grid" (tiles).
+    callback set-view-mode(string /*mode code*/);
+    /// Cycles the display mode (Ctrl+P): list → previews → grid.
+    callback cycle-view-mode();
+    /// Opens the display-mode menu at (abs_x, abs_y).
+    callback open-view-menu(length, length);
+    /// Shows / hides the contents of the direct subfolders ("show subfolder
+    /// contents"): one section per direct subfolder.
+    callback toggle-subfolder-contents();
+    /// Folds / unfolds a section from its header (by section key).
+    callback toggle-section(string /*key*/);
+    /// Width of this view's list area, in logical px: what the grid packs
+    /// its tiles with.
+    callback rows-area-width(length /*width*/);
     /// Entry zoom (Ctrl+wheel): +1 enlarges, -1 shrinks. The bridge maps
     /// the level to a row height, then returns the new `viewport-top`
     /// that keeps the anchor entry at the same visual position.
@@ -4099,6 +4382,11 @@ component PanelComponent inherits Rectangle {
     property <int> rows-revision-watch: root.view.rows-revision;
     property <int> viewport-reset-watch: root.view.viewport-reset-gen;
     property <length> rows-viewport-height-watch: list-area.height;
+    // The grid packs its tiles from the list area's width.
+    property <length> rows-width-watch: list-area.width;
+    changed rows-width-watch => {
+        root.rows-area-width(list-area.width);
+    }
     changed rows-revision-watch => {
         if (!root.zoom-adjusting) {
             rows-scroll.viewport-y = clamp(rows-scroll.viewport-y, root.rb-min-vy, 0px);
@@ -4132,10 +4420,21 @@ component PanelComponent inherits Rectangle {
     // rubber-band, not a row action. Columns run from `gutter-content`
     // to `gutter-content + content-width`.
     property <length> content-right: Tokens.gutter-content + root.view.content-width;
-    // Row index under `(x, y)`, respecting the left (gutter) AND right
-    // (beyond the columns) dead zones. `-1` = dead zone / outside the list.
+    // Row index under `(x, y)`. In list mode the left gutter and the area
+    // beyond the columns are DEAD ZONES (they start a rubber-band, not a row
+    // action). In grid mode a tile owns exactly its own x range, and a section
+    // header — which spans the whole band — owns all of it.
     function row-idx-at-xy(x: length, y: length) -> int {
-        (x < Tokens.gutter || x > root.content-right) ? -1 : root.row-idx-at-y(y);
+        let idx: int = root.row-idx-at-y(y);
+        if (idx < 0) {
+            return -1;
+        }
+        if (root.view.grid-mode) {
+            let row = root.view.rows[idx];
+            return (row.role != 0
+                || (x >= row.visual-x && x < row.visual-x + row.visual-w)) ? idx : -1;
+        }
+        return (x < Tokens.gutter || x > root.content-right) ? -1 : idx;
     }
 
     // Keyboard navigation: brings row `idx` into the visible area by
@@ -4550,17 +4849,32 @@ component PanelComponent inherits Rectangle {
                 tooltip-text: root.strings.nav-refresh;
                 clicked => { root.activate(); root.refresh(); }
             }
-            // List / preview toggle. The icon shows the TARGET mode:
-            // grid = switch to preview mode; list = go back to list mode.
+            // Display mode of this view. The icon shows the CURRENT mode, and
+            // a click opens the 3-option menu (list / previews / grid).
             // (Embedded SVGs rather than Unicode glyphs ▦/☰: those code points
             // are absent from the default Windows UI font, so they render as
             // empty "tofu" boxes there.)
             NavIconButton {
-                icon: root.view.preview-mode
-                    ? @image-url("../../assets/icons/list.svg")
-                    : @image-url("../../assets/icons/grid.svg");
+                icon: root.view.view-mode == "grid"
+                    ? @image-url("../../assets/icons/grid.svg")
+                    : (root.view.preview-mode
+                        ? @image-url("../../assets/icons/previews.svg")
+                        : @image-url("../../assets/icons/list.svg"));
                 tooltip-text: root.strings.view-mode-tooltip;
-                clicked => { root.activate(); root.toggle-preview-mode(); }
+                dismiss-bump: false;   // opens a menu → don't auto-close it
+                clicked-at(mx, my) => {
+                    root.close-ctx-menu();
+                    root.open-view-menu(mx, my);
+                    root.activate();
+                }
+            }
+            // "Show subfolder contents": one section per direct subfolder,
+            // folded by clicking its header. Lit while on.
+            NavIconButton {
+                icon: @image-url("../../assets/icons/folder-expand.svg");
+                tooltip-text: root.strings.show-subfolders-tooltip;
+                lit: root.view.show-subfolders;
+                clicked => { root.activate(); root.toggle-subfolder-contents(); }
             }
             // Shows / hides hidden files, per view. The icon
             // reflects the CURRENT state: eye = hidden files shown; crossed-out eye = hidden.
@@ -5161,49 +5475,96 @@ component PanelComponent inherits Rectangle {
                         root.update-pointer-hover();
                     }
                 }
-                for entry[visible-idx] in root.view.rendered-rows : FileRowView {
+                // One wrapper per row carrying the bridge-computed geometry;
+                // the visual that goes inside depends on the role (entry vs
+                // section header) and the display mode (list row vs grid tile).
+                for entry[visible-idx] in root.view.rendered-rows : Rectangle {
                     x: 0px;
                     y: entry.visual-y;
                     width: rows-scroll.viewport-width;
-                    name: entry.name;
-                    name-base: entry.name-base;
-                    name-ext: entry.name-ext;
-                    hidden: entry.hidden;
-                    age: entry.age;
-                    age-bucket: entry.age-bucket;
-                    path: entry.path;
-                    size: entry.size;
-                    modified: entry.modified;
-                    is-dir: entry.is-dir;
-                    is-symlink: entry.is-symlink;
-                    folder-slot: entry.folder-slot;
-                    comment: entry.comment;
-                    kind: entry.kind;
-                    selected: entry.selected;
-                    cut: entry.cut;
-                    // A drag target receives the same hover as mouse
-                    // hover, including from another Favnyr view/instance.
-                    hovered: entry.model-index == root.hovered-idx
-                        || (root.file-drag-over && entry.model-index == root.drag-hover-row
-                            && (entry.is-dir || entry.drop-runnable));
-                    preview-mode: root.view.preview-mode;
-                    row-h: entry.visual-h;
-                    resolution: entry.resolution;
-                    depth: entry.depth;
-                    ext: entry.ext;
-                    thumbnail: entry.thumbnail;
-                    app-icon: entry.app-icon;
-                    link-folder: entry.link-folder;
-                    col-name-width: root.col-name-width;
-                    col-path-width: root.col-path-width;
-                    col-size-width: root.col-size-width;
-                    col-modified-width: root.col-modified-width;
-                    col-ext-width: root.col-ext-width;
-                    col-resolution-width: root.col-resolution-width;
-                    col-depth-width: root.col-depth-width;
-                    col-age-width: root.col-age-width;
-                    content-width: root.view.content-width;
-                    columns: root.view.columns;
+                    height: entry.visual-h;
+
+                    if entry.role == 1 : SectionHeaderView {
+                        width: parent.width;
+                        strings: root.strings;
+                        label: entry.section-label;
+                        count-text: entry.section-count-text;
+                        pending: entry.section-pending;
+                        collapsed: false;   // the caret follows the entries below
+                        is-folder: entry.is-dir;
+                        icon: entry.is-dir
+                            ? @image-url("../../assets/icons/folder.svg")
+                            : @image-url("../../assets/icons/file.svg");
+                        icon-color: entry.is-dir
+                            ? Tokens.folder-color(entry.folder-slot)
+                            : Theme.foreground.with-alpha(0.6);
+                        indent: entry.visual-x;
+                        hovered: root.hovered-idx == entry.model-index;
+                    }
+                    if entry.role == 0 && root.view.grid-mode : FileTileView {
+                        x: entry.visual-x;
+                        width: entry.visual-w;
+                        name-base: entry.name-base;
+                        name-ext: entry.name-ext;
+                        is-dir: entry.is-dir;
+                        is-symlink: entry.is-symlink;
+                        folder-slot: entry.folder-slot;
+                        kind: entry.kind;
+                        selected: entry.selected;
+                        cut: entry.cut;
+                        hovered: entry.model-index == root.hovered-idx
+                            || (root.file-drag-over && entry.model-index == root.drag-hover-row
+                                && (entry.is-dir || entry.drop-runnable));
+                        hidden: entry.hidden;
+                        comment: entry.comment;
+                        thumbnail: entry.thumbnail;
+                        app-icon: entry.app-icon;
+                        link-folder: entry.link-folder;
+                        preview-mode: root.view.preview-mode;
+                        row-h: entry.visual-h;
+                    }
+                    if entry.role == 0 && !root.view.grid-mode : FileRowView {
+                        width: parent.width;
+                        name: entry.name;
+                        name-base: entry.name-base;
+                        name-ext: entry.name-ext;
+                        hidden: entry.hidden;
+                        age: entry.age;
+                        age-bucket: entry.age-bucket;
+                        path: entry.path;
+                        size: entry.size;
+                        modified: entry.modified;
+                        is-dir: entry.is-dir;
+                        is-symlink: entry.is-symlink;
+                        folder-slot: entry.folder-slot;
+                        comment: entry.comment;
+                        kind: entry.kind;
+                        selected: entry.selected;
+                        cut: entry.cut;
+                        // A drag target receives the same hover as mouse
+                        // hover, including from another Favnyr view/instance.
+                        hovered: entry.model-index == root.hovered-idx
+                            || (root.file-drag-over && entry.model-index == root.drag-hover-row
+                                && (entry.is-dir || entry.drop-runnable));
+                        preview-mode: root.view.preview-mode;
+                        row-h: entry.visual-h;
+                        resolution: entry.resolution;
+                        depth: entry.depth;
+                        ext: entry.ext;
+                        thumbnail: entry.thumbnail;
+                        app-icon: entry.app-icon;
+                        link-folder: entry.link-folder;
+                        col-name-width: root.col-name-width;
+                        col-path-width: root.col-path-width;
+                        col-size-width: root.col-size-width;
+                        col-modified-width: root.col-modified-width;
+                        col-ext-width: root.col-ext-width;
+                        col-resolution-width: root.col-resolution-width;
+                        col-depth-width: root.col-depth-width;
+                        col-age-width: root.col-age-width;
+                        content-width: root.view.content-width;
+                        columns: root.view.columns;
+                    }
                 }
             }
 
@@ -5616,9 +5977,12 @@ component PanelComponent inherits Rectangle {
                         self.last-gesture-dragged = false;
                         self.gesture-done = false;  // new press → re-arm
                         self.activation-at-down = self.activation-generation;
-                        // Is the press on a row (outside the gutter)?
+                        // Is the press on a ROW that can be dragged (an entry,
+                        // outside the dead zones)? A section header is not one:
+                        // dragging from it draws a rubber-band.
                         self.down-idx = root.row-idx-at-xy(self.mouse-x, self.mouse-y);
-                        self.down-on-row = self.down-idx >= 0;
+                        self.down-on-row = self.down-idx >= 0
+                            && root.view.rows[self.down-idx].role == 0;
                         self.down-was-selected = self.down-idx >= 0
                             && self.down-idx < root.view.rows.length
                             && root.view.rows[self.down-idx].selected;
@@ -5677,6 +6041,10 @@ component PanelComponent inherits Rectangle {
                             let idx: int = root.row-idx-at-xy(self.mouse-x, self.mouse-y);
                             if (idx < 0) {
                                 root.deselect-all();
+                            } else if (root.view.rows[idx].role == 1) {
+                                // A section header folds / unfolds its section:
+                                // it is never a selection and never a target.
+                                root.toggle-section(root.view.rows[idx].section);
                             } else if (ev.modifiers.control) {
                                 root.row-ctrl-clicked(idx);
                             } else if (ev.modifiers.shift) {
@@ -5730,8 +6098,10 @@ component PanelComponent inherits Rectangle {
                         root.activate();
                         // Right-click in the left gutter OR the right dead zone
                         // = background menu (Paste…) even if a row is there.
+                        // A section header is not an entry either: the menu it
+                        // would open acts on files, and it owns none.
                         let ridx: int = root.row-idx-at-xy(self.mouse-x, self.mouse-y);
-                        if (ridx < 0) {
+                        if (ridx < 0 || root.view.rows[ridx].role == 1) {
                             root.empty-right-clicked(
                                 self.absolute-position.x + self.mouse-x,
                                 self.absolute-position.y + self.mouse-y);
@@ -8215,8 +8585,20 @@ export component MainWindow inherits Window {
     /// Resize of a splitter: `idx` of the Split node, `frac` = pointer
     /// position as a fraction [0,1] of the container along the split axis.
     callback splitter-resized(int, float);
-    /// Toggles list ↔ preview mode for panel `idx`'s active tab.
-    callback toggle-preview-mode(int);
+    /// Sets the display mode of panel `idx`'s active tab: "list", "previews"
+    /// or "grid" (the mode menu of the view button).
+    callback set-view-mode(int /*idx*/, string /*mode code*/);
+    /// Advances panel `idx`'s active tab to the next display mode
+    /// (list → previews → grid → list): the view button's Ctrl+P route.
+    callback cycle-view-mode(int /*idx*/);
+    /// Shows / hides the contents of the direct subfolders for panel `idx`'s
+    /// active tab ("show subfolder contents": one section per subfolder).
+    callback toggle-subfolder-contents(int /*idx*/);
+    /// Folds / unfolds a section (header click), by its key.
+    callback toggle-section(int /*idx*/, string /*section key*/);
+    /// Width of a view's list area, in logical px — what the grid packs its
+    /// tiles with. Reported whenever the area changes size.
+    callback rows-area-width(int /*idx*/, length /*width*/);
     /// Zoom of panel `idx`'s active tab entries: `delta` = +1 / -1.
     /// The viewport and pointer position let the bridge preserve
     /// a semantic anchor despite variable row heights.
@@ -8249,6 +8631,9 @@ export component MainWindow inherits Window {
     callback initial-listing-drain();
     /// Ordinary background listings delivered off-UI, with an anti-race generation.
     callback async-listing-drain();
+    /// "Show subfolder contents" scans delivered off-UI: drains the queue of
+    /// finished scans (the Rust handler captured the AppState).
+    callback subfolders-drain();
     // the worker computed a folder's recursive stats (path, Unix mtime, total
     // size in bytes — both as text to dodge Slint's `int` i32 limit; an empty
     // string means "not computed" for that metric).
@@ -8272,6 +8657,15 @@ export component MainWindow inherits Window {
     in-out property <int> tabbar-menu-panel: -1;
     in-out property <int> tabbar-menu-mode: 0;     // CURRENT mode (checked option)
     callback set-tab-bar-mode(int /*panel*/, int /*mode*/);
+
+    // "View mode" menu: 3 radio options (list /
+    // previews / grid), per view. `view-menu-mode` is the CURRENT mode code
+    // (checked option). The view button in the nav bar opens it.
+    in-out property <bool> view-menu-open: false;
+    in-out property <length> view-menu-x;
+    in-out property <length> view-menu-y;
+    in-out property <int> view-menu-panel: -1;
+    in-out property <string> view-menu-mode: "list";
     /// Vertical bar width resized via the grip —
     /// persisted per view on the bridge side.
     callback panel-vbar-resized(int /*panel*/, length /*width*/);
@@ -8331,6 +8725,7 @@ export component MainWindow inherits Window {
         || root.paste-conflict-open || root.columns-menu-open || root.trash-menu-open
         || root.drive-menu-open
         || root.url-menu-open || root.split-menu-open || root.tabbar-menu-open
+        || root.view-menu-open
         || root.file-drop-menu-open
         || root.fav-menu-open || root.fav-name-open || root.fav-save-open
         || root.fav-newc-open || root.tab-menu-open || root.tab-empty-menu-open
@@ -8748,6 +9143,7 @@ export component MainWindow inherits Window {
         root.fav-menu-open = false;
         root.split-menu-open = false;
         root.tabbar-menu-open = false;
+        root.view-menu-open = false;
         root.file-drop-menu-open = false;
         root.shortcut-menu-open = false;
     }
@@ -9560,8 +9956,12 @@ export component MainWindow inherits Window {
         if (id == "cursor-down") { root.move-cursor(1, false); return; }
         if (id == "cursor-first") { root.move-cursor(2, false); return; }
         if (id == "cursor-last") { root.move-cursor(3, false); return; }
+        if (id == "cursor-left") { root.move-cursor(4, false); return; }
+        if (id == "cursor-right") { root.move-cursor(5, false); return; }
         if (id == "extend-up") { root.move-cursor(0, true); return; }
         if (id == "extend-down") { root.move-cursor(1, true); return; }
+        if (id == "extend-left") { root.move-cursor(4, true); return; }
+        if (id == "extend-right") { root.move-cursor(5, true); return; }
         // Folder navigation
         if (id == "nav-back") { root.go-back(); return; }
         if (id == "nav-forward") { root.go-forward(); return; }
@@ -9630,11 +10030,12 @@ export component MainWindow inherits Window {
                 root.set-group-mode(root.active-panel-idx,
                     root.panels[root.active-panel-idx].group-mode == "folders" ? "files"
                     : root.panels[root.active-panel-idx].group-mode == "files" ? "mixed"
+                    : root.panels[root.active-panel-idx].group-mode == "mixed" ? "category"
                     : "folders");
             }
             return;
         }
-        if (id == "toggle-view-mode") { root.toggle-preview-mode(root.active-panel-idx); return; }
+        if (id == "toggle-view-mode") { root.cycle-view-mode(root.active-panel-idx); return; }
         // Application
         if (id == "save-workspace") { root.ws-save-current(); return; }
         if (id == "open-settings") { root.settings-open = true; return; }
@@ -10423,7 +10824,19 @@ export component MainWindow inherits Window {
                         root.tabbar-menu-open = true;
                     }
                     vbar-resized(w) => { root.panel-vbar-resized(idx, w); }
-                    toggle-preview-mode => { root.toggle-preview-mode(idx); }
+                    set-view-mode(mode) => { root.set-view-mode(idx, mode); }
+                    cycle-view-mode => { root.cycle-view-mode(idx); }
+                    open-view-menu(mx, my) => {
+                        root.close-ctx-menus();
+                        root.view-menu-panel = idx;
+                        root.view-menu-mode = panel.view-mode;
+                        root.view-menu-x = mx;
+                        root.view-menu-y = my;
+                        root.view-menu-open = true;
+                    }
+                    toggle-subfolder-contents => { root.toggle-subfolder-contents(idx); }
+                    toggle-section(key) => { root.toggle-section(idx, key); }
+                    rows-area-width(w) => { root.rows-area-width(idx, w); }
                     zoom-step(d, top, height, pointer-y) => {
                         return root.zoom-view(idx, d, top, height, pointer-y);
                     }
@@ -10885,6 +11298,57 @@ export component MainWindow inherits Window {
                     clicked => {
                         root.tabbar-menu-open = false;
                         root.set-tab-bar-mode(root.tabbar-menu-panel, 2);
+                    }
+                }
+            }
+        }
+
+        // ===== "View mode" menu =====
+        // 3 radio options (checkmark on the current mode), per view.
+        if root.view-menu-open : Rectangle {
+            x: min(root.view-menu-x, root.width - self.width - 8px);
+            y: min(root.view-menu-y, root.height - self.height - 8px);
+            width: 224px;
+            height: 120px;
+            background: Theme.background;
+            border-radius: Tokens.radius-overlay;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #000000.with-alpha(0.25);
+            drop-shadow-offset-y: 4px;
+
+            // Catch-all: absorbs clicks in the menu's empty areas.
+            TouchArea { }
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 0px;
+                TabBarMenuItem {
+                    icon: @image-url("../../assets/icons/list.svg");
+                    label: root.strings.view-mode-list;
+                    selected: root.view-menu-mode == "list";
+                    clicked => {
+                        root.view-menu-open = false;
+                        root.set-view-mode(root.view-menu-panel, "list");
+                    }
+                }
+                TabBarMenuItem {
+                    icon: @image-url("../../assets/icons/previews.svg");
+                    label: root.strings.view-mode-previews;
+                    selected: root.view-menu-mode == "previews";
+                    clicked => {
+                        root.view-menu-open = false;
+                        root.set-view-mode(root.view-menu-panel, "previews");
+                    }
+                }
+                TabBarMenuItem {
+                    icon: @image-url("../../assets/icons/grid.svg");
+                    label: root.strings.view-mode-grid;
+                    selected: root.view-menu-mode == "grid";
+                    clicked => {
+                        root.view-menu-open = false;
+                        root.set-view-mode(root.view-menu-panel, "grid");
                     }
                 }
             }
@@ -11816,6 +12280,7 @@ export component MainWindow inherits Window {
                     { code: "folders", label: root.strings.group-folders-first },
                     { code: "files", label: root.strings.group-files-first },
                     { code: "mixed", label: root.strings.group-mixed },
+                    { code: "category", label: root.strings.group-category },
                 ] : Rectangle {
                     height: 30px;
                     border-radius: 4px;

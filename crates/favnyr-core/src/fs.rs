@@ -68,6 +68,25 @@ impl FileKind {
         self as u8 as i32
     }
 
+    /// Inverse of [`FileKind::as_i32`]: rebuilds the kind from its wire code,
+    /// i.e. the value carried by a UI row (`FileRow::kind`). Returns `None` for
+    /// a code no variant maps to, so a stale/foreign value never silently
+    /// becomes `Folder`. Kept beside `as_i32` so the two stay in step.
+    pub fn from_code(code: i32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Folder,
+            1 => Self::File,
+            2 => Self::Application,
+            3 => Self::Archive,
+            4 => Self::Audio,
+            5 => Self::Document,
+            6 => Self::Image,
+            7 => Self::Video,
+            8 => Self::Config,
+            _ => return None,
+        })
+    }
+
     /// Can a file of this type be a launchable PROGRAM / SCRIPT (with
     /// dropped files as arguments)? Used to filter out false positives from
     /// the Unix executable bit: on a FAT/NTFS/exFAT mount (everything is
@@ -604,16 +623,92 @@ impl SortOrder {
     }
 }
 
+/// Coarse category of an entry, used by the `GroupMode::Category` grouping.
+/// Deliberately broader than `FileKind`: archives, programs, configs and
+/// unknown files all land in `Other`, so a listing splits into a handful of
+/// sections a reader can scan at a glance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Category {
+    Folder,
+    Image,
+    Video,
+    Audio,
+    Document,
+    Other,
+}
+
+impl Category {
+    /// Section order, and the sort rank inside `GroupMode::Category` (folders
+    /// first, then the media families, `Other` last).
+    pub fn rank(self) -> u8 {
+        match self {
+            Category::Folder => 0,
+            Category::Image => 1,
+            Category::Video => 2,
+            Category::Audio => 3,
+            Category::Document => 4,
+            Category::Other => 5,
+        }
+    }
+
+    pub fn of(kind: FileKind) -> Self {
+        match kind {
+            FileKind::Folder => Category::Folder,
+            FileKind::Image => Category::Image,
+            FileKind::Video => Category::Video,
+            FileKind::Audio => Category::Audio,
+            FileKind::Document => Category::Document,
+            FileKind::Archive | FileKind::Application | FileKind::Config | FileKind::File => {
+                Category::Other
+            }
+        }
+    }
+
+    /// Category of a row's wire kind code (`FileRow.kind`): an unknown code is
+    /// `Other` rather than an error, so a stale value can only misplace a row,
+    /// never drop it.
+    pub fn of_code(kind_code: i32) -> Self {
+        FileKind::from_code(kind_code).map_or(Category::Other, Category::of)
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Category::Folder => "folder",
+            Category::Image => "image",
+            Category::Video => "video",
+            Category::Audio => "audio",
+            Category::Document => "document",
+            Category::Other => "other",
+        }
+    }
+
+    pub fn from_code(s: &str) -> Option<Category> {
+        Some(match s {
+            "folder" => Category::Folder,
+            "image" => Category::Image,
+            "video" => Category::Video,
+            "audio" => Category::Audio,
+            "document" => Category::Document,
+            "other" => Category::Other,
+            _ => return None,
+        })
+    }
+}
+
 /// Grouping by type, orthogonal to the sort criterion (column + direction).
 /// - `FoldersFirst` : folders on top, then files (default mode).
 /// - `FilesFirst`   : files on top, then folders.
 /// - `Mixed`        : no grouping, everything is sorted together by the criterion.
+/// - `Category`     : folders, then the media families, then everything else
+///   (cf. `Category`); the view draws one section header per block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GroupMode {
     FoldersFirst,
     FilesFirst,
     Mixed,
+    Category,
 }
 
 impl GroupMode {
@@ -622,6 +717,7 @@ impl GroupMode {
             GroupMode::FoldersFirst => "folders",
             GroupMode::FilesFirst => "files",
             GroupMode::Mixed => "mixed",
+            GroupMode::Category => "category",
         }
     }
 
@@ -630,6 +726,7 @@ impl GroupMode {
             "folders" => GroupMode::FoldersFirst,
             "files" => GroupMode::FilesFirst,
             "mixed" => GroupMode::Mixed,
+            "category" => GroupMode::Category,
             _ => return None,
         })
     }
@@ -655,6 +752,7 @@ pub fn sort(entries: &mut [Entry], column: SortColumn, order: SortOrder, group: 
             GroupMode::FoldersFirst => u8::from(!e.is_dir),
             GroupMode::FilesFirst => u8::from(e.is_dir),
             GroupMode::Mixed => 0,
+            GroupMode::Category => Category::of(e.kind).rank(),
         }
     };
     // Name/Ext sort case-insensitively. Lowercasing a name INSIDE a comparison
@@ -1119,6 +1217,30 @@ mod tests {
     }
 
     #[test]
+    fn file_kind_code_round_trips() {
+        // Every variant must survive a trip through its wire code: the UI row
+        // carries only the integer, and it is decoded back to a `FileKind`.
+        for kind in [
+            FileKind::Folder,
+            FileKind::File,
+            FileKind::Application,
+            FileKind::Archive,
+            FileKind::Audio,
+            FileKind::Document,
+            FileKind::Image,
+            FileKind::Video,
+            FileKind::Config,
+        ] {
+            assert_eq!(FileKind::from_code(kind.as_i32()), Some(kind));
+        }
+        // A code no variant maps to is rejected rather than defaulting to a
+        // variant (a foreign/stale value must never become `Folder`).
+        assert_eq!(FileKind::from_code(-1), None);
+        assert_eq!(FileKind::from_code(9), None);
+        assert_eq!(FileKind::from_code(i32::MAX), None);
+    }
+
+    #[test]
     fn unc_server_root_detects_bare_server_only() {
         use std::path::Path;
         // Server root (no share) → host name.
@@ -1387,6 +1509,91 @@ mod tests {
         let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
         // No grouping: everything is sorted together (case-insensitive).
         assert_eq!(names, ["aaa-dir", "alpha-dir", "Bravo.png", "zeta.txt"]);
+    }
+
+    /// An entry whose `kind` comes from its extension, the way a listing
+    /// classifies it.
+    fn typed_entry(name: &str, is_dir: bool) -> Entry {
+        let ext = Path::new(name).extension().and_then(|s| s.to_str());
+        Entry {
+            kind: classify_kind(ext, is_dir),
+            ..make_entry(name, is_dir)
+        }
+    }
+
+    #[test]
+    fn category_groups_folders_then_media_then_everything_else() {
+        let mut v = vec![
+            typed_entry("notes.txt", false),
+            typed_entry("clip.mp4", false),
+            typed_entry("song.mp3", false),
+            typed_entry("archive.zip", false),
+            typed_entry("setup.exe", false),
+            typed_entry("photo.png", false),
+            typed_entry("zeta-dir", true),
+            typed_entry("alpha-dir", true),
+        ];
+        sort(
+            &mut v,
+            SortColumn::Name,
+            SortOrder::Asc,
+            GroupMode::Category,
+        );
+        let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "alpha-dir",
+                "zeta-dir",
+                "photo.png",
+                "clip.mp4",
+                "song.mp3",
+                "notes.txt",
+                "archive.zip",
+                "setup.exe",
+            ]
+        );
+    }
+
+    #[test]
+    fn category_mode_keeps_the_criterion_inside_a_section() {
+        let mut v = vec![
+            typed_entry("b.png", false),
+            typed_entry("a.png", false),
+            typed_entry("m.mp3", false),
+        ];
+        sort(
+            &mut v,
+            SortColumn::Name,
+            SortOrder::Desc,
+            GroupMode::Category,
+        );
+        let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
+        // The section order is never reversed (like folders-first): images
+        // stay above audio, while the criterion orders names inside a section.
+        assert_eq!(names, ["b.png", "a.png", "m.mp3"]);
+    }
+
+    #[test]
+    fn category_maps_kinds_and_unknown_codes() {
+        assert_eq!(Category::of(FileKind::Folder), Category::Folder);
+        assert_eq!(Category::of(FileKind::Image), Category::Image);
+        assert_eq!(Category::of(FileKind::Video), Category::Video);
+        assert_eq!(Category::of(FileKind::Audio), Category::Audio);
+        assert_eq!(Category::of(FileKind::Document), Category::Document);
+        for kind in [
+            FileKind::Archive,
+            FileKind::Application,
+            FileKind::Config,
+            FileKind::File,
+        ] {
+            assert_eq!(Category::of(kind), Category::Other);
+        }
+        assert_eq!(Category::of_code(FileKind::Image.as_i32()), Category::Image);
+        // A code no variant maps to lands in Other instead of failing.
+        assert_eq!(Category::of_code(-1), Category::Other);
+        assert_eq!(Category::from_code("video"), Some(Category::Video));
+        assert_eq!(Category::from_code("nope"), None);
     }
 
     #[test]

@@ -1,10 +1,18 @@
 //! **Native Windows** thumbnails for a **standalone** Favnyr
 //! (no external binary: no ffmpeg, no poppler, no console window).
 //!
-//! - **Audio / video**: shell thumbnail API (`IShellItemImageFactory::GetImage`)
-//!   provides album art or a representative frame through Windows providers.
-//! - **PDF**: PDF engine **built into Windows** via WinRT (`Windows.Data.Pdf`) —
-//!   renders the 1st page in memory, independent of any installed PDF reader.
+//! `shell_thumbnail` is the **single source of thumbnails** on Windows:
+//! `IShellItemImageFactory::GetImage` goes through Explorer's own providers —
+//! and therefore the system thumbnail cache — so Favnyr shows a preview for
+//! every type Windows knows how to render (photos, video, PDF, Office
+//! documents, e-books, fonts, `.lnk` shortcuts…) without reimplementing any
+//! decoder itself. `SIIGBF_THUMBNAILONLY` means a file the system has no
+//! thumbnail for simply yields nothing, and the caller keeps the type icon.
+//!
+//! `pdf_thumbnail` is a **last-resort fallback**, reached only when the shell
+//! produced no PDF thumbnail: the PDF engine **built into Windows** via WinRT
+//! (`Windows.Data.Pdf`) renders the 1st page in memory, independent of any
+//! installed PDF reader.
 //!
 //! The calling thread (thumbnail worker) is initialized in **MTA**: required
 //! to block on WinRT `IAsyncOperation` (`.join()`) without a message pump,
@@ -35,9 +43,11 @@ unsafe fn ensure_com_mta() {
     }
 }
 
-/// **Video** thumbnail (and any type handled by the shell) via
-/// `IShellItemImageFactory`. `None` if the file doesn't exist or no provider
-/// responds.
+/// Thumbnail via the **system shell** (`IShellItemImageFactory`) — the single
+/// source of thumbnails on Windows: Explorer's providers (i.e. the system
+/// thumbnail cache) cover every type the OS can preview (media, PDF, Office
+/// documents, fonts, `.lnk`…). `None` if the file doesn't exist or the system
+/// has no thumbnail for it (`THUMBNAILONLY` → the caller keeps the type icon).
 pub fn shell_thumbnail(path: &Path, max_px: u32) -> Option<Thumbnail> {
     if !path.is_file() {
         return None;
@@ -67,8 +77,9 @@ pub fn shell_thumbnail(path: &Path, max_px: u32) -> Option<Thumbnail> {
 
 /// **PDF** thumbnail via the PDF engine built into Windows (WinRT
 /// `Windows.Data.Pdf`) — renders the 1st page in memory (PNG/BMP) then decodes
-/// it (`image`). Standalone: does not depend on any PDF reader or external
-/// binary. `None` on failure.
+/// it (`image`). Reached only as a **fallback** when the shell gave no PDF
+/// thumbnail; standalone, depends on no PDF reader or external binary.
+/// `None` on failure.
 pub fn pdf_thumbnail(path: &Path, max_px: u32) -> Option<Thumbnail> {
     if !path.is_file() {
         return None;
