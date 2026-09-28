@@ -149,39 +149,39 @@ export component OverlayOpenWith inherits Rectangle {
                         }
                     }
                 }
-            if root.openers-suggested.length > 0 : Rectangle {
-                height: 8px;
-                Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-            }
-            MenuItem {
-                label: root.strings.ow-choose;
-                clicked => { root.ctx-close(); root.ow-open-picker(); }
-            }
-            MenuItem {
-                label: root.strings.ow-custom;
-                clicked => { root.ctx-close(); root.ow-add(); }
-            }
-            if root.selection-is-executable : MenuItem {
-                label: root.strings.ow-use-as-app;
-                clicked => { root.ctx-close(); root.ow-use-as-app(); }
-            }
-            Rectangle {
-                height: 8px;
-                Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-            }
-            MenuItem {
-                label: root.strings.ow-manage;
-                // Directly opens the "Open with" tab of Settings.
-                clicked => {
-                    root.ctx-close();
-                    root.settings-tab = 2;
-                    // "Manage applications" always targets the Favnyr
-                    // applications list, never the last Windows
-                    // sub-tab remembered from a previous visit.
-                    root.ow-subtab = 0;
-                    root.settings-open = true;
+                if root.openers-suggested.length > 0 : Rectangle {
+                    height: 8px;
+                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
                 }
-            }
+                MenuItem {
+                    label: root.strings.ow-choose;
+                    clicked => { root.ctx-close(); root.ow-open-picker(); }
+                }
+                MenuItem {
+                    label: root.strings.ow-custom;
+                    clicked => { root.ctx-close(); root.ow-add(); }
+                }
+                if root.selection-is-executable : MenuItem {
+                    label: root.strings.ow-use-as-app;
+                    clicked => { root.ctx-close(); root.ow-use-as-app(); }
+                }
+                Rectangle {
+                    height: 8px;
+                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
+                }
+                MenuItem {
+                    label: root.strings.ow-manage;
+                    // Directly opens the "Open with" tab of Settings.
+                    clicked => {
+                        root.ctx-close();
+                        root.settings-tab = 2;
+                        // "Manage applications" always targets the Favnyr
+                        // applications list, never the last Windows
+                        // sub-tab remembered from a previous visit.
+                        root.ow-subtab = 0;
+                        root.settings-open = true;
+                    }
+                }
             }
         }
     }

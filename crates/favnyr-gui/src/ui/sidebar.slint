@@ -87,21 +87,21 @@ export component SidebarItem inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 colorize: (root.kind == 2 || root.kind == 4 || root.kind == 5)
                     ? Theme.accent-background
-                    // A volume that is not mounted keeps the drive shape and
-                    // loses the accent: present, but not reachable yet.
-                    : (root.kind == 6 || root.kind == 7)
-                        ? Theme.foreground.with-alpha(0.45)
-                    : Theme.foreground.with-alpha(0.7);
+                // A volume that is not mounted keeps the drive shape and
+                // loses the accent: present, but not reachable yet.
+                : (root.kind == 6 || root.kind == 7)
+                    ? Theme.foreground.with-alpha(0.45)
+                : Theme.foreground.with-alpha(0.7);
                 source: root.kind == 1 ? @image-url("../../assets/icons/home.svg")
                     : root.kind == 2 ? @image-url("../../assets/icons/drive.svg")
                     : root.kind == 3 ? @image-url("../../assets/icons/trash.svg")
                     : root.kind == 4 ? @image-url("../../assets/icons/network.svg")
                     : root.kind == 5 ? @image-url("../../assets/icons/phone.svg")
                     : root.kind == 6 ? @image-url("../../assets/icons/drive.svg")
-                    // An encrypted volume shows what stands between the user
-                    // and it, rather than a drive it cannot open.
-                    : root.kind == 7 ? @image-url("../../assets/icons/lock.svg")
-                    : @image-url("../../assets/icons/folder.svg");
+                // An encrypted volume shows what stands between the user
+                // and it, rather than a drive it cannot open.
+                : root.kind == 7 ? @image-url("../../assets/icons/lock.svg")
+                : @image-url("../../assets/icons/folder.svg");
             }
         }
         Text {
@@ -926,57 +926,57 @@ export component FavPanel inherits Rectangle {
                         }
                     }
                 }
-            VerticalLayout {
-                padding: 6px;
-                spacing: 1px;
-                if root.nodes.length == 0 : Rectangle {
-                    height: 120px;
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        Image {
-                            source: @image-url("../../assets/icons/bookmark.svg");
-                            width: 28px;
-                            height: 28px;
-                            colorize: Theme.foreground.with-alpha(0.25);
-                            horizontal-alignment: center;
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 1px;
+                    if root.nodes.length == 0 : Rectangle {
+                        height: 120px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Image {
+                                source: @image-url("../../assets/icons/bookmark.svg");
+                                width: 28px;
+                                height: 28px;
+                                colorize: Theme.foreground.with-alpha(0.25);
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: root.strings.fav-empty;
+                                font-size: 11px;
+                                color: Theme.foreground.with-alpha(0.45);
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
                         }
-                        Text {
-                            text: root.strings.fav-empty;
-                            font-size: 11px;
-                            color: Theme.foreground.with-alpha(0.45);
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
+                    }
+                    for n[i] in root.nodes : FavRow {
+                        node: n;
+                        selected: n.id == root.selected-id;
+                        row-index: i;
+                        drag-active: root.drag-active;
+                        location-drag-active: root.location-drag-active;
+                        reorder-feedback-visible: root.reorder-in-frame;
+                        drag-target-index: root.drag-target-index;
+                        drag-zone: root.drag-zone;
+                        // Highlighted if THIS container is the row targeted by a drag
+                        // (tab OR file).
+                        drop-hover: root.drag-on && i == root.hover-row && n.is-container;
+                        activate => { root.row-activate(n.id); }
+                        middle-clicked => { root.row-middle(n.id); }
+                        right-clicked(x, y) => { root.row-context(n.id, n.is-container, n.label, x, y); }
+                        drag-move(ri, cx, cy, rt) => {
+                            root.reorder-cursor-x = cx;
+                            root.reorder-cursor-y = cy;
+                            root.row-drag-move(ri, cx, cy, rt);
+                        }
+                        drag-drop(ri, cx, cy, rt) => {
+                            root.reorder-cursor-x = cx;
+                            root.reorder-cursor-y = cy;
+                            root.row-drag-drop(ri, cx, cy, rt, root.reorder-in-frame);
                         }
                     }
                 }
-                for n[i] in root.nodes : FavRow {
-                    node: n;
-                    selected: n.id == root.selected-id;
-                    row-index: i;
-                    drag-active: root.drag-active;
-                    location-drag-active: root.location-drag-active;
-                    reorder-feedback-visible: root.reorder-in-frame;
-                    drag-target-index: root.drag-target-index;
-                    drag-zone: root.drag-zone;
-                    // Highlighted if THIS container is the row targeted by a drag
-                    // (tab OR file).
-                    drop-hover: root.drag-on && i == root.hover-row && n.is-container;
-                    activate => { root.row-activate(n.id); }
-                    middle-clicked => { root.row-middle(n.id); }
-                    right-clicked(x, y) => { root.row-context(n.id, n.is-container, n.label, x, y); }
-                    drag-move(ri, cx, cy, rt) => {
-                        root.reorder-cursor-x = cx;
-                        root.reorder-cursor-y = cy;
-                        root.row-drag-move(ri, cx, cy, rt);
-                    }
-                    drag-drop(ri, cx, cy, rt) => {
-                        root.reorder-cursor-x = cx;
-                        root.reorder-cursor-y = cy;
-                        root.row-drag-drop(ri, cx, cy, rt, root.reorder-in-frame);
-                    }
-                }
-            }
             }   // closes content-rect
         }
     }

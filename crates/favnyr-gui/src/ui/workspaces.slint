@@ -182,219 +182,219 @@ export component WorkspaceRow inherits Rectangle {
         // row-click that would overwrite the current layout). The child
         // TouchAreas capture their own clicks since they're deeper.
 
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 8px;
-        spacing: 10px;
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 8px;
+            spacing: 10px;
 
-        // ===== NORMAL mode =====
-        if !root.editing && !root.confirming-delete && !root.confirming-overwrite : Image {
-            width: 16px;
-            source: @image-url("../../assets/icons/workspace.svg");
-            colorize: root.is-current ? Theme.accent-background : Theme.foreground.with-alpha(0.5);
-        }
-        if !root.editing && !root.confirming-delete && !root.confirming-overwrite : Text {
-            text: root.name;
-            font-size: 14px;
-            // Semibold name on the currently loaded workspace.
-            font-weight: root.is-current ? 600 : 400;
-            color: Theme.foreground;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            overflow: elide;
-        }
-        // "Unsaved changes" dot, AT THE END OF THE NAME (status
-        // marker: doesn't shift the icon+name alignment of other rows,
-        // persists at rest AND on hover). Tooltip on hover to remove
-        // ambiguity about its meaning (widened hover area; the dot centers).
-        if !root.editing && !root.confirming-delete && !root.confirming-overwrite && root.is-dirty : Rectangle {
-            width: 16px;
-            dot-touch := TouchArea {
-                changed has-hover => {
-                    if (self.has-hover) {
-                        Tip.text = root.strings.ws-dirty-tooltip;
-                        Tip.x = self.absolute-position.x - 70px;
-                        Tip.y = self.absolute-position.y - 26px;
-                    } else if (Tip.text == root.strings.ws-dirty-tooltip) {
-                        Tip.text = "";
-                    }
-                }
-                Rectangle {
-                    width: 6px;
-                    height: 6px;
-                    border-radius: 3px;
-                    background: Tokens.warning;
-                }
+            // ===== NORMAL mode =====
+            if !root.editing && !root.confirming-delete && !root.confirming-overwrite : Image {
+                width: 16px;
+                source: @image-url("../../assets/icons/workspace.svg");
+                colorize: root.is-current ? Theme.accent-background : Theme.foreground.with-alpha(0.5);
             }
-        }
-        // Metadata at rest (unchanged even on a modified workspace: the only
-        // amber signal at rest remains the dot above).
-        if !root.editing && !root.confirming-delete && !root.confirming-overwrite && !row-touch.has-hover : Text {
-            text: root.panels + " " + root.strings.ws-panels-short + "  ·  " + root.tabs + " " + root.strings.ws-tabs-short;
-            font-size: 12px;
-            color: Theme.foreground.with-alpha(0.45);
-            vertical-alignment: center;
-        }
-        // …replaced on hover by the secondary actions (with tooltips).
-        if !root.editing && !root.confirming-delete && !root.confirming-overwrite && row-touch.has-hover : HorizontalLayout {
-            spacing: 2px;
-            // On the current MODIFIED row, the ⟳ "overwrite" becomes the
-            // "Save changes" action: tinted amber (matches the
-            // dot) and a single DIRECT click (unambiguous intent). On other
-            // rows, it keeps its 2-step confirmation.
-            WsIconBtn {
-                icon: @image-url("../../assets/icons/overwrite.svg");
-                amber: root.is-dirty;
-                tooltip: root.is-dirty ? root.strings.ws-dirty-save-action : root.strings.ws-update;
-                clicked => {
-                    if (root.is-dirty) { root.update-now(); }
-                    else { root.pending = 5; } // enter overwrite confirmation
-                }
-            }
-            WsIconBtn {
-                icon: @image-url("../../assets/icons/pencil.svg");
-                tooltip: root.strings.ws-rename;
-                clicked => { root.pending = 1; } // enter edit mode (deferred)
-            }
-            WsIconBtn {
-                icon: @image-url("../../assets/icons/trash.svg");
-                danger: true;
-                tooltip: root.strings.ws-delete;
-                clicked => { root.pending = 2; } // enter delete confirmation (deferred)
-            }
-        }
-        // "Load" button — always visible (explicit primary action).
-        if !root.editing && !root.confirming-delete && !root.confirming-overwrite : WsButton {
-            label: root.strings.ws-load;
-            primary: true;
-            clicked => { root.load(); }
-        }
-
-        // ===== EDIT mode (inline rename) =====
-        // NB: the TextInput fills via `horizontal-stretch` in an inner
-        // layout (NOT via `width: parent.width - X`). In a repeated
-        // component (`for`), a width computed from `parent.width`
-        // creates a layout cycle → "Recursion detected".
-        if root.editing : HorizontalLayout {
-            spacing: 6px;
-            padding-top: 7px;
-            padding-bottom: 7px;
-            // Deferred focus: `edit-input.focus()` is called by this Timer on
-            // the event-loop turn following the field's appearance (stable layout),
-            // NOT in the TextInput's `init` (which loops in a repeater).
-            // `focus-armed` is set by the main Timer on entering edit mode.
-            Timer {
-                interval: 1ms;
-                running: root.focus-armed;
-                triggered => {
-                    edit-input.focus();
-                    // Caret at the end of the line (no full selection).
-                    edit-input.set-selection-offsets(99999, 99999);
-                    root.focus-armed = false;
-                }
-            }
-            // No `y: parent.height…` or fixed `height:` on the Rectangle:
-            // in a repeated component, a geometry depending on
-            // `parent.height` triggers a vertical layout cycle
-            // ("Recursion detected"). The HL's padding gives the height;
-            // the Rectangle fills it, the TextInput is centered.
-            Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.background;
-                border-radius: 5px;
-                border-width: 1px;
-                border-color: Theme.accent-background;
-                HorizontalLayout {
-                    padding-left: 8px;
-                    padding-right: 8px;
-                    edit-input := EditTextInput {
-                        horizontal-stretch: 1;
-                        text: root.name;
-                        font-size: 13px;
-                        color: Theme.foreground;
-                        vertical-alignment: center;
-                        single-line: true;
-                        selection-background-color: Theme.accent-background.with-alpha(0.5);
-                        // Focus handled by the `focus-timer` above (deferred,
-                        // outside `init`) — calling focus() from `init` inside
-                        // a repeated component re-enters its own creation and
-                        // Slint reports a recursion error.
-                        accepted => {
-                            root.pending-rename = self.text;
-                            root.pending = 3;
-                        }
-                        key-pressed(event) => {
-                            if (event.text == Key.Escape) { root.pending = 3; return accept; }
-                            // Same here: local override → explicit call.
-                            if (self.edit-shortcut(event)) { return accept; }
-                            return reject;
-                        }
-                    }
-                }
-            }
-            WsIconBtn {
-                icon: @image-url("../../assets/icons/check.svg");
-                clicked => {
-                    root.pending-rename = edit-input.text;
-                    root.pending = 3;
-                }
-            }
-            WsIconBtn {
-                icon: @image-url("../../assets/icons/close.svg");
-                clicked => { root.pending = 3; }
-            }
-        }
-
-        // ===== DELETE CONFIRMATION mode (two-step red bar) =====
-        if root.confirming-delete : HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: root.strings.ws-delete-confirm;
-                font-size: 13px;
-                color: Tokens.danger;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-                overflow: elide;
-            }
-            WsButton {
-                label: root.strings.btn-cancel;
-                clicked => { root.pending = 4; } // exit confirmation (deferred)
-            }
-            WsButton {
-                label: root.strings.ws-delete;
-                danger: true;
-                clicked => {
-                    root.pending-delete = true;
-                    root.pending = 4; // exit + delete (deferred)
-                }
-            }
-        }
-
-        // ===== OVERWRITE CONFIRMATION mode (two-step accent bar) =====
-        if root.confirming-overwrite : HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: root.strings.ws-overwrite-confirm;
-                font-size: 13px;
+            if !root.editing && !root.confirming-delete && !root.confirming-overwrite : Text {
+                text: root.name;
+                font-size: 14px;
+                // Semibold name on the currently loaded workspace.
+                font-weight: root.is-current ? 600 : 400;
                 color: Theme.foreground;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
                 overflow: elide;
             }
-            WsButton {
-                label: root.strings.btn-cancel;
-                clicked => { root.pending = 6; } // exit without overwriting (pending-overwrite false)
+            // "Unsaved changes" dot, AT THE END OF THE NAME (status
+            // marker: doesn't shift the icon+name alignment of other rows,
+            // persists at rest AND on hover). Tooltip on hover to remove
+            // ambiguity about its meaning (widened hover area; the dot centers).
+            if !root.editing && !root.confirming-delete && !root.confirming-overwrite && root.is-dirty : Rectangle {
+                width: 16px;
+                dot-touch := TouchArea {
+                    changed has-hover => {
+                        if (self.has-hover) {
+                            Tip.text = root.strings.ws-dirty-tooltip;
+                            Tip.x = self.absolute-position.x - 70px;
+                            Tip.y = self.absolute-position.y - 26px;
+                        } else if (Tip.text == root.strings.ws-dirty-tooltip) {
+                            Tip.text = "";
+                        }
+                    }
+                    Rectangle {
+                        width: 6px;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Tokens.warning;
+                    }
+                }
             }
-            WsButton {
-                label: root.strings.ws-update;
+            // Metadata at rest (unchanged even on a modified workspace: the only
+            // amber signal at rest remains the dot above).
+            if !root.editing && !root.confirming-delete && !root.confirming-overwrite && !row-touch.has-hover : Text {
+                text: root.panels + " " + root.strings.ws-panels-short + "  ·  " + root.tabs + " " + root.strings.ws-tabs-short;
+                font-size: 12px;
+                color: Theme.foreground.with-alpha(0.45);
+                vertical-alignment: center;
+            }
+            // …replaced on hover by the secondary actions (with tooltips).
+            if !root.editing && !root.confirming-delete && !root.confirming-overwrite && row-touch.has-hover : HorizontalLayout {
+                spacing: 2px;
+                // On the current MODIFIED row, the ⟳ "overwrite" becomes the
+                // "Save changes" action: tinted amber (matches the
+                // dot) and a single DIRECT click (unambiguous intent). On other
+                // rows, it keeps its 2-step confirmation.
+                WsIconBtn {
+                    icon: @image-url("../../assets/icons/overwrite.svg");
+                    amber: root.is-dirty;
+                    tooltip: root.is-dirty ? root.strings.ws-dirty-save-action : root.strings.ws-update;
+                    clicked => {
+                        if (root.is-dirty) { root.update-now(); }
+                        else { root.pending = 5; } // enter overwrite confirmation
+                    }
+                }
+                WsIconBtn {
+                    icon: @image-url("../../assets/icons/pencil.svg");
+                    tooltip: root.strings.ws-rename;
+                    clicked => { root.pending = 1; } // enter edit mode (deferred)
+                }
+                WsIconBtn {
+                    icon: @image-url("../../assets/icons/trash.svg");
+                    danger: true;
+                    tooltip: root.strings.ws-delete;
+                    clicked => { root.pending = 2; } // enter delete confirmation (deferred)
+                }
+            }
+            // "Load" button — always visible (explicit primary action).
+            if !root.editing && !root.confirming-delete && !root.confirming-overwrite : WsButton {
+                label: root.strings.ws-load;
                 primary: true;
-                clicked => {
-                    root.pending-overwrite = true;
-                    root.pending = 6; // exit + overwrite (deferred)
+                clicked => { root.load(); }
+            }
+
+            // ===== EDIT mode (inline rename) =====
+            // NB: the TextInput fills via `horizontal-stretch` in an inner
+            // layout (NOT via `width: parent.width - X`). In a repeated
+            // component (`for`), a width computed from `parent.width`
+            // creates a layout cycle → "Recursion detected".
+            if root.editing : HorizontalLayout {
+                spacing: 6px;
+                padding-top: 7px;
+                padding-bottom: 7px;
+                // Deferred focus: `edit-input.focus()` is called by this Timer on
+                // the event-loop turn following the field's appearance (stable layout),
+                // NOT in the TextInput's `init` (which loops in a repeater).
+                // `focus-armed` is set by the main Timer on entering edit mode.
+                Timer {
+                    interval: 1ms;
+                    running: root.focus-armed;
+                    triggered => {
+                        edit-input.focus();
+                        // Caret at the end of the line (no full selection).
+                        edit-input.set-selection-offsets(99999, 99999);
+                        root.focus-armed = false;
+                    }
+                }
+                // No `y: parent.height…` or fixed `height:` on the Rectangle:
+                // in a repeated component, a geometry depending on
+                // `parent.height` triggers a vertical layout cycle
+                // ("Recursion detected"). The HL's padding gives the height;
+                // the Rectangle fills it, the TextInput is centered.
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.background;
+                    border-radius: 5px;
+                    border-width: 1px;
+                    border-color: Theme.accent-background;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        edit-input := EditTextInput {
+                            horizontal-stretch: 1;
+                            text: root.name;
+                            font-size: 13px;
+                            color: Theme.foreground;
+                            vertical-alignment: center;
+                            single-line: true;
+                            selection-background-color: Theme.accent-background.with-alpha(0.5);
+                            // Focus handled by the `focus-timer` above (deferred,
+                            // outside `init`) — calling focus() from `init` inside
+                            // a repeated component re-enters its own creation and
+                            // Slint reports a recursion error.
+                            accepted => {
+                                root.pending-rename = self.text;
+                                root.pending = 3;
+                            }
+                            key-pressed(event) => {
+                                if (event.text == Key.Escape) { root.pending = 3; return accept; }
+                                // Same here: local override → explicit call.
+                                if (self.edit-shortcut(event)) { return accept; }
+                                return reject;
+                            }
+                        }
+                    }
+                }
+                WsIconBtn {
+                    icon: @image-url("../../assets/icons/check.svg");
+                    clicked => {
+                        root.pending-rename = edit-input.text;
+                        root.pending = 3;
+                    }
+                }
+                WsIconBtn {
+                    icon: @image-url("../../assets/icons/close.svg");
+                    clicked => { root.pending = 3; }
+                }
+            }
+
+            // ===== DELETE CONFIRMATION mode (two-step red bar) =====
+            if root.confirming-delete : HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.strings.ws-delete-confirm;
+                    font-size: 13px;
+                    color: Tokens.danger;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                WsButton {
+                    label: root.strings.btn-cancel;
+                    clicked => { root.pending = 4; } // exit confirmation (deferred)
+                }
+                WsButton {
+                    label: root.strings.ws-delete;
+                    danger: true;
+                    clicked => {
+                        root.pending-delete = true;
+                        root.pending = 4; // exit + delete (deferred)
+                    }
+                }
+            }
+
+            // ===== OVERWRITE CONFIRMATION mode (two-step accent bar) =====
+            if root.confirming-overwrite : HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.strings.ws-overwrite-confirm;
+                    font-size: 13px;
+                    color: Theme.foreground;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                WsButton {
+                    label: root.strings.btn-cancel;
+                    clicked => { root.pending = 6; } // exit without overwriting (pending-overwrite false)
+                }
+                WsButton {
+                    label: root.strings.ws-update;
+                    primary: true;
+                    clicked => {
+                        root.pending-overwrite = true;
+                        root.pending = 6; // exit + overwrite (deferred)
+                    }
                 }
             }
         }
-    }
     } // closes row-touch (enclosing TouchArea)
 
     // "Loaded workspace" identity rail. Overlaid on the left

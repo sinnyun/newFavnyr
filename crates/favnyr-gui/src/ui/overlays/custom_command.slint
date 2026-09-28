@@ -86,308 +86,308 @@ export component OverlayCustomCommand inherits Rectangle {
         // a fallback on a very short window (or at 150% scale) instead of
         // spilling past the card's edges.
         VerticalLayout {
-        ScrollView {
-            vertical-stretch: 1;
-        owp-form := VerticalBox {
-            padding: 18px;
-            spacing: 11px;   // a bit more breathing room between fields
-            Text { text: root.strings.ow-title; font-size: 16px; font-weight: 700; color: Theme.foreground; }
-            Text { text: root.strings.ow-name; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
-            owp-name := EditLineEdit { text <=> root.ow-popup-name; }
-            Text { text: root.strings.ow-program; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
-            // OS/Store app (association, no exe): FIXED field + label — avoids an
-            // editable empty field the user might mistake for broken.
-            if root.ow-popup-is-store : Rectangle {
-                height: 30px;
-                border-radius: 5px;
-                border-width: 1px;
-                border-color: Theme.border;
-                background: Theme.alternate-background.with-alpha(0.45);
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
+            ScrollView {
+                vertical-stretch: 1;
+                owp-form := VerticalBox {
+                    padding: 18px;
+                    spacing: 11px;   // a bit more breathing room between fields
+                    Text { text: root.strings.ow-title; font-size: 16px; font-weight: 700; color: Theme.foreground; }
+                    Text { text: root.strings.ow-name; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
+                    owp-name := EditLineEdit { text <=> root.ow-popup-name; }
+                    Text { text: root.strings.ow-program; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
+                    // OS/Store app (association, no exe): FIXED field + label — avoids an
+                    // editable empty field the user might mistake for broken.
+                    if root.ow-popup-is-store : Rectangle {
+                        height: 30px;
+                        border-radius: 5px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.alternate-background.with-alpha(0.45);
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: root.strings.ow-store-program;
+                                font-size: 12px;
+                                font-italic: true;
+                                color: Theme.foreground.with-alpha(0.55);
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    // Editable program + "Browse…" button (native exe picker).
+                    if !root.ow-popup-is-store : HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        LineEdit { text <=> root.ow-popup-program; horizontal-stretch: 1; edited(t) => { root.ow-popup-changed(); } }
+                        Button { text: "…"; clicked => { root.ow-browse(); } }
+                    }
+                    Text { text: root.strings.ow-args; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
+                    owp-args := HintEdit { hint: "{file}"; text <=> root.ow-popup-args; edited(t) => { root.ow-popup-changed(); } }
+                    // Tag insertion buttons, one per tag the core substitutes.
+                    // The label sits on its OWN line: sharing a row with six
+                    // buttons left too little room in longer languages and at 150%
+                    // scale. Hovering a button explains what it stands for.
+                    Text { text: root.strings.ow-tags; font-size: 11px; color: Theme.foreground.with-alpha(0.55); }
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 6px;
+                        for t in [
+                            { tag: "{file}", hint: root.strings.ow-tag-file },
+                            { tag: "{dir}", hint: root.strings.ow-tag-dir },
+                            { tag: "{dirname}", hint: root.strings.ow-tag-dirname },
+                            { tag: "{setname}", hint: root.strings.ow-tag-setname },
+                            { tag: "{name}", hint: root.strings.ow-tag-name },
+                            { tag: "{stem}", hint: root.strings.ow-tag-stem },
+                            { tag: "{ext}", hint: root.strings.ow-tag-ext },
+                            { tag: "{uri}", hint: root.strings.ow-tag-uri },
+                            { tag: "{files}", hint: root.strings.ow-tag-files },
+                        ] : Rectangle {
+                            width: tagtxt.preferred-width + 14px;
+                            height: 22px;
+                            border-radius: 5px;
+                            // Filled rather than outlined: these insert text, they
+                            // are not toggles, and six more outlines next to the
+                            // field borders above only added noise.
+                            border-width: 1px;
+                            border-color: tagta.has-hover ? Theme.accent-background : transparent;
+                            background: tagta.has-hover
+                                ? Theme.accent-background.with-alpha(0.18)
+                                : Theme.foreground.with-alpha(0.07);
+                            tagtxt := Text { text: t.tag; font-size: 11px; font-weight: 500; color: Tokens.ext; x: (parent.width - self.width)/2; vertical-alignment: center; height: parent.height; }
+                            tagta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.ow-popup-args = root.ow-popup-args == "" ? t.tag : root.ow-popup-args + " " + t.tag;
+                                    root.ow-popup-changed();
+                                    // Scroll the field to the freshly appended tag:
+                                    // on a long command it lands out of sight and the
+                                    // click would otherwise look like it did nothing.
+                                    owp-args.focus-end();
+                                }
+                                changed has-hover => {
+                                    if (self.has-hover) {
+                                        Tip.text = t.hint;
+                                        Tip.x = self.absolute-position.x;
+                                        Tip.y = self.absolute-position.y - 26px;
+                                    } else if (Tip.text == t.hint) {
+                                        Tip.text = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Command preview. Monospace and wrapped over two lines rather
+                    // than elided: elision cut the END of the line, which is exactly
+                    // the arguments being typed. Argument boundaries are quoted by
+                    // the bridge, so a path containing spaces no longer reads as two
+                    // arguments.
+                    Text { text: root.strings.ow-preview; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
                     Text {
-                        text: root.strings.ow-store-program;
-                        font-size: 12px;
-                        font-italic: true;
-                        color: Theme.foreground.with-alpha(0.55);
-                        vertical-alignment: center;
+                        text: root.ow-popup-preview;
+                        font-family: "monospace";
+                        font-size: 11px;
+                        color: Theme.foreground.with-alpha(0.85);
+                        wrap: word-wrap;
+                        height: 26px;   // two lines at 11px; beyond that, elide
                         overflow: elide;
                     }
-                }
-            }
-            // Editable program + "Browse…" button (native exe picker).
-            if !root.ow-popup-is-store : HorizontalBox {
-                padding: 0px;
-                spacing: 8px;
-                LineEdit { text <=> root.ow-popup-program; horizontal-stretch: 1; edited(t) => { root.ow-popup-changed(); } }
-                Button { text: "…"; clicked => { root.ow-browse(); } }
-            }
-            Text { text: root.strings.ow-args; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
-            owp-args := HintEdit { hint: "{file}"; text <=> root.ow-popup-args; edited(t) => { root.ow-popup-changed(); } }
-            // Tag insertion buttons, one per tag the core substitutes.
-            // The label sits on its OWN line: sharing a row with six
-            // buttons left too little room in longer languages and at 150%
-            // scale. Hovering a button explains what it stands for.
-            Text { text: root.strings.ow-tags; font-size: 11px; color: Theme.foreground.with-alpha(0.55); }
-            HorizontalBox {
-                padding: 0px;
-                spacing: 6px;
-                for t in [
-                    { tag: "{file}", hint: root.strings.ow-tag-file },
-                    { tag: "{dir}", hint: root.strings.ow-tag-dir },
-                    { tag: "{dirname}", hint: root.strings.ow-tag-dirname },
-                    { tag: "{setname}", hint: root.strings.ow-tag-setname },
-                    { tag: "{name}", hint: root.strings.ow-tag-name },
-                    { tag: "{stem}", hint: root.strings.ow-tag-stem },
-                    { tag: "{ext}", hint: root.strings.ow-tag-ext },
-                    { tag: "{uri}", hint: root.strings.ow-tag-uri },
-                    { tag: "{files}", hint: root.strings.ow-tag-files },
-                ] : Rectangle {
-                    width: tagtxt.preferred-width + 14px;
-                    height: 22px;
-                    border-radius: 5px;
-                    // Filled rather than outlined: these insert text, they
-                    // are not toggles, and six more outlines next to the
-                    // field borders above only added noise.
-                    border-width: 1px;
-                    border-color: tagta.has-hover ? Theme.accent-background : transparent;
-                    background: tagta.has-hover
-                        ? Theme.accent-background.with-alpha(0.18)
-                        : Theme.foreground.with-alpha(0.07);
-                    tagtxt := Text { text: t.tag; font-size: 11px; font-weight: 500; color: Tokens.ext; x: (parent.width - self.width)/2; vertical-alignment: center; height: parent.height; }
-                    tagta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.ow-popup-args = root.ow-popup-args == "" ? t.tag : root.ow-popup-args + " " + t.tag;
-                            root.ow-popup-changed();
-                            // Scroll the field to the freshly appended tag:
-                            // on a long command it lands out of sight and the
-                            // click would otherwise look like it did nothing.
-                            owp-args.focus-end();
-                        }
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                Tip.text = t.hint;
-                                Tip.x = self.absolute-position.x;
-                                Tip.y = self.absolute-position.y - 26px;
-                            } else if (Tip.text == t.hint) {
-                                Tip.text = "";
-                            }
-                        }
-                    }
-                }
-            }
-            // Command preview. Monospace and wrapped over two lines rather
-            // than elided: elision cut the END of the line, which is exactly
-            // the arguments being typed. Argument boundaries are quoted by
-            // the bridge, so a path containing spaces no longer reads as two
-            // arguments.
-            Text { text: root.strings.ow-preview; font-size: 10px; font-weight: 600; color: Theme.foreground.with-alpha(0.55); }
-            Text {
-                text: root.ow-popup-preview;
-                font-family: "monospace";
-                font-size: 11px;
-                color: Theme.foreground.with-alpha(0.85);
-                wrap: word-wrap;
-                height: 26px;   // two lines at 11px; beyond that, elide
-                overflow: elide;
-            }
-            // How many processes this will start — the rule that decides it
-            // (a tag in the arguments) was otherwise invisible.
-            Text {
-                text: root.ow-popup-runs;
-                font-size: 10px;
-                color: Theme.foreground.with-alpha(0.55);
-                overflow: elide;
-            }
-            // "Custom default app": extensions opened with this
-            // program on double-click, instead
-            // of the OS default. Hoverable label → explanatory tooltip.
-            HorizontalBox {
-                padding: 0px;
-                spacing: 8px;
-                Rectangle {
-                    width: owdef-txt.preferred-width;
-                    owdef-txt := Text {
-                        text: root.strings.ow-default-ext;
-                        font-size: 11px;
-                        color: Theme.foreground.with-alpha(0.55);
-                        vertical-alignment: center;
-                        height: parent.height;
-                    }
-                    owdef-ta := TouchArea {
-                        // Signals that this label carries an explanation;
-                        // nothing else marked it as hoverable.
-                        mouse-cursor: help;
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                Tip.text = root.strings.ow-default-ext-hint;
-                                Tip.x = self.absolute-position.x;
-                                Tip.y = self.absolute-position.y - 26px;
-                            } else if (Tip.text == root.strings.ow-default-ext-hint) {
-                                Tip.text = "";
-                            }
-                        }
-                    }
-                }
-                HintEdit { hint: root.strings.ow-default-ext-placeholder; text <=> root.ow-popup-default-ext; horizontal-stretch: 1; }
-            }
-            // "Where to show this command" box: groups the TWO
-            // visibility settings for the per-extension "Open with" flyout and
-            // the views' context menu.
-            Rectangle {
-                background: Theme.alternate-background.with-alpha(0.5);
-                border-radius: 8px;
-                border-width: 1px;
-                border-color: Theme.border;
-                VerticalLayout {
-                    padding: 10px;
-                    spacing: 8px;
+                    // How many processes this will start — the rule that decides it
+                    // (a tag in the arguments) was otherwise invisible.
                     Text {
-                        text: root.strings.ow-show-in-section;
-                        font-size: 11px;
-                        font-weight: 600;
-                        color: Theme.foreground.with-alpha(0.6);
-                        letter-spacing: 0.5px;
+                        text: root.ow-popup-runs;
+                        font-size: 10px;
+                        color: Theme.foreground.with-alpha(0.55);
+                        overflow: elide;
                     }
+                    // "Custom default app": extensions opened with this
+                    // program on double-click, instead
+                    // of the OS default. Hoverable label → explanatory tooltip.
                     HorizontalBox {
                         padding: 0px;
                         spacing: 8px;
-                        // Wrapped like its twin above: a bare Text gets
-                        // squeezed by the field once the label grows, and
-                        // this is the narrowest row of the popup in German.
                         Rectangle {
-                            width: owused-txt.preferred-width;
-                            owused-txt := Text {
-                                text: root.strings.ow-used-ext;
+                            width: owdef-txt.preferred-width;
+                            owdef-txt := Text {
+                                text: root.strings.ow-default-ext;
                                 font-size: 11px;
                                 color: Theme.foreground.with-alpha(0.55);
                                 vertical-alignment: center;
                                 height: parent.height;
                             }
-                            owused-ta := TouchArea {
+                            owdef-ta := TouchArea {
+                                // Signals that this label carries an explanation;
+                                // nothing else marked it as hoverable.
                                 mouse-cursor: help;
                                 changed has-hover => {
                                     if (self.has-hover) {
-                                        Tip.text = root.strings.ow-used-ext-hint;
+                                        Tip.text = root.strings.ow-default-ext-hint;
                                         Tip.x = self.absolute-position.x;
                                         Tip.y = self.absolute-position.y - 26px;
-                                    } else if (Tip.text == root.strings.ow-used-ext-hint) {
+                                    } else if (Tip.text == root.strings.ow-default-ext-hint) {
                                         Tip.text = "";
                                     }
                                 }
                             }
                         }
-                        HintEdit { hint: root.strings.ow-used-ext-placeholder; text <=> root.ow-popup-used-ext; horizontal-stretch: 1; }
+                        HintEdit { hint: root.strings.ow-default-ext-placeholder; text <=> root.ow-popup-default-ext; horizontal-stretch: 1; }
                     }
-                    // Label on ITS OWN line: shared with the 3 checkboxes on
-                    // a single row, it didn't leave enough room for the
-                    // last label ("Background…", "Ansichtshintergrund")
-                    // which overflowed in longer languages and/or at 150% scale.
-                    Text {
-                        text: root.strings.ow-ctx-menu;
-                        font-size: 11px;
-                        color: Theme.foreground.with-alpha(0.55);
+                    // "Where to show this command" box: groups the TWO
+                    // visibility settings for the per-extension "Open with" flyout and
+                    // the views' context menu.
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 10px;
+                            spacing: 8px;
+                            Text {
+                                text: root.strings.ow-show-in-section;
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: Theme.foreground.with-alpha(0.6);
+                                letter-spacing: 0.5px;
+                            }
+                            HorizontalBox {
+                                padding: 0px;
+                                spacing: 8px;
+                                // Wrapped like its twin above: a bare Text gets
+                                // squeezed by the field once the label grows, and
+                                // this is the narrowest row of the popup in German.
+                                Rectangle {
+                                    width: owused-txt.preferred-width;
+                                    owused-txt := Text {
+                                        text: root.strings.ow-used-ext;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        vertical-alignment: center;
+                                        height: parent.height;
+                                    }
+                                    owused-ta := TouchArea {
+                                        mouse-cursor: help;
+                                        changed has-hover => {
+                                            if (self.has-hover) {
+                                                Tip.text = root.strings.ow-used-ext-hint;
+                                                Tip.x = self.absolute-position.x;
+                                                Tip.y = self.absolute-position.y - 26px;
+                                            } else if (Tip.text == root.strings.ow-used-ext-hint) {
+                                                Tip.text = "";
+                                            }
+                                        }
+                                    }
+                                }
+                                HintEdit { hint: root.strings.ow-used-ext-placeholder; text <=> root.ow-popup-used-ext; horizontal-stretch: 1; }
+                            }
+                            // Label on ITS OWN line: shared with the 3 checkboxes on
+                            // a single row, it didn't leave enough room for the
+                            // last label ("Background…", "Ansichtshintergrund")
+                            // which overflowed in longer languages and/or at 150% scale.
+                            Text {
+                                text: root.strings.ow-ctx-menu;
+                                font-size: 11px;
+                                color: Theme.foreground.with-alpha(0.55);
+                            }
+                            HorizontalBox {
+                                padding: 0px;
+                                spacing: 8px;
+                                CheckBox { text: root.strings.ow-ctx-files; checked <=> root.ow-popup-ctx-file; }
+                                CheckBox { text: root.strings.ow-ctx-dirs; checked <=> root.ow-popup-ctx-dir; }
+                                CheckBox { text: root.strings.ow-ctx-background; checked <=> root.ow-popup-ctx-bg; }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            // Extension filter of the FILE entry — folders and the
+                            // view background have none. Shown only with that box
+                            // ticked: a filter that visibly filters nothing is
+                            // noise, and the popup's scarce resource is height.
+                            // Indented by 18px indicator + 12px checkbox spacing so
+                            // the label starts under the word "Files" it qualifies.
+                            if root.ow-popup-ctx-file : HorizontalBox {
+                                padding: 0px;
+                                spacing: 8px;
+                                // Gutter + spacing = 30px, the checkbox indicator
+                                // (18) plus its internal spacing (12), so the label
+                                // still starts under the word "Files". The elbow
+                                // arrow sits under the box it descends from, making
+                                // the subordination visible rather than implied.
+                                Rectangle {
+                                    width: 22px;
+                                    Image {
+                                        source: @image-url("../../../assets/icons/corner-down-right.svg");
+                                        width: 12px;
+                                        height: 12px;
+                                        x: 6px;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: Theme.foreground.with-alpha(0.35);
+                                    }
+                                }
+                                Rectangle {
+                                    width: owctx-txt.preferred-width;
+                                    owctx-txt := Text {
+                                        text: root.strings.ow-ctx-ext;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        vertical-alignment: center;
+                                        height: parent.height;
+                                    }
+                                    owctx-ta := TouchArea {
+                                        mouse-cursor: help;
+                                        changed has-hover => {
+                                            if (self.has-hover) {
+                                                Tip.text = root.strings.ow-ctx-ext-hint;
+                                                Tip.x = self.absolute-position.x;
+                                                Tip.y = self.absolute-position.y - 26px;
+                                            } else if (Tip.text == root.strings.ow-ctx-ext-hint) {
+                                                Tip.text = "";
+                                            }
+                                        }
+                                    }
+                                }
+                                // Hint "*" rather than "png, jpg": emptying the
+                                // field then shows what to type to mean "every
+                                // file", and tells this field apart from the two
+                                // other extension fields above.
+                                HintEdit { hint: "*"; text <=> root.ow-popup-ctx-ext; horizontal-stretch: 1; }
+                            }
+                        }
                     }
-                    HorizontalBox {
+                    // "Run as administrator" (UAC elevation) — Windows
+                    // ONLY and excluding OS/Store apps (an association can't be elevated).
+                    // Unchecked by default and placed at the bottom, since it configures the
+                    // launch behavior rather than the command's visibility.
+                    if root.platform-windows && !root.ow-popup-is-store : HorizontalBox {
                         padding: 0px;
                         spacing: 8px;
-                        CheckBox { text: root.strings.ow-ctx-files; checked <=> root.ow-popup-ctx-file; }
-                        CheckBox { text: root.strings.ow-ctx-dirs; checked <=> root.ow-popup-ctx-dir; }
-                        CheckBox { text: root.strings.ow-ctx-background; checked <=> root.ow-popup-ctx-bg; }
+                        CheckBox {
+                            text: root.strings.ow-run-as-admin;
+                            checked <=> root.ow-popup-elevated;
+                        }
                         Rectangle { horizontal-stretch: 1; }
                     }
-                    // Extension filter of the FILE entry — folders and the
-                    // view background have none. Shown only with that box
-                    // ticked: a filter that visibly filters nothing is
-                    // noise, and the popup's scarce resource is height.
-                    // Indented by 18px indicator + 12px checkbox spacing so
-                    // the label starts under the word "Files" it qualifies.
-                    if root.ow-popup-ctx-file : HorizontalBox {
-                        padding: 0px;
-                        spacing: 8px;
-                        // Gutter + spacing = 30px, the checkbox indicator
-                        // (18) plus its internal spacing (12), so the label
-                        // still starts under the word "Files". The elbow
-                        // arrow sits under the box it descends from, making
-                        // the subordination visible rather than implied.
-                        Rectangle {
-                            width: 22px;
-                            Image {
-                                source: @image-url("../../../assets/icons/corner-down-right.svg");
-                                width: 12px;
-                                height: 12px;
-                                x: 6px;
-                                y: (parent.height - self.height) / 2;
-                                colorize: Theme.foreground.with-alpha(0.35);
-                            }
-                        }
-                        Rectangle {
-                            width: owctx-txt.preferred-width;
-                            owctx-txt := Text {
-                                text: root.strings.ow-ctx-ext;
-                                font-size: 11px;
-                                color: Theme.foreground.with-alpha(0.55);
-                                vertical-alignment: center;
-                                height: parent.height;
-                            }
-                            owctx-ta := TouchArea {
-                                mouse-cursor: help;
-                                changed has-hover => {
-                                    if (self.has-hover) {
-                                        Tip.text = root.strings.ow-ctx-ext-hint;
-                                        Tip.x = self.absolute-position.x;
-                                        Tip.y = self.absolute-position.y - 26px;
-                                    } else if (Tip.text == root.strings.ow-ctx-ext-hint) {
-                                        Tip.text = "";
-                                    }
-                                }
-                            }
-                        }
-                        // Hint "*" rather than "png, jpg": emptying the
-                        // field then shows what to type to mean "every
-                        // file", and tells this field apart from the two
-                        // other extension fields above.
-                        HintEdit { hint: "*"; text <=> root.ow-popup-ctx-ext; horizontal-stretch: 1; }
-                    }
                 }
             }
-            // "Run as administrator" (UAC elevation) — Windows
-            // ONLY and excluding OS/Store apps (an association can't be elevated).
-            // Unchecked by default and placed at the bottom, since it configures the
-            // launch behavior rather than the command's visibility.
-            if root.platform-windows && !root.ow-popup-is-store : HorizontalBox {
-                padding: 0px;
-                spacing: 8px;
-                CheckBox {
-                    text: root.strings.ow-run-as-admin;
-                    checked <=> root.ow-popup-elevated;
-                }
+            // Footer pinned OUTSIDE the scroll body: Cancel/Save stay visible no
+            // matter how tall the form grows or how short the window is. The
+            // hairline marks the edge when the form scrolls under it.
+            Rectangle { height: 1px; background: Theme.border; }
+            owp-footer := HorizontalBox {
+                padding-left: 18px;
+                padding-right: 18px;
+                padding-top: 12px;
+                padding-bottom: 18px;
+                // A custom command is always saved:
+                // `ow-popup-add` stays true and no one-off mode is offered.
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: root.strings.btn-cancel; clicked => { root.ow-popup-open = false; } }
+                Button {
+                    text: root.strings.fav-save;
+                    primary: true;
+                    enabled: root.ow-popup-valid;
+                    clicked => { root.ow-popup-commit(); root.ow-popup-open = false; }
+                }
             }
-        }
-        }
-        // Footer pinned OUTSIDE the scroll body: Cancel/Save stay visible no
-        // matter how tall the form grows or how short the window is. The
-        // hairline marks the edge when the form scrolls under it.
-        Rectangle { height: 1px; background: Theme.border; }
-        owp-footer := HorizontalBox {
-            padding-left: 18px;
-            padding-right: 18px;
-            padding-top: 12px;
-            padding-bottom: 18px;
-            // A custom command is always saved:
-            // `ow-popup-add` stays true and no one-off mode is offered.
-            Rectangle { horizontal-stretch: 1; }
-            Button { text: root.strings.btn-cancel; clicked => { root.ow-popup-open = false; } }
-            Button {
-                text: root.strings.fav-save;
-                primary: true;
-                enabled: root.ow-popup-valid;
-                clicked => { root.ow-popup-commit(); root.ow-popup-open = false; }
-            }
-        }
         }
     }
 }

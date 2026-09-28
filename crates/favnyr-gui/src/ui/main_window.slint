@@ -1895,212 +1895,212 @@ export component MainWindow inherits Window {
                         ordered-sidebar := GridLayout {
                             width: 100%;
                             height: 100%;
-                        spacing: 0px;
-                        drives-section := Sidebar {
-                            row: root.sidebar-section-rank(0);
-                            col: 0;
-                            places: root.sidebar-places-drives;
-                            strings: root.strings;
-                            // Only this section carries capacity gauges, so it
-                            // is the only one that needs the panel's width.
-                            panel-width: root.sidebar-width;
-                            section-code: 0;
-                            title: root.strings.sidebar-drives;
-                            collapsed: root.sidebar-drives-collapsed;
-                            reorder-drag-active: root.sidebar-section-drag-active;
-                            reorder-drag-source: root.sidebar-section-drag-source;
-                            changed y => { root.refresh-sidebar-section-drag-geometry(); }
-                            changed height => { root.refresh-sidebar-section-drag-geometry(); }
-                            section-toggled => { root.toggle-sidebar-section(0); }
-                            section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
-                            section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
-                            section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
-                            item-drag-active: root.sidebar-item-drag-active;
-                            place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
-                            place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
-                            place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
-                            place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
-                            place-drag-dropped(path, kind, x, y) => {
-                                root.finish-sidebar-item-drag(path, kind, x, y);
+                            spacing: 0px;
+                            drives-section := Sidebar {
+                                row: root.sidebar-section-rank(0);
+                                col: 0;
+                                places: root.sidebar-places-drives;
+                                strings: root.strings;
+                                // Only this section carries capacity gauges, so it
+                                // is the only one that needs the panel's width.
+                                panel-width: root.sidebar-width;
+                                section-code: 0;
+                                title: root.strings.sidebar-drives;
+                                collapsed: root.sidebar-drives-collapsed;
+                                reorder-drag-active: root.sidebar-section-drag-active;
+                                reorder-drag-source: root.sidebar-section-drag-source;
+                                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                                section-toggled => { root.toggle-sidebar-section(0); }
+                                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                                item-drag-active: root.sidebar-item-drag-active;
+                                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                                place-drag-dropped(path, kind, x, y) => {
+                                    root.finish-sidebar-item-drag(path, kind, x, y);
+                                }
+                                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                                }
                             }
-                            place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
-                                root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                            shortcuts-section := Sidebar {
+                                row: root.sidebar-section-rank(1);
+                                col: 0;
+                                places: root.sidebar-places-shortcuts;
+                                strings: root.strings;
+                                section-code: 1;
+                                title: root.strings.sidebar-shortcuts;
+                                collapsed: root.sidebar-shortcuts-collapsed;
+                                reorder-drag-active: root.sidebar-section-drag-active;
+                                reorder-drag-source: root.sidebar-section-drag-source;
+                                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                                section-toggled => { root.toggle-sidebar-section(1); }
+                                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                                item-drag-active: root.sidebar-item-drag-active;
+                                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                                place-drag-dropped(path, kind, x, y) => {
+                                    root.finish-sidebar-item-drag(path, kind, x, y);
+                                }
+                                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                                }
                             }
-                        }
-                        shortcuts-section := Sidebar {
-                            row: root.sidebar-section-rank(1);
-                            col: 0;
-                            places: root.sidebar-places-shortcuts;
-                            strings: root.strings;
-                            section-code: 1;
-                            title: root.strings.sidebar-shortcuts;
-                            collapsed: root.sidebar-shortcuts-collapsed;
-                            reorder-drag-active: root.sidebar-section-drag-active;
-                            reorder-drag-source: root.sidebar-section-drag-source;
-                            changed y => { root.refresh-sidebar-section-drag-geometry(); }
-                            changed height => { root.refresh-sidebar-section-drag-geometry(); }
-                            section-toggled => { root.toggle-sidebar-section(1); }
-                            section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
-                            section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
-                            section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
-                            item-drag-active: root.sidebar-item-drag-active;
-                            place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
-                            place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
-                            place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
-                            place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
-                            place-drag-dropped(path, kind, x, y) => {
-                                root.finish-sidebar-item-drag(path, kind, x, y);
-                            }
-                            place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
-                                root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
-                            }
-                        }
-                        fav-panel := FavPanel {
-                            row: root.sidebar-section-rank(2);
-                            col: 0;
-                            // The very condition that hides the column. A
-                            // hidden tree must accept nothing, and its frame
-                            // cannot say so on its own.
-                            shown: root.left-panel == 1;
-                            // Height = the CONTENT's (header + tree), CAPPED
-                            // (`max-height`) so Drives and Network immediately
-                            // follow the favorites. Beyond the available space,
-                            // the stretch takes back over and the tree scrolls within
-                            // `fav-scroll` without changing the hit-test area. Constants = Slint
-                            // geometry: header (separator included) 30; row 30 +
-                            // 1 gap = 31; list padding 11; empty state 132.
-                            vertical-stretch: 1;
-                            max-height: root.fav-section-collapsed
-                                ? 30px
-                                : (root.fav-nodes.length == 0
-                                    ? 162px
-                                    : (41px + root.fav-nodes.length * 31px));
-                            nodes: root.fav-nodes;
-                            strings: root.strings;
-                            selected-id: root.fav-selected-id;
-                            drag-active: root.fav-drag-active;
-                            location-drag-active: root.sidebar-item-drag-active;
-                            drag-target-index: root.fav-drag-target-index;
-                            drag-zone: root.fav-drag-zone;
-                            // TAB or FILE drag over the favorites
-                            // absolute cursor position propagated; the
-                            // FavPanel computes the hovered folder (`hover-container`,
-                            // read on drop, hit-test unchanged — scroll's own frame).
-                            tab-drag-active: root.drag-active;
-                            tab-drag-abs-x: root.drag-abs-x;
-                            tab-drag-abs-y: root.drag-abs-y;
-                            file-drag-active: root.file-drag-active;
-                            file-drag-abs-x: root.file-drag-abs-x;
-                            file-drag-abs-y: root.file-drag-abs-y;
-                            section-collapsed: root.fav-section-collapsed;
-                            reorder-drag-active: root.sidebar-section-drag-active;
-                            reorder-drag-source: root.sidebar-section-drag-source;
-                            changed y => { root.refresh-sidebar-section-drag-geometry(); }
-                            changed height => { root.refresh-sidebar-section-drag-geometry(); }
-                            toggle-section => { root.toggle-sidebar-section(2); }
-                            section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
-                            section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
-                            section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
-                            row-activate(id) => { root.fav-row-activate(id); }
-                            row-middle(id) => { root.fav-row-middle(id); }
-                            row-context(id, is-cont, label, x, y) => {
-                                root.close-ctx-menus();
-                                root.fav-menu-id = id;
-                                root.fav-menu-name = label;
-                                root.fav-menu-container = is-cont;
-                                root.fav-menu-x = x;
-                                root.fav-menu-y = y;
-                                root.fav-menu-confirm-delete = false;
-                                // Right-click doesn't affect `fav-selected-id` and
-                                // therefore leaves no persistent highlight.
-                                root.fav-menu-open = true;
-                            }
-                            row-drag-move(ri, cx, cy, rt) => {
-                                root.fav-drag-move(ri, cy, rt);
-                                if (ri >= 0 && ri < root.fav-nodes.length
-                                        && !root.fav-nodes[ri].is-container
-                                        && root.fav-nodes[ri].available) {
-                                    if (!root.sidebar-item-drag-active) {
-                                        root.begin-sidebar-item-drag(cx, cy, root.fav-nodes[ri].is-dir);
-                                    } else {
-                                        root.update-sidebar-item-drag(cx, cy);
+                            fav-panel := FavPanel {
+                                row: root.sidebar-section-rank(2);
+                                col: 0;
+                                // The very condition that hides the column. A
+                                // hidden tree must accept nothing, and its frame
+                                // cannot say so on its own.
+                                shown: root.left-panel == 1;
+                                // Height = the CONTENT's (header + tree), CAPPED
+                                // (`max-height`) so Drives and Network immediately
+                                // follow the favorites. Beyond the available space,
+                                // the stretch takes back over and the tree scrolls within
+                                // `fav-scroll` without changing the hit-test area. Constants = Slint
+                                // geometry: header (separator included) 30; row 30 +
+                                // 1 gap = 31; list padding 11; empty state 132.
+                                vertical-stretch: 1;
+                                max-height: root.fav-section-collapsed
+                                    ? 30px
+                                    : (root.fav-nodes.length == 0
+                                        ? 162px
+                                        : (41px + root.fav-nodes.length * 31px));
+                                nodes: root.fav-nodes;
+                                strings: root.strings;
+                                selected-id: root.fav-selected-id;
+                                drag-active: root.fav-drag-active;
+                                location-drag-active: root.sidebar-item-drag-active;
+                                drag-target-index: root.fav-drag-target-index;
+                                drag-zone: root.fav-drag-zone;
+                                // TAB or FILE drag over the favorites
+                                // absolute cursor position propagated; the
+                                // FavPanel computes the hovered folder (`hover-container`,
+                                // read on drop, hit-test unchanged — scroll's own frame).
+                                tab-drag-active: root.drag-active;
+                                tab-drag-abs-x: root.drag-abs-x;
+                                tab-drag-abs-y: root.drag-abs-y;
+                                file-drag-active: root.file-drag-active;
+                                file-drag-abs-x: root.file-drag-abs-x;
+                                file-drag-abs-y: root.file-drag-abs-y;
+                                section-collapsed: root.fav-section-collapsed;
+                                reorder-drag-active: root.sidebar-section-drag-active;
+                                reorder-drag-source: root.sidebar-section-drag-source;
+                                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                                toggle-section => { root.toggle-sidebar-section(2); }
+                                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                                row-activate(id) => { root.fav-row-activate(id); }
+                                row-middle(id) => { root.fav-row-middle(id); }
+                                row-context(id, is-cont, label, x, y) => {
+                                    root.close-ctx-menus();
+                                    root.fav-menu-id = id;
+                                    root.fav-menu-name = label;
+                                    root.fav-menu-container = is-cont;
+                                    root.fav-menu-x = x;
+                                    root.fav-menu-y = y;
+                                    root.fav-menu-confirm-delete = false;
+                                    // Right-click doesn't affect `fav-selected-id` and
+                                    // therefore leaves no persistent highlight.
+                                    root.fav-menu-open = true;
+                                }
+                                row-drag-move(ri, cx, cy, rt) => {
+                                    root.fav-drag-move(ri, cy, rt);
+                                    if (ri >= 0 && ri < root.fav-nodes.length
+                                            && !root.fav-nodes[ri].is-container
+                                            && root.fav-nodes[ri].available) {
+                                        if (!root.sidebar-item-drag-active) {
+                                            root.begin-sidebar-item-drag(cx, cy, root.fav-nodes[ri].is-dir);
+                                        } else {
+                                            root.update-sidebar-item-drag(cx, cy);
+                                        }
                                     }
                                 }
-                            }
-                            row-drag-drop(ri, cx, cy, rt, in-favorites) => {
-                                let tab-drop-accepted: bool =
-                                    ri >= 0 && ri < root.fav-nodes.length
-                                    && !root.fav-nodes[ri].is-container
-                                    && root.fav-nodes[ri].available
-                                    && root.finish-sidebar-item-drag(
-                                        root.fav-nodes[ri].id, -1, cx, cy);
-                                if (!tab-drop-accepted && root.sidebar-item-drag-active) {
-                                    root.cancel-sidebar-item-drag();
+                                row-drag-drop(ri, cx, cy, rt, in-favorites) => {
+                                    let tab-drop-accepted: bool =
+                                        ri >= 0 && ri < root.fav-nodes.length
+                                        && !root.fav-nodes[ri].is-container
+                                        && root.fav-nodes[ri].available
+                                        && root.finish-sidebar-item-drag(
+                                            root.fav-nodes[ri].id, -1, cx, cy);
+                                    if (!tab-drop-accepted && root.sidebar-item-drag-active) {
+                                        root.cancel-sidebar-item-drag();
+                                    }
+                                    // Every release finalizes the reorder drag, but only
+                                    // the visible favorites frame may commit a tree move.
+                                    root.fav-drag-drop(
+                                        ri, cy, rt, !tab-drop-accepted && in-favorites);
                                 }
-                                // Every release finalizes the reorder drag, but only
-                                // the visible favorites frame may commit a tree move.
-                                root.fav-drag-drop(
-                                    ri, cy, rt, !tab-drop-accepted && in-favorites);
+                                can-collapse: root.fav-can-collapse;
+                                // Header "+" → root container creation popup.
+                                new-container => { root.open-fav-name(false, "", ""); }
+                                collapse-all => { root.fav-collapse-all(); }
+                                expand-all => { root.fav-expand-all(); }
                             }
-                            can-collapse: root.fav-can-collapse;
-                            // Header "+" → root container creation popup.
-                            new-container => { root.open-fav-name(false, "", ""); }
-                            collapse-all => { root.fav-collapse-all(); }
-                            expand-all => { root.fav-expand-all(); }
-                        }
-                        network-section := Sidebar {
-                            row: root.sidebar-section-rank(3);
-                            col: 0;
-                            places: root.sidebar-places-network;
-                            strings: root.strings;
-                            section-code: 3;
-                            title: root.strings.sidebar-network;
-                            collapsed: root.sidebar-network-collapsed;
-                            reorder-drag-active: root.sidebar-section-drag-active;
-                            reorder-drag-source: root.sidebar-section-drag-source;
-                            changed y => { root.refresh-sidebar-section-drag-geometry(); }
-                            changed height => { root.refresh-sidebar-section-drag-geometry(); }
-                            section-toggled => { root.toggle-sidebar-section(3); }
-                            section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
-                            section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
-                            section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
-                            item-drag-active: root.sidebar-item-drag-active;
-                            place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
-                            place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
-                            place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
-                            place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
-                            place-drag-dropped(path, kind, x, y) => {
-                                root.finish-sidebar-item-drag(path, kind, x, y);
+                            network-section := Sidebar {
+                                row: root.sidebar-section-rank(3);
+                                col: 0;
+                                places: root.sidebar-places-network;
+                                strings: root.strings;
+                                section-code: 3;
+                                title: root.strings.sidebar-network;
+                                collapsed: root.sidebar-network-collapsed;
+                                reorder-drag-active: root.sidebar-section-drag-active;
+                                reorder-drag-source: root.sidebar-section-drag-source;
+                                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                                section-toggled => { root.toggle-sidebar-section(3); }
+                                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                                item-drag-active: root.sidebar-item-drag-active;
+                                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                                place-drag-dropped(path, kind, x, y) => {
+                                    root.finish-sidebar-item-drag(path, kind, x, y);
+                                }
+                                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                                }
                             }
-                            place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
-                                root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                            // Fixed Trash: it has neither a chevron nor a grip and does
+                            // not take part in the global order array.
+                            trash-section := Sidebar {
+                                row: 4;
+                                col: 0;
+                                places: root.sidebar-places-trash;
+                                strings: root.strings;
+                                section-code: -1;
+                                title: "";
+                                header-visible: false;
+                                item-drag-active: root.sidebar-item-drag-active;
+                                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                                place-drag-dropped(path, kind, x, y) => {
+                                    root.finish-sidebar-item-drag(path, kind, x, y);
+                                }
+                                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                                }
                             }
-                        }
-                        // Fixed Trash: it has neither a chevron nor a grip and does
-                        // not take part in the global order array.
-                        trash-section := Sidebar {
-                            row: 4;
-                            col: 0;
-                            places: root.sidebar-places-trash;
-                            strings: root.strings;
-                            section-code: -1;
-                            title: "";
-                            header-visible: false;
-                            item-drag-active: root.sidebar-item-drag-active;
-                            place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
-                            place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
-                            place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
-                            place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
-                            place-drag-dropped(path, kind, x, y) => {
-                                root.finish-sidebar-item-drag(path, kind, x, y);
-                            }
-                            place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
-                                root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
-                            }
-                        }
-                        // Remainder below all sections. The tiny stretch
-                        // gives priority to Favorites for the available height.
-                        Rectangle { row: 5; col: 0; vertical-stretch: 0.0001; }
+                            // Remainder below all sections. The tiny stretch
+                            // gives priority to Favorites for the available height.
+                            Rectangle { row: 5; col: 0; vertical-stretch: 0.0001; }
                         }
                         // Destination indicator in the SAME local frame as
                         // the sections. `-1px` centers its 2px on the separator.
@@ -2148,446 +2148,446 @@ export component MainWindow inherits Window {
                     }
                 }
 
-            // ===== Panels container (flattened rendering of the tree) =====
-            // Rectangle (NOT a layout): each panel is positioned in
-            // **absolute** terms from its fractional geometry (fx/fy/fw/fh x container
-            // size), splitters are overlays on the seams.
-            // This bypasses Slint's layout engine (a source of
-            // "Recursion detected" cycles on repeaters).
-            panels-container := Rectangle {
-                horizontal-stretch: 1;
-                clip: true;
-                // Groove: slightly recessed background so the tiles
-                // (panels) stand out in the gap that separates them.
-                background: Tokens.trough;
-                for panel[idx] in root.panels : PanelComponent {
-                    // Rounded to a WHOLE pixel: without this, a
-                    // fractional position (fraction x width) places the panel on a
-                    // half-pixel → blurry text/icons (and inconsistent from one
-                    // panel to another depending on whether the fraction lands exactly).
-                    // + uniform `panel-gap` inset on all 4 sides → a gap of
-                    // 2xpanel-gap between neighbors, 1x against the edges. The seam
-                    // (hence the splitter) stays centered on the same position.
-                    //
-                    // Read from the PARALLEL model `panel-boxes` (never from
-                    // `panel`) → moving a tile does not invalidate
-                    // `view.rendered-rows`. Should the two models ever be out
-                    // of step for a frame, a full-size tile is a kinder
-                    // failure than an invisible one.
-                    property <PanelBox> box: idx < root.panel-boxes.length
-                        ? root.panel-boxes[idx]
-                        : { fx: 0, fy: 0, fw: 1, fh: 1 };
-                    x: round(panels-container.width * self.box.fx / 1px) * 1px + Tokens.panel-gap;
-                    y: round(panels-container.height * self.box.fy / 1px) * 1px + Tokens.panel-gap;
-                    width: round(panels-container.width * self.box.fw / 1px) * 1px - 2 * Tokens.panel-gap;
-                    height: round(panels-container.height * self.box.fh / 1px) * 1px - 2 * Tokens.panel-gap;
-                    // Only the POSITION travels. Animating the size would change
-                    // this view's height on every frame, and a height change
-                    // costs a round trip to the bridge — render window and
-                    // thumbnail priority recomputed, per frame and per view.
-                    // The tiles therefore take their new size at once and slide
-                    // to their new place.
-                    //
-                    // 180ms sits between the 110ms of a state lighting up and
-                    // the 200ms of a dissolve: long enough for the eye to
-                    // follow a tile across the window, short enough never to
-                    // delay a second gesture. `ease-in-out` because a tile
-                    // LEAVES a place as much as it arrives at one — `ease-out`
-                    // is the curve of an arrival alone.
-                    animate x, y {
-                        duration: root.view-swap-flying ? 180ms : 0ms;
-                        easing: ease-in-out;
-                    }
-                    view-swap-flying: root.view-swap-flying
-                        && (root.swap-flight-a == idx || root.swap-flight-b == idx);
-                    view: panel;
-                    // Dragging a VIEW. The claim on the target follows the
-                    // idiom used for the separator outline: only the view that
-                    // claimed it may drop it, since leaving one and entering
-                    // the next fires both handlers in an order nothing
-                    // guarantees.
-                    view-drag-active: root.view-drag-active;
-                    view-drag-abs-x: root.view-drag-abs-x;
-                    view-drag-abs-y: root.view-drag-abs-y;
-                    view-drag-is-source: root.view-drag-source == idx;
-                    view-drag-is-target: root.view-drag-target == idx;
-                    view-drag-armed: root.view-drag-target >= 0;
-                    view-drag-leaving: root.view-drag-outside
-                        && root.view-drag-source == idx;
-                    changed view-drag-over => {
-                        if (self.view-drag-over) {
-                            root.view-drag-target = idx;
-                        } else if (root.view-drag-target == idx) {
-                            root.view-drag-target = -1;
+                // ===== Panels container (flattened rendering of the tree) =====
+                // Rectangle (NOT a layout): each panel is positioned in
+                // **absolute** terms from its fractional geometry (fx/fy/fw/fh x container
+                // size), splitters are overlays on the seams.
+                // This bypasses Slint's layout engine (a source of
+                // "Recursion detected" cycles on repeaters).
+                panels-container := Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+                    // Groove: slightly recessed background so the tiles
+                    // (panels) stand out in the gap that separates them.
+                    background: Tokens.trough;
+                    for panel[idx] in root.panels : PanelComponent {
+                        // Rounded to a WHOLE pixel: without this, a
+                        // fractional position (fraction x width) places the panel on a
+                        // half-pixel → blurry text/icons (and inconsistent from one
+                        // panel to another depending on whether the fraction lands exactly).
+                        // + uniform `panel-gap` inset on all 4 sides → a gap of
+                        // 2xpanel-gap between neighbors, 1x against the edges. The seam
+                        // (hence the splitter) stays centered on the same position.
+                        //
+                        // Read from the PARALLEL model `panel-boxes` (never from
+                        // `panel`) → moving a tile does not invalidate
+                        // `view.rendered-rows`. Should the two models ever be out
+                        // of step for a frame, a full-size tile is a kinder
+                        // failure than an invisible one.
+                        property <PanelBox> box: idx < root.panel-boxes.length
+                            ? root.panel-boxes[idx]
+                            : { fx: 0, fy: 0, fw: 1, fh: 1 };
+                        x: round(panels-container.width * self.box.fx / 1px) * 1px + Tokens.panel-gap;
+                        y: round(panels-container.height * self.box.fy / 1px) * 1px + Tokens.panel-gap;
+                        width: round(panels-container.width * self.box.fw / 1px) * 1px - 2 * Tokens.panel-gap;
+                        height: round(panels-container.height * self.box.fh / 1px) * 1px - 2 * Tokens.panel-gap;
+                        // Only the POSITION travels. Animating the size would change
+                        // this view's height on every frame, and a height change
+                        // costs a round trip to the bridge — render window and
+                        // thumbnail priority recomputed, per frame and per view.
+                        // The tiles therefore take their new size at once and slide
+                        // to their new place.
+                        //
+                        // 180ms sits between the 110ms of a state lighting up and
+                        // the 200ms of a dissolve: long enough for the eye to
+                        // follow a tile across the window, short enough never to
+                        // delay a second gesture. `ease-in-out` because a tile
+                        // LEAVES a place as much as it arrives at one — `ease-out`
+                        // is the curve of an arrival alone.
+                        animate x, y {
+                            duration: root.view-swap-flying ? 180ms : 0ms;
+                            easing: ease-in-out;
                         }
-                    }
-                    view-drag-progress(ax, ay) => {
-                        if (!root.view-drag-cancelled) {
-                            root.view-drag-active = true;
-                            root.view-drag-source = idx;
-                            root.view-drag-abs-x = ax;
-                            root.view-drag-abs-y = ay;
-                        }
-                    }
-                    view-drag-completed(ax, ay) => {
-                        // Read before clearing: every preview hangs off these,
-                        // so they must survive long enough to be consulted.
-                        if (root.view-drag-target >= 0 && !root.view-drag-cancelled) {
-                            root.swap-flight-a = idx;
-                            root.swap-flight-b = root.view-drag-target;
-                            root.view-swap-flying = true;
-                            root.views-swapped(idx, root.view-drag-target);
-                        } else if (!root.view-drag-cancelled) {
-                            // No view under the cursor. The bridge checks
-                            // whether the release truly landed outside the
-                            // window before detaching anything.
-                            root.view-torn-off(idx, ax, ay);
-                        }
-                        root.view-drag-cancelled = false;
-                        root.view-drag-active = false;
-                        root.view-drag-source = -1;
-                        root.view-drag-target = -1;
-                    }
-                    // Footer drawn from the PARALLEL model `panel-footers`
-                    // (never from `panel`) → its update does not invalidate
-                    // `view.rendered-rows`.
-                    footer-text: idx < root.panel-footers.length ? root.panel-footers[idx] : "";
-                    active: idx == root.active-panel-idx;
-                    can-close: root.panels.length > 1;
-                    strings: root.strings;
-                    drag-active: root.drag-active || root.sidebar-item-drag-active;
-                    drag-panel-zones: root.drag-active
-                        || (root.sidebar-item-drag-active
-                            && root.sidebar-item-split-capable);
-                    drag-panel-split-edges: root.drag-active || root.can-add-panel;
-                    drag-abs-x: root.drag-abs-x;
-                    drag-abs-y: root.drag-abs-y;
-                    tab-tooltip-enabled: root.tab-tooltip-enabled;
-                    is-drag-source: root.drag-active && idx == root.drag-source-panel;
-                    // The panel under the cursor claims the drop target.
-                    changed drag-zone => {
-                        if (self.drag-zone > 0) {
-                            root.drag-target-panel = idx;
-                            root.drag-target-zone = self.drag-zone;
-                        } else if (root.drag-target-panel == idx) {
-                            root.drag-target-panel = -1;
-                            root.drag-target-zone = 0;
-                        }
-                    }
-                    // File drag'n'drop between views ---
-                    file-drag-active: root.file-drag-active;
-                    file-drag-abs-x: root.file-drag-abs-x;
-                    file-drag-abs-y: root.file-drag-abs-y;
-                    is-file-drag-source: idx == root.file-drag-source-panel;
-                    changed file-drag-over => {
-                        if (self.file-drag-over) {
-                            root.claim-file-drag-target(idx, self.drag-target-row,
-                                self.drag-folder-row >= 0, self.drag-target-exec);
-                        } else {
-                            root.clear-file-drag-target(idx);
-                        }
-                    }
-                    // The hovered row changes → publishes folder AND executable to
-                    // the root to keep feedback and action aligned.
-                    changed drag-target-row => {
-                        if (root.file-drag-target-panel == idx) {
-                            root.claim-file-drag-target(idx, self.drag-target-row,
-                                self.drag-folder-row >= 0, self.drag-target-exec);
-                        }
-                    }
-                    changed drag-target-exec => {
-                        if (root.file-drag-target-panel == idx) {
-                            root.claim-file-drag-target(idx, self.drag-target-row,
-                                self.drag-folder-row >= 0, self.drag-target-exec);
-                        }
-                    }
-                    changed drag-folder-row => {
-                        if (root.file-drag-target-panel == idx) {
-                            root.claim-file-drag-target(idx, self.drag-target-row,
-                                self.drag-folder-row >= 0, self.drag-target-exec);
-                        }
-                    }
-                    file-drag-started(ri, x, y) => {
-                        root.file-drag-source-panel = idx;
-                        root.file-drag-abs-x = x;
-                        root.file-drag-abs-y = y;
-                        root.file-drag-active = true;
-                        root.file-drag-copy = root.ctrl-down;
-                        root.native-drag-armed = false;   // re-arms the native drag
-                        root.file-drag-begin(idx, ri);
-                        // `file-drag-begin` just guaranteed the selection of the
-                        // grabbed row: now recompute the target/source conflict.
-                        root.refresh-file-drag-target-invalid();
-                    }
-                    file-drag-progress(x, y) => {
-                        root.file-drag-abs-x = x;
-                        root.file-drag-abs-y = y;
-                        root.file-drag-copy = root.ctrl-down;
-                        // The cursor LEAVES the window → switches to a native OLE drag
-                        // (once) for external apps. We end the
-                        // Slint drag (releases ghost + state) before the modal loop.
-                        if (root.file-drag-active && !root.native-drag-armed
-                                && (x < 0px || y < 0px || x > root.width || y > root.height)) {
-                            root.native-drag-armed = true;
-                            root.file-drag-active = false;
-                            root.file-drag-target-panel = -1;
-                            root.file-drag-target-row = -1;
-                            root.file-drag-target-folder = false;
-                            root.file-drag-target-exec = false;
-                            root.file-drag-target-invalid = false;
-                            root.start-native-drag(root.file-drag-source-panel);
-                        }
-                    }
-                    file-drag-dropped(x, y) => {
-                        root.file-drag-abs-x = x;
-                        root.file-drag-abs-y = y;
-                        // Drop on a FAVORITES folder: TAKES PRIORITY over the
-                        // cross-view drop. `fav-hover-container` is read pull-based
-                        // BEFORE cutting the drag (file-drag-abs position already up
-                        // to date above); non-empty = hovered container → the
-                        // selection is saved there as a favorite (no file operation).
-                        if (root.fav-hover-container != "") {
-                            root.close-ctx-menus();
-                            root.file-to-favorite(root.file-drag-source-panel, root.fav-hover-container);
-                        } else if (root.fav-hover-panel) {
-                            // "No favorites" area or dead zone of the favorites
-                            // section → adds AT THE ROOT (container "").
-                            root.close-ctx-menus();
-                            root.file-to-favorite(root.file-drag-source-panel, "");
-                        } else if (!root.file-drag-target-invalid
-                                && root.file-drag-target-panel >= 0
-                                && (root.file-drag-target-folder
-                                    || root.file-drag-target-exec
-                                    || root.file-drag-target-panel != root.file-drag-source-panel)) {
-                            root.close-ctx-menus();
-                            root.file-drop-src-panel = root.file-drag-source-panel;
-                            root.file-drop-target-panel = root.file-drag-target-panel;
-                            root.file-drop-target-row = root.file-drag-target-row;
-                            // Drop ONTO an executable (.cmd/.bat/.exe…) → we
-                            // LAUNCH it with the dropped files as arguments (dev
-                            // habit of "dragging a .txt onto a .cmd"). The bridge
-                            // returns true if it launched; otherwise normal Copy/… menu.
-                            if (root.file-drop-onto-exec()) {
-                                // launched — nothing else to do
-                            } else if (root.file-drag-copy) {
-                                root.file-drop-action(1); // 1 = copy
-                            } else {
-                                root.file-drop-menu-x = x;
-                                root.file-drop-menu-y = y;
-                                root.file-drop-menu-open = true;
+                        view-swap-flying: root.view-swap-flying
+                            && (root.swap-flight-a == idx || root.swap-flight-b == idx);
+                        view: panel;
+                        // Dragging a VIEW. The claim on the target follows the
+                        // idiom used for the separator outline: only the view that
+                        // claimed it may drop it, since leaving one and entering
+                        // the next fires both handlers in an order nothing
+                        // guarantees.
+                        view-drag-active: root.view-drag-active;
+                        view-drag-abs-x: root.view-drag-abs-x;
+                        view-drag-abs-y: root.view-drag-abs-y;
+                        view-drag-is-source: root.view-drag-source == idx;
+                        view-drag-is-target: root.view-drag-target == idx;
+                        view-drag-armed: root.view-drag-target >= 0;
+                        view-drag-leaving: root.view-drag-outside
+                            && root.view-drag-source == idx;
+                        changed view-drag-over => {
+                            if (self.view-drag-over) {
+                                root.view-drag-target = idx;
+                            } else if (root.view-drag-target == idx) {
+                                root.view-drag-target = -1;
                             }
                         }
-                        root.file-drag-active = false;
-                        root.file-drag-target-invalid = false;
-                    }
-                    column-resized(id, w) => { root.panel-column-resized(idx, id, w); }
-                    column-toggle(id, vis) => { root.column-toggle(idx, id, vis); }
-                    column-moved(id, target) => { root.column-moved(idx, id, target); }
-                    ext-filter-toggle => { root.ext-filter-toggle(idx); }
-                    tabs-scrolled(vx) => { root.panel-tabs-scrolled(idx, vx); }
-                    scroll-target(ti, fwd, vx, vw) => { return root.panel-scroll-target(idx, ti, fwd, vx, vw); }
-                    filter-text: root.active-filter;
-                    filter-clear => { root.filter-clear(); }
-                    rows-viewport-changed(top, height) => {
-                        root.panel-viewport-changed(idx, top, height);
-                    }
-                    row-at-content-y(y) => { return root.panel-row-at-content-y(idx, y); }
-                    open-columns-menu(mx, my) => {
-                        root.close-ctx-menus();
-                        root.columns-menu-panel = idx;
-                        root.columns-menu-x = mx;
-                        root.columns-menu-y = my;
-                        root.columns-menu-open = true;
-                    }
-                    open-split-menu(mx, my) => {
-                        root.close-ctx-menus();
-                        root.split-menu-x = mx;
-                        root.split-menu-y = my;
-                        root.split-menu-open = true;
-                    }
-                    open-tabbar-menu(mx, my) => {
-                        root.close-ctx-menus();
-                        root.tabbar-menu-panel = idx;
-                        root.tabbar-menu-mode = panel.tab-bar-mode;
-                        root.tabbar-menu-x = mx;
-                        root.tabbar-menu-y = my;
-                        root.tabbar-menu-open = true;
-                    }
-                    vbar-resized(w) => { root.panel-vbar-resized(idx, w); }
-                    set-view-mode(mode) => { root.set-view-mode(idx, mode); }
-                    cycle-view-mode => { root.cycle-view-mode(idx); }
-                    open-view-menu(mx, my) => {
-                        root.close-ctx-menus();
-                        root.view-menu-panel = idx;
-                        root.view-menu-mode = panel.view-mode;
-                        root.view-menu-x = mx;
-                        root.view-menu-y = my;
-                        root.view-menu-open = true;
-                    }
-                    toggle-subfolder-contents => { root.toggle-subfolder-contents(idx); }
-                    toggle-section(key) => { root.toggle-section(idx, key); }
-                    rows-area-width(w) => { root.rows-area-width(idx, w); }
-                    zoom-step(d, top, height, pointer-y) => {
-                        return root.zoom-view(idx, d, top, height, pointer-y);
-                    }
-                    keyboard-interaction-gen: root.keyboard-interaction-gen;
-                    address-focus-gen: root.address-focus-gen;
-                    overlay-open: root.any-overlay-open;
-                    toggle-show-hidden => { root.toggle-show-hidden(idx); }
-                    open-url-menu(mx, my) => {
-                        root.close-ctx-menus();
-                        root.url-menu-x = mx;
-                        root.url-menu-y = my;
-                        root.url-menu-open = true;
-                    }
-                    close-ctx-menu => { root.close-ctx-menus(); }
-                    url-edit-text <=> root.url-edit-text;
-                    url-menu-open: root.url-menu-open;
-                    url-copy-serial: root.url-copy-serial;
-                    url-paste-serial: root.url-paste-serial;
+                        view-drag-progress(ax, ay) => {
+                            if (!root.view-drag-cancelled) {
+                                root.view-drag-active = true;
+                                root.view-drag-source = idx;
+                                root.view-drag-abs-x = ax;
+                                root.view-drag-abs-y = ay;
+                            }
+                        }
+                        view-drag-completed(ax, ay) => {
+                            // Read before clearing: every preview hangs off these,
+                            // so they must survive long enough to be consulted.
+                            if (root.view-drag-target >= 0 && !root.view-drag-cancelled) {
+                                root.swap-flight-a = idx;
+                                root.swap-flight-b = root.view-drag-target;
+                                root.view-swap-flying = true;
+                                root.views-swapped(idx, root.view-drag-target);
+                            } else if (!root.view-drag-cancelled) {
+                                // No view under the cursor. The bridge checks
+                                // whether the release truly landed outside the
+                                // window before detaching anything.
+                                root.view-torn-off(idx, ax, ay);
+                            }
+                            root.view-drag-cancelled = false;
+                            root.view-drag-active = false;
+                            root.view-drag-source = -1;
+                            root.view-drag-target = -1;
+                        }
+                        // Footer drawn from the PARALLEL model `panel-footers`
+                        // (never from `panel`) → its update does not invalidate
+                        // `view.rendered-rows`.
+                        footer-text: idx < root.panel-footers.length ? root.panel-footers[idx] : "";
+                        active: idx == root.active-panel-idx;
+                        can-close: root.panels.length > 1;
+                        strings: root.strings;
+                        drag-active: root.drag-active || root.sidebar-item-drag-active;
+                        drag-panel-zones: root.drag-active
+                            || (root.sidebar-item-drag-active
+                                && root.sidebar-item-split-capable);
+                        drag-panel-split-edges: root.drag-active || root.can-add-panel;
+                        drag-abs-x: root.drag-abs-x;
+                        drag-abs-y: root.drag-abs-y;
+                        tab-tooltip-enabled: root.tab-tooltip-enabled;
+                        is-drag-source: root.drag-active && idx == root.drag-source-panel;
+                        // The panel under the cursor claims the drop target.
+                        changed drag-zone => {
+                            if (self.drag-zone > 0) {
+                                root.drag-target-panel = idx;
+                                root.drag-target-zone = self.drag-zone;
+                            } else if (root.drag-target-panel == idx) {
+                                root.drag-target-panel = -1;
+                                root.drag-target-zone = 0;
+                            }
+                        }
+                        // File drag'n'drop between views ---
+                        file-drag-active: root.file-drag-active;
+                        file-drag-abs-x: root.file-drag-abs-x;
+                        file-drag-abs-y: root.file-drag-abs-y;
+                        is-file-drag-source: idx == root.file-drag-source-panel;
+                        changed file-drag-over => {
+                            if (self.file-drag-over) {
+                                root.claim-file-drag-target(idx, self.drag-target-row,
+                                    self.drag-folder-row >= 0, self.drag-target-exec);
+                            } else {
+                                root.clear-file-drag-target(idx);
+                            }
+                        }
+                        // The hovered row changes → publishes folder AND executable to
+                        // the root to keep feedback and action aligned.
+                        changed drag-target-row => {
+                            if (root.file-drag-target-panel == idx) {
+                                root.claim-file-drag-target(idx, self.drag-target-row,
+                                    self.drag-folder-row >= 0, self.drag-target-exec);
+                            }
+                        }
+                        changed drag-target-exec => {
+                            if (root.file-drag-target-panel == idx) {
+                                root.claim-file-drag-target(idx, self.drag-target-row,
+                                    self.drag-folder-row >= 0, self.drag-target-exec);
+                            }
+                        }
+                        changed drag-folder-row => {
+                            if (root.file-drag-target-panel == idx) {
+                                root.claim-file-drag-target(idx, self.drag-target-row,
+                                    self.drag-folder-row >= 0, self.drag-target-exec);
+                            }
+                        }
+                        file-drag-started(ri, x, y) => {
+                            root.file-drag-source-panel = idx;
+                            root.file-drag-abs-x = x;
+                            root.file-drag-abs-y = y;
+                            root.file-drag-active = true;
+                            root.file-drag-copy = root.ctrl-down;
+                            root.native-drag-armed = false;   // re-arms the native drag
+                            root.file-drag-begin(idx, ri);
+                            // `file-drag-begin` just guaranteed the selection of the
+                            // grabbed row: now recompute the target/source conflict.
+                            root.refresh-file-drag-target-invalid();
+                        }
+                        file-drag-progress(x, y) => {
+                            root.file-drag-abs-x = x;
+                            root.file-drag-abs-y = y;
+                            root.file-drag-copy = root.ctrl-down;
+                            // The cursor LEAVES the window → switches to a native OLE drag
+                            // (once) for external apps. We end the
+                            // Slint drag (releases ghost + state) before the modal loop.
+                            if (root.file-drag-active && !root.native-drag-armed
+                                    && (x < 0px || y < 0px || x > root.width || y > root.height)) {
+                                root.native-drag-armed = true;
+                                root.file-drag-active = false;
+                                root.file-drag-target-panel = -1;
+                                root.file-drag-target-row = -1;
+                                root.file-drag-target-folder = false;
+                                root.file-drag-target-exec = false;
+                                root.file-drag-target-invalid = false;
+                                root.start-native-drag(root.file-drag-source-panel);
+                            }
+                        }
+                        file-drag-dropped(x, y) => {
+                            root.file-drag-abs-x = x;
+                            root.file-drag-abs-y = y;
+                            // Drop on a FAVORITES folder: TAKES PRIORITY over the
+                            // cross-view drop. `fav-hover-container` is read pull-based
+                            // BEFORE cutting the drag (file-drag-abs position already up
+                            // to date above); non-empty = hovered container → the
+                            // selection is saved there as a favorite (no file operation).
+                            if (root.fav-hover-container != "") {
+                                root.close-ctx-menus();
+                                root.file-to-favorite(root.file-drag-source-panel, root.fav-hover-container);
+                            } else if (root.fav-hover-panel) {
+                                // "No favorites" area or dead zone of the favorites
+                                // section → adds AT THE ROOT (container "").
+                                root.close-ctx-menus();
+                                root.file-to-favorite(root.file-drag-source-panel, "");
+                            } else if (!root.file-drag-target-invalid
+                                    && root.file-drag-target-panel >= 0
+                                    && (root.file-drag-target-folder
+                                        || root.file-drag-target-exec
+                                        || root.file-drag-target-panel != root.file-drag-source-panel)) {
+                                root.close-ctx-menus();
+                                root.file-drop-src-panel = root.file-drag-source-panel;
+                                root.file-drop-target-panel = root.file-drag-target-panel;
+                                root.file-drop-target-row = root.file-drag-target-row;
+                                // Drop ONTO an executable (.cmd/.bat/.exe…) → we
+                                // LAUNCH it with the dropped files as arguments (dev
+                                // habit of "dragging a .txt onto a .cmd"). The bridge
+                                // returns true if it launched; otherwise normal Copy/… menu.
+                                if (root.file-drop-onto-exec()) {
+                                    // launched — nothing else to do
+                                } else if (root.file-drag-copy) {
+                                    root.file-drop-action(1); // 1 = copy
+                                } else {
+                                    root.file-drop-menu-x = x;
+                                    root.file-drop-menu-y = y;
+                                    root.file-drop-menu-open = true;
+                                }
+                            }
+                            root.file-drag-active = false;
+                            root.file-drag-target-invalid = false;
+                        }
+                        column-resized(id, w) => { root.panel-column-resized(idx, id, w); }
+                        column-toggle(id, vis) => { root.column-toggle(idx, id, vis); }
+                        column-moved(id, target) => { root.column-moved(idx, id, target); }
+                        ext-filter-toggle => { root.ext-filter-toggle(idx); }
+                        tabs-scrolled(vx) => { root.panel-tabs-scrolled(idx, vx); }
+                        scroll-target(ti, fwd, vx, vw) => { return root.panel-scroll-target(idx, ti, fwd, vx, vw); }
+                        filter-text: root.active-filter;
+                        filter-clear => { root.filter-clear(); }
+                        rows-viewport-changed(top, height) => {
+                            root.panel-viewport-changed(idx, top, height);
+                        }
+                        row-at-content-y(y) => { return root.panel-row-at-content-y(idx, y); }
+                        open-columns-menu(mx, my) => {
+                            root.close-ctx-menus();
+                            root.columns-menu-panel = idx;
+                            root.columns-menu-x = mx;
+                            root.columns-menu-y = my;
+                            root.columns-menu-open = true;
+                        }
+                        open-split-menu(mx, my) => {
+                            root.close-ctx-menus();
+                            root.split-menu-x = mx;
+                            root.split-menu-y = my;
+                            root.split-menu-open = true;
+                        }
+                        open-tabbar-menu(mx, my) => {
+                            root.close-ctx-menus();
+                            root.tabbar-menu-panel = idx;
+                            root.tabbar-menu-mode = panel.tab-bar-mode;
+                            root.tabbar-menu-x = mx;
+                            root.tabbar-menu-y = my;
+                            root.tabbar-menu-open = true;
+                        }
+                        vbar-resized(w) => { root.panel-vbar-resized(idx, w); }
+                        set-view-mode(mode) => { root.set-view-mode(idx, mode); }
+                        cycle-view-mode => { root.cycle-view-mode(idx); }
+                        open-view-menu(mx, my) => {
+                            root.close-ctx-menus();
+                            root.view-menu-panel = idx;
+                            root.view-menu-mode = panel.view-mode;
+                            root.view-menu-x = mx;
+                            root.view-menu-y = my;
+                            root.view-menu-open = true;
+                        }
+                        toggle-subfolder-contents => { root.toggle-subfolder-contents(idx); }
+                        toggle-section(key) => { root.toggle-section(idx, key); }
+                        rows-area-width(w) => { root.rows-area-width(idx, w); }
+                        zoom-step(d, top, height, pointer-y) => {
+                            return root.zoom-view(idx, d, top, height, pointer-y);
+                        }
+                        keyboard-interaction-gen: root.keyboard-interaction-gen;
+                        address-focus-gen: root.address-focus-gen;
+                        overlay-open: root.any-overlay-open;
+                        toggle-show-hidden => { root.toggle-show-hidden(idx); }
+                        open-url-menu(mx, my) => {
+                            root.close-ctx-menus();
+                            root.url-menu-x = mx;
+                            root.url-menu-y = my;
+                            root.url-menu-open = true;
+                        }
+                        close-ctx-menu => { root.close-ctx-menus(); }
+                        url-edit-text <=> root.url-edit-text;
+                        url-menu-open: root.url-menu-open;
+                        url-copy-serial: root.url-copy-serial;
+                        url-paste-serial: root.url-paste-serial;
 
-                    activate => { root.panel-clicked(idx); }
-                    go-back => { root.go-back(); }
-                    go-forward => { root.go-forward(); }
-                    go-parent => { root.go-parent(); }
-                    go-home => { root.go-home(); }
-                    refresh => { root.refresh(); }
-                    sort-clicked(c) => { root.sort-clicked(c); }
-                    row-activated(i) => { root.row-activated(i); }
-                    row-clicked(i) => { return root.row-clicked(i); }
-                    row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
-                    row-shift-clicked(i) => { root.row-shift-clicked(i); }
-                    rename-selected => { root.action-rename(); }
-                    right-clicked(i, x, y) => { root.close-ctx-menus(); root.row-right-clicked(i, x, y); }
-                    menu-key-serial: root.menu-key-serial;
-                    keyboard-context-row() => { return root.keyboard-context-row(); }
-                    select-all => { root.select-all(); }
-                    deselect-all => { root.deselect-all(); }
-                    rubber-band-begin(m) => { root.rubber-band-begin(m); }
-                    rubber-band-update(a, b, c, d) => { root.rubber-band-update(a, b, c, d); }
-                    tab-new => { root.tab-new(); }
-                    tab-clicked(i) => { root.tab-clicked(i); }
-                    tab-closed(i) => { root.tab-closed(i); }
-                    tab-context(ti, x, y) => {
-                        root.close-ctx-menus();
-                        root.tab-menu-panel = idx;
-                        root.tab-menu-tab = ti;
-                        root.tab-menu-x = x;
-                        root.tab-menu-y = y;
-                        root.tab-menu-open = true;
-                    }
-                    tab-bar-context(x, y) => {
-                        root.close-ctx-menus();
-                        root.tab-empty-menu-panel = idx;
-                        root.tab-empty-menu-x = x;
-                        root.tab-empty-menu-y = y;
-                        root.tab-empty-menu-open = true;
-                    }
-                    tab-drag-completed(i, ti, ax, ay) => {
-                        // Drop on a FAVORITES folder: takes priority over
-                        // the normal drop (panel / tear-off / transfer), which is
-                        // thus left 100% INTACT. `fav-hover-container` is read
-                        // PULL-BASED BEFORE cutting the drag (the binding resets
-                        // as soon as `drag-active = false`); non-empty = hovered container.
-                        if (root.fav-hover-container != "") {
-                            // `idx` = drag's SOURCE panel (may be non-active).
-                            root.tab-to-favorite(idx, i, root.fav-hover-container);
-                            root.drag-active = false;
-                            root.drag-target-gap = -1;
-                            root.drag-target-gap-panel = -1;
-                        } else if (root.fav-hover-panel) {
-                            // Empty / dead zone of the favorites → root ("").
-                            root.tab-to-favorite(idx, i, "");
-                            root.drag-active = false;
-                            root.drag-target-gap = -1;
-                            root.drag-target-gap-panel = -1;
-                        } else {
-                            root.drag-active = false;
-                            root.tab-drag-completed(idx, i, ti, ax, ay);
+                        activate => { root.panel-clicked(idx); }
+                        go-back => { root.go-back(); }
+                        go-forward => { root.go-forward(); }
+                        go-parent => { root.go-parent(); }
+                        go-home => { root.go-home(); }
+                        refresh => { root.refresh(); }
+                        sort-clicked(c) => { root.sort-clicked(c); }
+                        row-activated(i) => { root.row-activated(i); }
+                        row-clicked(i) => { return root.row-clicked(i); }
+                        row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
+                        row-shift-clicked(i) => { root.row-shift-clicked(i); }
+                        rename-selected => { root.action-rename(); }
+                        right-clicked(i, x, y) => { root.close-ctx-menus(); root.row-right-clicked(i, x, y); }
+                        menu-key-serial: root.menu-key-serial;
+                        keyboard-context-row() => { return root.keyboard-context-row(); }
+                        select-all => { root.select-all(); }
+                        deselect-all => { root.deselect-all(); }
+                        rubber-band-begin(m) => { root.rubber-band-begin(m); }
+                        rubber-band-update(a, b, c, d) => { root.rubber-band-update(a, b, c, d); }
+                        tab-new => { root.tab-new(); }
+                        tab-clicked(i) => { root.tab-clicked(i); }
+                        tab-closed(i) => { root.tab-closed(i); }
+                        tab-context(ti, x, y) => {
+                            root.close-ctx-menus();
+                            root.tab-menu-panel = idx;
+                            root.tab-menu-tab = ti;
+                            root.tab-menu-x = x;
+                            root.tab-menu-y = y;
+                            root.tab-menu-open = true;
                         }
-                        root.drag-target-panel = -1;
-                        root.drag-target-zone = 0;
-                        root.drag-source-panel = -1;
-                    }
-                    tab-drag-progress(i, ax, ay) => {
-                        // Drag start → purges the previous drag's gap.
-                        if (!root.drag-active) {
-                            root.drag-target-gap = -1;
-                            root.drag-target-gap-panel = -1;
+                        tab-bar-context(x, y) => {
+                            root.close-ctx-menus();
+                            root.tab-empty-menu-panel = idx;
+                            root.tab-empty-menu-x = x;
+                            root.tab-empty-menu-y = y;
+                            root.tab-empty-menu-open = true;
                         }
-                        root.drag-active = true;
-                        root.drag-abs-x = ax;
-                        root.drag-abs-y = ay;
-                        root.drag-source-panel = idx;
-                        root.tab-drag-progress(i, ax, ay);
-                    }
-                    tab-gap-claimed(g) => {
-                        root.drag-target-gap = g;
-                        root.drag-target-gap-panel = idx;
-                    }
-                    tab-gap-cleared => {
-                        if (root.drag-target-gap-panel == idx) {
-                            root.drag-target-gap = -1;
-                            root.drag-target-gap-panel = -1;
+                        tab-drag-completed(i, ti, ax, ay) => {
+                            // Drop on a FAVORITES folder: takes priority over
+                            // the normal drop (panel / tear-off / transfer), which is
+                            // thus left 100% INTACT. `fav-hover-container` is read
+                            // PULL-BASED BEFORE cutting the drag (the binding resets
+                            // as soon as `drag-active = false`); non-empty = hovered container.
+                            if (root.fav-hover-container != "") {
+                                // `idx` = drag's SOURCE panel (may be non-active).
+                                root.tab-to-favorite(idx, i, root.fav-hover-container);
+                                root.drag-active = false;
+                                root.drag-target-gap = -1;
+                                root.drag-target-gap-panel = -1;
+                            } else if (root.fav-hover-panel) {
+                                // Empty / dead zone of the favorites → root ("").
+                                root.tab-to-favorite(idx, i, "");
+                                root.drag-active = false;
+                                root.drag-target-gap = -1;
+                                root.drag-target-gap-panel = -1;
+                            } else {
+                                root.drag-active = false;
+                                root.tab-drag-completed(idx, i, ti, ax, ay);
+                            }
+                            root.drag-target-panel = -1;
+                            root.drag-target-zone = 0;
+                            root.drag-source-panel = -1;
                         }
+                        tab-drag-progress(i, ax, ay) => {
+                            // Drag start → purges the previous drag's gap.
+                            if (!root.drag-active) {
+                                root.drag-target-gap = -1;
+                                root.drag-target-gap-panel = -1;
+                            }
+                            root.drag-active = true;
+                            root.drag-abs-x = ax;
+                            root.drag-abs-y = ay;
+                            root.drag-source-panel = idx;
+                            root.tab-drag-progress(i, ax, ay);
+                        }
+                        tab-gap-claimed(g) => {
+                            root.drag-target-gap = g;
+                            root.drag-target-gap-panel = idx;
+                        }
+                        tab-gap-cleared => {
+                            if (root.drag-target-gap-panel == idx) {
+                                root.drag-target-gap = -1;
+                                root.drag-target-gap-panel = -1;
+                            }
+                        }
+                        request-focus => { key-scope.focus(); }
+                        navigate-to(p) => { root.navigate-to(p); }
+                        empty-right-clicked(x, y) => { root.close-ctx-menus(); root.empty-right-clicked(x, y); }
+                        close-panel => { root.panel-closed(idx); }
                     }
-                    request-focus => { key-scope.focus(); }
-                    navigate-to(p) => { root.navigate-to(p); }
-                    empty-right-clicked(x, y) => { root.close-ctx-menus(); root.empty-right-clicked(x, y); }
-                    close-panel => { root.panel-closed(idx); }
-                }
 
-                // Which views a double-click on the hovered separator would
-                // move. Two identical bars can govern very different regions —
-                // the outer one commands the whole layout — and nothing on
-                // screen says so, hence this outline BEFORE the click rather
-                // than an animation after it. Drawn only where the answer is
-                // not already obvious: a pair of views needs no help. It bears
-                // no TouchArea, so it never stands between the pointer and the
-                // panels underneath.
-                if root.hover-splitter >= 0
-                    && root.splitters[root.hover-splitter].governs > 2 : Rectangle {
-                    property <SplitterView> sp: root.splitters[root.hover-splitter];
-                    x: panels-container.width * self.sp.area-x;
-                    y: panels-container.height * self.sp.area-y;
-                    width: panels-container.width * self.sp.area-w;
-                    height: panels-container.height * self.sp.area-h;
-                    background: transparent;
-                    border-width: 1px;
-                    border-color: Theme.accent-background;
-                    border-radius: Tokens.radius-panel;
-                }
+                    // Which views a double-click on the hovered separator would
+                    // move. Two identical bars can govern very different regions —
+                    // the outer one commands the whole layout — and nothing on
+                    // screen says so, hence this outline BEFORE the click rather
+                    // than an animation after it. Drawn only where the answer is
+                    // not already obvious: a pair of views needs no help. It bears
+                    // no TouchArea, so it never stands between the pointer and the
+                    // panels underneath.
+                    if root.hover-splitter >= 0
+                        && root.splitters[root.hover-splitter].governs > 2 : Rectangle {
+                        property <SplitterView> sp: root.splitters[root.hover-splitter];
+                        x: panels-container.width * self.sp.area-x;
+                        y: panels-container.height * self.sp.area-y;
+                        width: panels-container.width * self.sp.area-w;
+                        height: panels-container.height * self.sp.area-h;
+                        background: transparent;
+                        border-width: 1px;
+                        border-color: Theme.accent-background;
+                        border-radius: Tokens.radius-panel;
+                    }
 
-                // Separators (resize grips) overlaid on the seams.
-                for sp[i] in root.splitters : PanelSplitterAbs {
-                    vertical: sp.vertical;
-                    equalize => { root.equalize-views(sp.idx); }
-                    // Only the separator that claimed the outline may drop it:
-                    // leaving one and entering the next fires both handlers in
-                    // an order nothing guarantees.
-                    changed outlined => {
-                        if (self.outlined) {
-                            root.hover-splitter = i;
-                        } else if (root.hover-splitter == i) {
-                            root.hover-splitter = -1;
+                    // Separators (resize grips) overlaid on the seams.
+                    for sp[i] in root.splitters : PanelSplitterAbs {
+                        vertical: sp.vertical;
+                        equalize => { root.equalize-views(sp.idx); }
+                        // Only the separator that claimed the outline may drop it:
+                        // leaving one and entering the next fires both handlers in
+                        // an order nothing guarantees.
+                        changed outlined => {
+                            if (self.outlined) {
+                                root.hover-splitter = i;
+                            } else if (root.hover-splitter == i) {
+                                root.hover-splitter = -1;
+                            }
+                        }
+                        x: sp.vertical
+                            ? round(panels-container.width * sp.pos / 1px) * 1px - self.width / 2
+                            : round(panels-container.width * sp.cross-start / 1px) * 1px;
+                        y: sp.vertical
+                            ? round(panels-container.height * sp.cross-start / 1px) * 1px
+                            : round(panels-container.height * sp.pos / 1px) * 1px - self.height / 2;
+                        width: sp.vertical ? 8px : round(panels-container.width * sp.cross-len / 1px) * 1px;
+                        height: sp.vertical ? round(panels-container.height * sp.cross-len / 1px) * 1px : 8px;
+                        dragged(ax, ay) => {
+                            root.splitter-resized(sp.idx,
+                                sp.vertical
+                                    ? (ax - panels-container.absolute-position.x) / panels-container.width
+                                    : (ay - panels-container.absolute-position.y) / panels-container.height);
                         }
                     }
-                    x: sp.vertical
-                        ? round(panels-container.width * sp.pos / 1px) * 1px - self.width / 2
-                        : round(panels-container.width * sp.cross-start / 1px) * 1px;
-                    y: sp.vertical
-                        ? round(panels-container.height * sp.cross-start / 1px) * 1px
-                        : round(panels-container.height * sp.pos / 1px) * 1px - self.height / 2;
-                    width: sp.vertical ? 8px : round(panels-container.width * sp.cross-len / 1px) * 1px;
-                    height: sp.vertical ? round(panels-container.height * sp.cross-len / 1px) * 1px : 8px;
-                    dragged(ax, ay) => {
-                        root.splitter-resized(sp.idx,
-                            sp.vertical
-                                ? (ax - panels-container.absolute-position.x) / panels-container.width
-                                : (ay - panels-container.absolute-position.y) / panels-container.height);
-                    }
                 }
-            }
             } // closes the HorizontalLayout (sidebar + panels)
         }
 
