@@ -1,0 +1,378 @@
+// The tab strip of one panel: the scrollable row of tabs with its "+"
+// button, plus everything that scrolls or reveals them — the chevrons, the
+// wheel, and the edge auto-scroll while a tab is being reordered.
+//
+// COLLAPSED (height 0, invisible) when the tab bar is VERTICAL, but the row
+// stays in the tree: its TabItems claim the drop gaps, and the panel forwards
+// them the model and the shared drag state.
+//
+// Extracted from panel.slint. The strip owns its Flickable privately — no
+// viewport value crosses the boundary; the reveal lands on the vertical bars
+// through a reveal-in-bar call, which the panel routes to the right one.
+
+import { PanelView, Strings } from "../structs.slint";
+import { Theme, Tip, Tokens } from "../theme.slint";
+import { TabItem, TabScrollButton } from "../widgets/tabs.slint";
+export component PanelTabsBar inherits HorizontalLayout {
+    spacing: 4px;
+    height: root.tab-mode == 0 ? 26px : 0px;
+    visible: root.tab-mode == 0;
+
+    in property <PanelView> view;
+    in property <Strings> strings;
+    /// A modal overlay is open → the wheel is neutralized.
+    in property <bool> overlay-open;
+    /// Carried by the hand: the strip is the drop zone while reordering.
+    in property <bool> drag-active: false;
+    in property <bool> drag-over: false;
+    in property <bool> drag-in-bar: false;
+    in property <length> drag-abs-x: 0px;
+    /// Y bounds of the panel body — the leave-the-bar test during a drag.
+    in property <length> dl-y: 0px;
+    in property <length> body-top: 0px;
+    /// Absolute X start of the strip (PanelComponent position + 13px).
+    in property <length> tabs-row-x: 0px;
+    in property <int> tab-mode: 0;
+    in property <bool> tab-tooltip-enabled: false;
+    /// Panel-computed insertion line: -1 = none (see PanelComponent).
+    in property <int> drag-preview-idx: -1;
+    in property <length> tab-drop-x: 0px;
+
+    callback activate();
+    callback close-ctx-menu();
+    callback tab-new();
+    callback tab-clicked(int);
+    callback tab-closed(int);
+    callback tab-context(int, length, length);
+    callback tab-bar-context(length, length);
+    callback tab-drag-progress(int, length, length);
+    callback tab-drag-completed(int, int, length, length);
+    callback tabs-scrolled(length);
+    /// A TabItem claimed a drop gap (gap index + content x).
+    callback report-tab-drop(int, length);
+    /// Reveal landed on a VERTICAL bar (mode 1 or 2) — the panel routes it.
+    callback reveal-in-bar(int);
+
+    // Tab bar overflow -----
+    // Direct Flickable reads (`viewport-width`, `viewport-x`, `width`),
+    // no dependency on the layout cache. `viewport-x ≤ 0`, with 0 at the start and
+    // `width - viewport-width` at the right end. The epsilon stabilizes the edges.
+    property <bool> tabs-overflow: tabs-flick.viewport-width > tabs-flick.width + 0.5px;
+    property <bool> can-scroll-left: tabs-flick.viewport-x < -0.5px;
+    property <bool> can-scroll-right:
+        tabs-flick.viewport-x > tabs-flick.width - tabs-flick.viewport-width + 0.5px;
+    // Width of the right overlay cluster (chevrons): reserved on the right (spacer at
+    // the end of `tabs-row` + effective right bound below) so the last
+    // tab clears the cluster. MUST == the backdrop's width.
+    property <length> tab-cluster-w: 62px;
+    // EFFECTIVE right edge for revealing: the useful visible area stops where
+    // the cluster begins (otherwise a tab would align UNDER the cluster).
+    property <length> tabs-view-w: tabs-flick.width - root.tab-cluster-w;
+    // Scroll target computed by the BRIDGE (exact `TabInfo` widths):
+    // reveals "tab by tab" rather than an arbitrary jump. `idx<0` = no chevron
+    // in the `forward` direction; `idx>=0` = reveal tab `idx`.
+    callback scroll-target(int, bool, length, length) -> length;
+    function tabs-scroll-left() {
+        tabs-flick.viewport-x =
+            root.scroll-target(-1, false, tabs-flick.viewport-x, root.tabs-view-w);
+    }
+    function tabs-scroll-right() {
+        tabs-flick.viewport-x =
+            root.scroll-target(-1, true, tabs-flick.viewport-x, root.tabs-view-w);
+    }
+    // Index to reveal AFTER the model rebuild triggered by a wheel
+    // `tab-clicked`. The rebuild resets `viewport-x` → we reveal DEFERRED via
+    // `reveal-timer` (one loop iteration later, once the model is
+    // applied), otherwise the scroll gets overwritten.
+    property <int> pending-reveal-idx: -1;
+    reveal-timer := Timer {
+        interval: 8ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.pending-reveal-idx >= 0) {
+                // Dispatch by orientation: same bridge target
+                // (`scroll-target`), different axis.
+                if (root.tab-mode == 0) {
+                    tabs-flick.viewport-x = root.scroll-target(
+                        root.pending-reveal-idx, true, tabs-flick.viewport-x, root.tabs-view-w);
+                } else {
+                    root.reveal-in-bar(root.pending-reveal-idx);
+                }
+                root.pending-reveal-idx = -1;
+            }
+        }
+    }
+    // Automatically reveals the active tab after any activation source:
+    // wheel, Ctrl+Tab, creation, closing, cross-instance receipt, or
+    // orientation change. Only the index and mode values are
+    // observed, to react only to an actual change.
+    property <int> active-tab-watch: root.view.active-tab-idx;
+    changed active-tab-watch => {
+        root.pending-reveal-idx = root.view.active-tab-idx;
+        reveal-timer.running = true;
+    }
+    property <int> tab-mode-watch: root.view.tab-bar-mode;
+    changed tab-mode-watch => {
+        root.pending-reveal-idx = root.view.active-tab-idx;
+        reveal-timer.running = true;
+    }
+    // Tab bar auto-scroll during a REORDER DRAG when
+    // the cursor nears an edge (bar overflowing) → allows dropping
+    // behind a tab that stayed off-screen. `reorder-cur` follows `viewport-x`
+    // → the drop gap recomputes itself as scrolling progresses.
+    property <length> strip-cursor-x: root.drag-abs-x - root.tabs-row-x;
+    Timer {
+        interval: 16ms;
+        running: root.tab-mode == 0 && root.drag-active && root.drag-over
+            && root.dl-y < root.body-top && root.tabs-overflow;
+        triggered => {
+            if (root.strip-cursor-x < 28px && root.can-scroll-left) {
+                tabs-flick.viewport-x = min(0px, tabs-flick.viewport-x + 12px);
+            } else if (root.strip-cursor-x > root.tabs-view-w - 12px && root.can-scroll-right) {
+                tabs-flick.viewport-x = max(
+                    tabs-flick.width - tabs-flick.viewport-width,
+                    tabs-flick.viewport-x - 12px);
+            }
+        }
+    }
+    // Wheel over the tab bar = next/previous tab (circular wrap)
+    // THEN scroll-into-view (deferred) of the new tab.
+    public function tab-wheel(fwd: bool) {
+        if (root.view.tabs.length == 0) { return; }
+        let ni: int = fwd
+            ? (root.view.active-tab-idx >= root.view.tabs.length - 1 ? 0 : root.view.active-tab-idx + 1)
+            : (root.view.active-tab-idx <= 0 ? root.view.tabs.length - 1 : root.view.active-tab-idx - 1);
+        root.activate();
+        root.tab-clicked(ni);
+        root.pending-reveal-idx = ni;
+        reveal-timer.running = true;
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        height: root.tab-mode == 0 ? 26px : 0px;
+        visible: root.tab-mode == 0;
+
+        // Scrollable tab zone: it isolates their cumulative width from
+        // the panel's minimum width and leaves the splitter free.
+        tabs-area := Rectangle {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            min-width: 0px;
+            max-width: 99999px;
+            clip: true;
+
+            // TouchArea for the wheel → switches tab (on hover over the
+            // tab zone, regardless of which specific tab). Covers
+            // also covers clicking the empty area of the strip, to the right of the tabs.
+            // Since this TouchArea consumes clicks, it activates the
+            // panel itself.
+            tabs-wheel := TouchArea {
+                clicked => { root.activate(); root.close-ctx-menu(); }
+                // Double-click in the EMPTY area of the tab bar → new tab
+                // (like the "+" button), browser convention.
+                double-clicked => { root.activate(); root.close-ctx-menu(); root.tab-new(); }
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.down
+                            && ev.button == PointerEventButton.right) {
+                        root.activate();
+                        root.tab-bar-context(
+                            self.absolute-position.x + self.mouse-x,
+                            self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                scroll-event(ev) => {
+                    // Modal overlay open → wheel neutralized (no tab
+                    // switching while a popup has focus).
+                    if (root.overlay-open) {
+                        return accept;
+                    }
+                    // Covers horizontal trackpads and vertical wheel.
+                    // `tab-wheel` changes tab (wrap) THEN reveals the new
+                    // tab (reliable scroll-into-view).
+                    if (ev.delta-y < 0 || ev.delta-x < 0) { root.tab-wheel(true); return accept; }
+                    if (ev.delta-y > 0 || ev.delta-x > 0) { root.tab-wheel(false); return accept; }
+                    return reject;
+                }
+            }
+
+            // The preview line is interleaved between the TabItems
+            // to exactly follow each tab's individual width.
+
+            tabs-flick := Flickable {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                viewport-width: max(self.width, tabs-row.preferred-width);
+                viewport-height: self.height;
+                interactive: false;
+                // Smooth scrolling driven by the chevrons + scroll-into-view
+                // (SOLE writers of `viewport-x` → no contention, no
+                // cycle: `tabs-row`'s layout does not depend on `viewport-x`).
+                animate viewport-x { duration: 120ms; easing: ease-out; }
+                // Reports scrolling to the bridge (insertion hit-test for a
+                // tab received from another instance). `viewport-x` is a
+                // PLAIN property already observed (can-scroll-left/right) → the
+                // `changed` fires reliably.
+                changed viewport-x => { root.tabs-scrolled(self.viewport-x); }
+
+                tabs-row := HorizontalLayout {
+                    spacing: 2px;
+                    alignment: start;
+                    // Tabs with 100% PLAIN geometry: width/offset
+                    // come from the MODEL (bridge). Gap claiming is
+                    // computed INSIDE TabItem on these plain values (ColumnHeader pattern).
+                    for tab[idx] in root.view.tabs : TabItem {
+                        title: tab.title;
+                        // Path tooltip: opt-in — empty = disabled.
+                        tip-path: root.tab-tooltip-enabled ? tab.path : "";
+                        active: idx == root.view.active-tab-idx;
+                        tab-width: tab.width;
+                        tab-offset: tab.offset;
+                        tab-index: idx;
+                        tab-count: root.view.tabs.length;
+                        tab-drag-active: root.drag-active;
+                        // Mode gate: the collapsed strip (vertical bar
+                        // active) must NEVER claim a
+                        // gap — its TabItems always exist in the tree.
+                        reorder-active: root.tab-mode == 0 && root.drag-active
+                            && root.drag-over && root.drag-in-bar;
+                        // Cursor in tabs-row's CONTENT coordinates: visible
+                        // position (`drag-abs-x - tabs-row-x`) MINUS the scroll
+                        // (`viewport-x` ≤ 0). Without this term, a scrolled bar
+                        // (half-tabs) would claim the wrong drop gap. The
+                        // preview (inside the Flickable) is already content-relative →
+                        // consistent. Plain read of `viewport-x` → safe.
+                        reorder-cur: root.drag-abs-x - root.tabs-row-x - tabs-flick.viewport-x;
+                        claim-drop(g, gx) => { root.report-tab-drop(g, gx); }
+                        clicked => { root.activate(); root.tab-clicked(idx); }
+                        close-clicked => { root.activate(); root.tab-closed(idx); }
+                        right-clicked(x, y) => { root.activate(); root.tab-context(idx, x, y); }
+                        // NO `root.activate()` during the drag (would rebuild
+                        // the model → lost grab; activation on drop, bridge side).
+                        drag-progress(d, abs-x, abs-y) => {
+                            root.tab-drag-progress(idx, abs-x, abs-y);
+                        }
+                        drag-completed(d, abs-x, abs-y) => {
+                            root.tab-drag-completed(idx, root.drag-preview-idx, abs-x, abs-y);
+                        }
+                    }
+                    // The "+" button belongs to the fixed right-hand cluster and
+                    // stays visible even when the tabs overflow.
+                    // Spacer = overlay cluster width: reserves room on
+                    // the right so the LAST tab (and its close button) clears the
+                    // cluster instead of being half-hidden under it. Also extends
+                    // the Flickable's scroll range accordingly.
+                    Rectangle { width: root.tab-cluster-w; }
+                }
+                // Drop preview line — out-of-layout OVERLAY (doesn't shift the
+                // tabs → no binding cycle). At the claimed gap `tab-drop-x`
+                // (tabs-row position = Flickable content).
+                if root.drag-preview-idx >= 0 : Rectangle {
+                    x: root.tab-drop-x - 1px;
+                    y: 0;
+                    width: 2px;
+                    height: parent.height;
+                    background: Theme.accent-background;
+                }
+            }
+            // Edge fades: signal that there are hidden tabs to the
+            // left/right. Rectangles WITHOUT a TouchArea → intercept nothing (the
+            // `tabs-wheel` wheel and clicks pass through). Fades toward
+            // `Theme.toolbar` (actual color behind) → theme-aware.
+            if root.can-scroll-left : Rectangle {
+                x: 0;
+                y: 0;
+                width: 24px;
+                height: parent.height;
+                background: @linear-gradient(90deg,
+                    Theme.toolbar 0%, Theme.toolbar.with-alpha(0.0) 100%);
+            }
+            // RIGHT scroll cluster: OVERLAY within `tabs-area` (not
+            // in the row's layout) → does NOT affect `tabs-area.width`,
+            // hence no `tabs-overflow ↔ width` loop. Visible only on
+            // overflow. Fades toward `Theme.toolbar` on the left (dissolves the
+            // tabs) then an opaque zone under the 2 chevrons (legible). The
+            // chevrons carry their own TouchArea → clickable; the fade (to
+            // their left) lets wheel/clicks pass through.
+            if root.tabs-overflow : Rectangle {
+                x: parent.width - self.width;
+                y: 0;
+                width: 62px;
+                height: parent.height;
+                background: @linear-gradient(90deg,
+                    Theme.toolbar.with-alpha(0.0) 0%,
+                    Theme.toolbar 22%,
+                    Theme.toolbar 100%);
+                // Guard placed below the chevrons: it captures clicks and wheel
+                // events over the whole area without forwarding them to the
+                // tabs underneath. Declared before the chevrons, it leaves
+                // them clickable on top.
+                TouchArea {
+                    clicked => { root.activate(); root.close-ctx-menu(); }
+                    scroll-event(ev) => {
+                        if (root.overlay-open) { return accept; }
+                        if (ev.delta-y < 0 || ev.delta-x < 0) { root.tab-wheel(true); return accept; }
+                        if (ev.delta-y > 0 || ev.delta-x > 0) { root.tab-wheel(false); return accept; }
+                        return reject;
+                    }
+                }
+                HorizontalLayout {
+                    x: 10px;
+                    width: 50px;
+                    height: parent.height;
+                    spacing: 2px;
+                    TabScrollButton {
+                        icon: @image-url("../../../assets/icons/chevron-left.svg");
+                        tooltip-text: root.strings.tab-scroll-left;
+                        enabled: root.can-scroll-left;
+                        clicked => { root.activate(); root.close-ctx-menu(); root.tabs-scroll-left(); }
+                    }
+                    TabScrollButton {
+                        icon: @image-url("../../../assets/icons/chevron-right.svg");
+                        tooltip-text: root.strings.tab-scroll-right;
+                        enabled: root.can-scroll-right;
+                        clicked => { root.activate(); root.close-ctx-menu(); root.tabs-scroll-right(); }
+                    }
+                }
+            }
+        }
+
+        // The scroll chevrons are overlaid within `tabs-area`, outside
+        // this layout, to avoid a width ↔ overflow dependency.
+
+        // "+" button outside the Flickable, hence always visible.
+        Rectangle {
+            width: 28px;
+            height: 26px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: new-touch.has-hover ? Theme.alternate-background : transparent;
+            Image {
+                source: @image-url("../../../assets/icons/plus.svg");
+                width: 13px;
+                height: 13px;
+                colorize: Theme.foreground;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            new-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.activate(); root.close-ctx-menu(); root.tab-new(); }
+                changed has-hover => {
+                    if (self.has-hover && root.strings.tab-new-tooltip != "") {
+                        Tip.text = root.strings.tab-new-tooltip;
+                        Tip.x = self.absolute-position.x;
+                        Tip.y = self.absolute-position.y + self.height + 4px;
+                    } else if (Tip.text == root.strings.tab-new-tooltip) {
+                        Tip.text = "";
+                    }
+                }
+            }
+        }
+
+        // The Split and Close-panel actions live in the
+        // navigation bar, at a stable location in all three modes.
+    }
+}
