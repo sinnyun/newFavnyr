@@ -1,0 +1,374 @@
+// The unified side column: the reorderable "Places" sections, the Favorites
+// tree and the fixed Trash entry, stacked in one grid.
+//
+// Extracted from main_window.slint. The column owns its own local reference
+// frame (the grid, the hairline and the reorder drop line share it, so no
+// absolute coordinate is ever mixed between containers); every value it does
+// not own comes in as a member and every state change leaves as a callback.
+// What MainWindow still reads back, the hovered favorite container during a
+// tab or file drop and the geometry that drives section reordering, leaves as
+// `out` properties plus the two section-geometry functions.
+//
+// The instance is ALWAYS live (width 0 when collapsed) because those reads are
+// pull-based: a conditional element could not be referenced from the drop path.
+
+import { FavNode, SidebarPlace, Strings } from "../structs.slint";
+import { Theme, Tokens } from "../theme.slint";
+import { Sidebar } from "../sidebar.slint";
+import { FavPanel } from "../sidebar/fav.slint";
+
+// ---------- the whole left column, as one component ----------
+
+export component SidebarColumn inherits Rectangle {
+    // ----- content the bridge owns, passed straight through -----
+    in property <Strings> strings;
+    in property <int> left-panel;
+    in property <length> sidebar-width;
+    in property <[SidebarPlace]> sidebar-places-drives;
+    in property <[SidebarPlace]> sidebar-places-shortcuts;
+    in property <[SidebarPlace]> sidebar-places-network;
+    in property <[SidebarPlace]> sidebar-places-trash;
+    in property <[FavNode]> fav-nodes;
+    in property <string> fav-selected-id;
+    in property <bool> fav-can-collapse;
+
+    // ----- collapsed state of the four reorderable sections -----
+    in property <bool> sidebar-drives-collapsed;
+    in property <bool> sidebar-shortcuts-collapsed;
+    in property <bool> fav-section-collapsed;
+    in property <bool> sidebar-network-collapsed;
+
+    // ----- the global section order, resolved by MainWindow: the rank
+    // function and the order array stay with the state they read, the column
+    // only ever sees the resulting grid row (and the source's row, for its
+    // own drop line). -----
+    in property <int> section-rank-0;
+    in property <int> section-rank-1;
+    in property <int> section-rank-2;
+    in property <int> section-rank-3;
+    in property <int> section-source-rank;
+
+    // ----- section reorder drag -----
+    in property <bool> sidebar-section-drag-active;
+    in property <int> sidebar-section-drag-source;
+    in property <int> sidebar-section-drag-target;
+    in property <length> sidebar-section-drag-preview-y;
+
+    // ----- an item dragged OUT of the column, and the favorites tree's own
+    // internal reorder -----
+    in property <bool> sidebar-item-drag-active;
+    in property <bool> fav-drag-active;
+    in property <int> fav-drag-target-index;
+    in property <int> fav-drag-zone;
+
+    // ----- a TAB or FILE drag elsewhere in the window, in absolute
+    // coordinates: the tree computes its own hovered folder from them -----
+    in property <bool> drag-active;
+    in property <length> drag-abs-x;
+    in property <length> drag-abs-y;
+    in property <bool> file-drag-active;
+    in property <length> file-drag-abs-x;
+    in property <length> file-drag-abs-y;
+
+    // ----- right-clicking a favorites row fills the shared context-menu
+    // state, which the overlay on top of the window reads -----
+    in-out property <bool> fav-menu-open: false;
+    in-out property <length> fav-menu-x;
+    in-out property <length> fav-menu-y;
+    in-out property <string> fav-menu-id: "";
+    in-out property <string> fav-menu-name: "";
+    in-out property <bool> fav-menu-container: false;
+    in-out property <bool> fav-menu-confirm-delete: false;
+
+    // ----- every change of window state leaves through these -----
+    callback refresh-sidebar-section-drag-geometry();
+    callback toggle-sidebar-section(int);
+    callback start-sidebar-section-drag(int, length, length);
+    callback update-sidebar-section-drag(int, length, length);
+    callback drop-sidebar-section-drag(int, length, length);
+    callback begin-sidebar-item-drag(length, length, bool);
+    callback update-sidebar-item-drag(length, length);
+    callback finish-sidebar-item-drag(string, int, length, length) -> bool;
+    callback cancel-sidebar-item-drag();
+    callback sidebar-place-clicked(string, int);
+    callback place-open-new-tab(string, int);
+    callback open-sidebar-place-context(string, int, bool, bool, string, length, length);
+    callback close-ctx-menus();
+    callback open-fav-name(bool, string, string);
+    callback fav-row-activate(string);
+    callback fav-row-middle(string);
+    callback fav-drag-move(int, length, length);
+    callback fav-drag-drop(int, length, length, bool);
+    callback fav-collapse-all();
+    callback fav-expand-all();
+
+    // ----- read back by MainWindow: the drop path and the reorder countdown
+    // live outside the column, the values they need live here -----
+    out property <string> hover-container: fav-panel.hover-container;
+    out property <bool> hover-panel: fav-panel.hover-panel;
+    out property <bool> reorder-hover-panel: fav-panel.reorder-hover-panel;
+    out property <string> hover-collapsed-container: fav-panel.hover-collapsed-container;
+    out property <bool> hover-collapsed-section: fav-panel.hover-collapsed-section;
+    out property <length> reorder-drag-abs-x: fav-panel.reorder-drag-abs-x;
+    out property <length> reorder-drag-abs-y: fav-panel.reorder-drag-abs-y;
+    out property <length> stack-x: sidebar-stack.absolute-position.x;
+    out property <length> stack-y: sidebar-stack.absolute-position.y;
+    out property <length> stack-w: sidebar-stack.width;
+    out property <length> stack-h: sidebar-stack.height;
+    public pure function section-top(section: int) -> length {
+        if (section == 0) { return drives-section.y; }
+        if (section == 1) { return shortcuts-section.y; }
+        if (section == 2) { return fav-panel.y; }
+        return network-section.y;
+    }
+    public pure function section-bottom(section: int) -> length {
+        if (section == 0) { return drives-section.y + drives-section.height; }
+        if (section == 1) { return shortcuts-section.y + shortcuts-section.height; }
+        if (section == 2) { return fav-panel.y + fav-panel.height; }
+        return network-section.y + network-section.height;
+    }
+
+    width: root.left-panel == 1 ? root.sidebar-width : 0px;
+    visible: root.left-panel == 1;
+    background: Theme.toolbar;
+    // Full-height right thread (also covers the spacer's area
+    // when the Favorites section is collapsed).
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        height: 100%;
+        background: Tokens.hairline;
+    }
+    // SINGLE local reference frame for the grid and its drop line:
+    // no mixing of absolute coordinates between containers.
+    sidebar-stack := Rectangle {
+        width: 100%;
+        height: 100%;
+        // Four STABLE instances within a grid: their `row`
+        // is the global rank. `fav-panel` keeps its identity and
+        // the preview causes no reflow.
+        ordered-sidebar := GridLayout {
+            width: 100%;
+            height: 100%;
+            spacing: 0px;
+            drives-section := Sidebar {
+                row: root.section-rank-0;
+                col: 0;
+                places: root.sidebar-places-drives;
+                strings: root.strings;
+                // Only this section carries capacity gauges, so it
+                // is the only one that needs the panel's width.
+                panel-width: root.sidebar-width;
+                section-code: 0;
+                title: root.strings.sidebar-drives;
+                collapsed: root.sidebar-drives-collapsed;
+                reorder-drag-active: root.sidebar-section-drag-active;
+                reorder-drag-source: root.sidebar-section-drag-source;
+                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                section-toggled => { root.toggle-sidebar-section(0); }
+                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                item-drag-active: root.sidebar-item-drag-active;
+                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                place-drag-dropped(path, kind, x, y) => {
+                    root.finish-sidebar-item-drag(path, kind, x, y);
+                }
+                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                }
+            }
+            shortcuts-section := Sidebar {
+                row: root.section-rank-1;
+                col: 0;
+                places: root.sidebar-places-shortcuts;
+                strings: root.strings;
+                section-code: 1;
+                title: root.strings.sidebar-shortcuts;
+                collapsed: root.sidebar-shortcuts-collapsed;
+                reorder-drag-active: root.sidebar-section-drag-active;
+                reorder-drag-source: root.sidebar-section-drag-source;
+                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                section-toggled => { root.toggle-sidebar-section(1); }
+                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                item-drag-active: root.sidebar-item-drag-active;
+                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                place-drag-dropped(path, kind, x, y) => {
+                    root.finish-sidebar-item-drag(path, kind, x, y);
+                }
+                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                }
+            }
+            fav-panel := FavPanel {
+                row: root.section-rank-2;
+                col: 0;
+                // The very condition that hides the column. A
+                // hidden tree must accept nothing, and its frame
+                // cannot say so on its own.
+                shown: root.left-panel == 1;
+                // Height = the CONTENT's (header + tree), CAPPED
+                // (`max-height`) so Drives and Network immediately
+                // follow the favorites. Beyond the available space,
+                // the stretch takes back over and the tree scrolls within
+                // `fav-scroll` without changing the hit-test area. Constants = Slint
+                // geometry: header (separator included) 30; row 30 +
+                // 1 gap = 31; list padding 11; empty state 132.
+                vertical-stretch: 1;
+                max-height: root.fav-section-collapsed
+                    ? 30px
+                    : (root.fav-nodes.length == 0
+                        ? 162px
+                        : (41px + root.fav-nodes.length * 31px));
+                nodes: root.fav-nodes;
+                strings: root.strings;
+                selected-id: root.fav-selected-id;
+                drag-active: root.fav-drag-active;
+                location-drag-active: root.sidebar-item-drag-active;
+                drag-target-index: root.fav-drag-target-index;
+                drag-zone: root.fav-drag-zone;
+                // TAB or FILE drag over the favorites
+                // absolute cursor position propagated; the
+                // FavPanel computes the hovered folder (`hover-container`,
+                // read on drop, hit-test unchanged — scroll's own frame).
+                tab-drag-active: root.drag-active;
+                tab-drag-abs-x: root.drag-abs-x;
+                tab-drag-abs-y: root.drag-abs-y;
+                file-drag-active: root.file-drag-active;
+                file-drag-abs-x: root.file-drag-abs-x;
+                file-drag-abs-y: root.file-drag-abs-y;
+                section-collapsed: root.fav-section-collapsed;
+                reorder-drag-active: root.sidebar-section-drag-active;
+                reorder-drag-source: root.sidebar-section-drag-source;
+                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                toggle-section => { root.toggle-sidebar-section(2); }
+                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                row-activate(id) => { root.fav-row-activate(id); }
+                row-middle(id) => { root.fav-row-middle(id); }
+                row-context(id, is-cont, label, x, y) => {
+                    root.close-ctx-menus();
+                    root.fav-menu-id = id;
+                    root.fav-menu-name = label;
+                    root.fav-menu-container = is-cont;
+                    root.fav-menu-x = x;
+                    root.fav-menu-y = y;
+                    root.fav-menu-confirm-delete = false;
+                    // Right-click doesn't affect `fav-selected-id` and
+                    // therefore leaves no persistent highlight.
+                    root.fav-menu-open = true;
+                }
+                row-drag-move(ri, cx, cy, rt) => {
+                    root.fav-drag-move(ri, cy, rt);
+                    if (ri >= 0 && ri < root.fav-nodes.length
+                            && !root.fav-nodes[ri].is-container
+                            && root.fav-nodes[ri].available) {
+                        if (!root.sidebar-item-drag-active) {
+                            root.begin-sidebar-item-drag(cx, cy, root.fav-nodes[ri].is-dir);
+                        } else {
+                            root.update-sidebar-item-drag(cx, cy);
+                        }
+                    }
+                }
+                row-drag-drop(ri, cx, cy, rt, in-favorites) => {
+                    let tab-drop-accepted: bool =
+                        ri >= 0 && ri < root.fav-nodes.length
+                        && !root.fav-nodes[ri].is-container
+                        && root.fav-nodes[ri].available
+                        && root.finish-sidebar-item-drag(
+                            root.fav-nodes[ri].id, -1, cx, cy);
+                    if (!tab-drop-accepted && root.sidebar-item-drag-active) {
+                        root.cancel-sidebar-item-drag();
+                    }
+                    // Every release finalizes the reorder drag, but only
+                    // the visible favorites frame may commit a tree move.
+                    root.fav-drag-drop(
+                        ri, cy, rt, !tab-drop-accepted && in-favorites);
+                }
+                can-collapse: root.fav-can-collapse;
+                // Header "+" → root container creation popup.
+                new-container => { root.open-fav-name(false, "", ""); }
+                collapse-all => { root.fav-collapse-all(); }
+                expand-all => { root.fav-expand-all(); }
+            }
+            network-section := Sidebar {
+                row: root.section-rank-3;
+                col: 0;
+                places: root.sidebar-places-network;
+                strings: root.strings;
+                section-code: 3;
+                title: root.strings.sidebar-network;
+                collapsed: root.sidebar-network-collapsed;
+                reorder-drag-active: root.sidebar-section-drag-active;
+                reorder-drag-source: root.sidebar-section-drag-source;
+                changed y => { root.refresh-sidebar-section-drag-geometry(); }
+                changed height => { root.refresh-sidebar-section-drag-geometry(); }
+                section-toggled => { root.toggle-sidebar-section(3); }
+                section-drag-started(section, x, y) => { root.start-sidebar-section-drag(section, x, y); }
+                section-drag-moved(section, x, y) => { root.update-sidebar-section-drag(section, x, y); }
+                section-drag-dropped(section, x, y) => { root.drop-sidebar-section-drag(section, x, y); }
+                item-drag-active: root.sidebar-item-drag-active;
+                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                place-drag-dropped(path, kind, x, y) => {
+                    root.finish-sidebar-item-drag(path, kind, x, y);
+                }
+                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                }
+            }
+            // Fixed Trash: it has neither a chevron nor a grip and does
+            // not take part in the global order array.
+            trash-section := Sidebar {
+                row: 4;
+                col: 0;
+                places: root.sidebar-places-trash;
+                strings: root.strings;
+                section-code: -1;
+                title: "";
+                header-visible: false;
+                item-drag-active: root.sidebar-item-drag-active;
+                place-clicked(path, kind) => { root.sidebar-place-clicked(path, kind); }
+                place-middle-clicked(path, kind) => { root.place-open-new-tab(path, kind); }
+                place-drag-started(x, y) => { root.begin-sidebar-item-drag(x, y, true); }
+                place-drag-moved(x, y) => { root.update-sidebar-item-drag(x, y); }
+                place-drag-dropped(path, kind, x, y) => {
+                    root.finish-sidebar-item-drag(path, kind, x, y);
+                }
+                place-right-clicked(path, kind, removable, hotplug, device, x, y) => {
+                    root.open-sidebar-place-context(path, kind, removable, hotplug, device, x, y);
+                }
+            }
+            // Remainder below all sections. The tiny stretch
+            // gives priority to Favorites for the available height.
+            Rectangle { row: 5; col: 0; vertical-stretch: 0.0001; }
+        }
+        // Destination indicator in the SAME local frame as
+        // the sections. `-1px` centers its 2px on the separator.
+        if root.sidebar-section-drag-active
+                && root.sidebar-section-drag-target >= 0
+                && root.sidebar-section-drag-target
+                    != root.section-source-rank : Rectangle {
+            x: 6px;
+            y: root.sidebar-section-drag-preview-y - 1px;
+            width: parent.width - 12px;
+            height: 2px;
+            border-radius: 1px;
+            background: Theme.accent-background;
+        }
+    }
+}
