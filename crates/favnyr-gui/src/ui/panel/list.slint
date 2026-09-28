@@ -417,247 +417,247 @@ export component PanelList inherits Rectangle {
 
             // === List + empty area + rubber-band overlay ===
             list-area := Rectangle {
-    vertical-stretch: 1;
-    preferred-width: 0px;
-    min-width: 0px;
-    max-width: 99999px;
-    // Confines the selection rectangle (and the rows) to the list
-    // area: without this, a negative rubber-band `y` would make it overflow
-    // OVER the column header (list-area draws afterward).
-    clip: true;
+                vertical-stretch: 1;
+                preferred-width: 0px;
+                min-width: 0px;
+                max-width: 99999px;
+                // Confines the selection rectangle (and the rows) to the list
+                // area: without this, a negative rubber-band `y` would make it overflow
+                // OVER the column header (list-area draws afterward).
+                clip: true;
 
-    // Vertical Flickable with EXACT content. The standard `ListView` estimates
-    // its anchor via the delegates' average height, which is not
-    // compatible with a mix of 28/76/… px. `rendered-rows` stays a
-    // sub-model bounded to the viewport + overscan: virtualization is
-    // preserved without ever approximating the geometry.
-    rows-scroll := Flickable {
-        width: parent.width;
-        height: parent.height;
-        viewport-width: self.width;
-        viewport-height: max(self.height, root.rows-content-height);
-        interactive: false;
-        changed viewport-y => {
-            if (!selection.zoom-adjusting) {
-                root.report-rows-viewport();
-                root.update-drag-hover-row();
-                selection.update-pointer-hover();
-            }
-        }
-        // One wrapper per row carrying the bridge-computed geometry;
-        // the visual that goes inside depends on the role (entry vs
-        // section header) and the display mode (list row vs grid tile).
-        for entry[visible-idx] in root.view.rendered-rows : Rectangle {
-            x: 0px;
-            y: entry.visual-y;
-            width: rows-scroll.viewport-width;
-            height: entry.visual-h;
+                // Vertical Flickable with EXACT content. The standard `ListView` estimates
+                // its anchor via the delegates' average height, which is not
+                // compatible with a mix of 28/76/… px. `rendered-rows` stays a
+                // sub-model bounded to the viewport + overscan: virtualization is
+                // preserved without ever approximating the geometry.
+                rows-scroll := Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-width: self.width;
+                    viewport-height: max(self.height, root.rows-content-height);
+                    interactive: false;
+                    changed viewport-y => {
+                        if (!selection.zoom-adjusting) {
+                            root.report-rows-viewport();
+                            root.update-drag-hover-row();
+                            selection.update-pointer-hover();
+                        }
+                    }
+                    // One wrapper per row carrying the bridge-computed geometry;
+                    // the visual that goes inside depends on the role (entry vs
+                    // section header) and the display mode (list row vs grid tile).
+                    for entry[visible-idx] in root.view.rendered-rows : Rectangle {
+                        x: 0px;
+                        y: entry.visual-y;
+                        width: rows-scroll.viewport-width;
+                        height: entry.visual-h;
 
-            if entry.role == 1 : SectionHeaderView {
-                width: parent.width;
-                strings: root.strings;
-                label: entry.section-label;
-                count-text: entry.section-count-text;
-                pending: entry.section-pending;
-                collapsed: false;   // the caret follows the entries below
-                is-folder: entry.is-dir;
-                icon: entry.is-dir
-                    ? @image-url("../../../assets/icons/folder.svg")
-                    : @image-url("../../../assets/icons/file.svg");
-                icon-color: entry.is-dir
-                    ? Tokens.folder-color(entry.folder-slot)
-                    : Theme.foreground.with-alpha(0.6);
-                indent: entry.visual-x;
-                hovered: root.hovered-idx == entry.model-index;
-            }
-            if entry.role == 0 && root.view.grid-mode : FileTileView {
-                x: entry.visual-x;
-                width: entry.visual-w;
-                name-base: entry.name-base;
-                name-ext: entry.name-ext;
-                is-dir: entry.is-dir;
-                is-symlink: entry.is-symlink;
-                folder-slot: entry.folder-slot;
-                kind: entry.kind;
-                selected: entry.selected;
-                cut: entry.cut;
-                hovered: entry.model-index == root.hovered-idx
-                    || (root.file-drag-over && entry.model-index == root.drag-hover-row
-                        && (entry.is-dir || entry.drop-runnable));
-                hidden: entry.hidden;
-                comment: entry.comment;
-                thumbnail: entry.thumbnail;
-                app-icon: entry.app-icon;
-                link-folder: entry.link-folder;
-                preview-mode: root.view.preview-mode;
-                row-h: entry.visual-h;
-            }
-            if entry.role == 0 && !root.view.grid-mode : FileRowView {
-                width: parent.width;
-                name: entry.name;
-                name-base: entry.name-base;
-                name-ext: entry.name-ext;
-                hidden: entry.hidden;
-                age: entry.age;
-                age-bucket: entry.age-bucket;
-                path: entry.path;
-                size: entry.size;
-                modified: entry.modified;
-                is-dir: entry.is-dir;
-                is-symlink: entry.is-symlink;
-                folder-slot: entry.folder-slot;
-                comment: entry.comment;
-                kind: entry.kind;
-                selected: entry.selected;
-                cut: entry.cut;
-                // A drag target receives the same hover as mouse
-                // hover, including from another Favnyr view/instance.
-                hovered: entry.model-index == root.hovered-idx
-                    || (root.file-drag-over && entry.model-index == root.drag-hover-row
-                        && (entry.is-dir || entry.drop-runnable));
-                preview-mode: root.view.preview-mode;
-                row-h: entry.visual-h;
-                resolution: entry.resolution;
-                depth: entry.depth;
-                ext: entry.ext;
-                thumbnail: entry.thumbnail;
-                app-icon: entry.app-icon;
-                link-folder: entry.link-folder;
-                col-name-width: root.col-name-width;
-                col-path-width: root.col-path-width;
-                col-size-width: root.col-size-width;
-                col-modified-width: root.col-modified-width;
-                col-ext-width: root.col-ext-width;
-                col-resolution-width: root.col-resolution-width;
-                col-depth-width: root.col-depth-width;
-                col-age-width: root.col-age-width;
-                content-width: root.view.content-width;
-                columns: root.view.columns;
-            }
-        }
-    }
+                        if entry.role == 1 : SectionHeaderView {
+                            width: parent.width;
+                            strings: root.strings;
+                            label: entry.section-label;
+                            count-text: entry.section-count-text;
+                            pending: entry.section-pending;
+                            collapsed: false;   // the caret follows the entries below
+                            is-folder: entry.is-dir;
+                            icon: entry.is-dir
+                                ? @image-url("../../../assets/icons/folder.svg")
+                                : @image-url("../../../assets/icons/file.svg");
+                            icon-color: entry.is-dir
+                                ? Tokens.folder-color(entry.folder-slot)
+                                : Theme.foreground.with-alpha(0.6);
+                            indent: entry.visual-x;
+                            hovered: root.hovered-idx == entry.model-index;
+                        }
+                        if entry.role == 0 && root.view.grid-mode : FileTileView {
+                            x: entry.visual-x;
+                            width: entry.visual-w;
+                            name-base: entry.name-base;
+                            name-ext: entry.name-ext;
+                            is-dir: entry.is-dir;
+                            is-symlink: entry.is-symlink;
+                            folder-slot: entry.folder-slot;
+                            kind: entry.kind;
+                            selected: entry.selected;
+                            cut: entry.cut;
+                            hovered: entry.model-index == root.hovered-idx
+                                || (root.file-drag-over && entry.model-index == root.drag-hover-row
+                                    && (entry.is-dir || entry.drop-runnable));
+                            hidden: entry.hidden;
+                            comment: entry.comment;
+                            thumbnail: entry.thumbnail;
+                            app-icon: entry.app-icon;
+                            link-folder: entry.link-folder;
+                            preview-mode: root.view.preview-mode;
+                            row-h: entry.visual-h;
+                        }
+                        if entry.role == 0 && !root.view.grid-mode : FileRowView {
+                            width: parent.width;
+                            name: entry.name;
+                            name-base: entry.name-base;
+                            name-ext: entry.name-ext;
+                            hidden: entry.hidden;
+                            age: entry.age;
+                            age-bucket: entry.age-bucket;
+                            path: entry.path;
+                            size: entry.size;
+                            modified: entry.modified;
+                            is-dir: entry.is-dir;
+                            is-symlink: entry.is-symlink;
+                            folder-slot: entry.folder-slot;
+                            comment: entry.comment;
+                            kind: entry.kind;
+                            selected: entry.selected;
+                            cut: entry.cut;
+                            // A drag target receives the same hover as mouse
+                            // hover, including from another Favnyr view/instance.
+                            hovered: entry.model-index == root.hovered-idx
+                                || (root.file-drag-over && entry.model-index == root.drag-hover-row
+                                    && (entry.is-dir || entry.drop-runnable));
+                            preview-mode: root.view.preview-mode;
+                            row-h: entry.visual-h;
+                            resolution: entry.resolution;
+                            depth: entry.depth;
+                            ext: entry.ext;
+                            thumbnail: entry.thumbnail;
+                            app-icon: entry.app-icon;
+                            link-folder: entry.link-folder;
+                            col-name-width: root.col-name-width;
+                            col-path-width: root.col-path-width;
+                            col-size-width: root.col-size-width;
+                            col-modified-width: root.col-modified-width;
+                            col-ext-width: root.col-ext-width;
+                            col-resolution-width: root.col-resolution-width;
+                            col-depth-width: root.col-depth-width;
+                            col-age-width: root.col-age-width;
+                            content-width: root.view.content-width;
+                            columns: root.view.columns;
+                        }
+                    }
+                }
 
-    // "Folder not found" banner: inaccessible folder (network
-    // drive not started, missing mount). We KEEP the tab + this message
-    // PERSISTENT; it disappears on its own once the folder becomes
-    // accessible again (automatic recheck, see `recheck-unavailable`).
-    if root.view.unavailable : Rectangle {
-        x: 0;
-        y: 0;
-        width: parent.width;
-        height: parent.height;
-        background: Theme.background;
-        // LEFT-ALIGNED block — on a narrow/cramped view, a
-        // centered warning can "fall" outside the visible area or get
-        // clipped; anchored on the left, it always stays legible. Centered
-        // vertically only.
-        VerticalLayout {
-            alignment: center;              // centers the block VERTICALLY
-            spacing: 7px;
-            padding-left: 22px;
-            padding-right: 22px;
-            padding-top: 24px;
-            padding-bottom: 24px;
-            // Icon wrapped in a LEFT-aligned HorizontalLayout: a
-            // fixed-size Image is NOT stretched by the VerticalLayout.
-            HorizontalLayout {
-                alignment: start;
-                Image {
-                    source: @image-url("../../../assets/icons/network.svg");
-                    width: 24px;
-                    height: 24px;
-                    colorize: Tokens.danger;
+                // "Folder not found" banner: inaccessible folder (network
+                // drive not started, missing mount). We KEEP the tab + this message
+                // PERSISTENT; it disappears on its own once the folder becomes
+                // accessible again (automatic recheck, see `recheck-unavailable`).
+                if root.view.unavailable : Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    background: Theme.background;
+                    // LEFT-ALIGNED block — on a narrow/cramped view, a
+                    // centered warning can "fall" outside the visible area or get
+                    // clipped; anchored on the left, it always stays legible. Centered
+                    // vertically only.
+                    VerticalLayout {
+                        alignment: center;              // centers the block VERTICALLY
+                        spacing: 7px;
+                        padding-left: 22px;
+                        padding-right: 22px;
+                        padding-top: 24px;
+                        padding-bottom: 24px;
+                        // Icon wrapped in a LEFT-aligned HorizontalLayout: a
+                        // fixed-size Image is NOT stretched by the VerticalLayout.
+                        HorizontalLayout {
+                            alignment: start;
+                            Image {
+                                source: @image-url("../../../assets/icons/network.svg");
+                                width: 24px;
+                                height: 24px;
+                                colorize: Tokens.danger;
+                            }
+                        }
+                        Text {
+                            text: root.strings.tab-unavailable;
+                            font-size: 14px;
+                            font-weight: 700;
+                            color: Theme.foreground;
+                            horizontal-alignment: left;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: root.view.current-path;
+                            font-size: 12px;
+                            color: Theme.foreground.with-alpha(0.65);
+                            horizontal-alignment: left;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.strings.tab-unavailable-hint;
+                            font-size: 11px;
+                            color: Theme.foreground.with-alpha(0.5);
+                            horizontal-alignment: left;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // ===== Selection layer =====
+                // Pointer gestures over the list (hover, clicks, rubber-band,
+                // middle-click auto-scroll, deferred rename, drag edge auto-scroll)
+                // live in `panel/selection.slint`, in the same frame. The
+                // rubber-band state is shared with `gutter-strip` below and the
+                // scroll positions are two-way; `update-pointer-hover` stays public
+                // for the relayout watches above.
+                selection := PanelSelection {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    view: root.view;
+                    active: root.active;
+                    overlay-open: root.overlay-open;
+                    file-drag-active: root.file-drag-active;
+                    file-drag-over: root.file-drag-over;
+                    file-drag-abs-y: root.file-drag-abs-y;
+                    keyboard-interaction-gen: root.keyboard-interaction-gen;
+                    rows-vh: rows-scroll.viewport-height;
+                    rows-h: rows-scroll.height;
+                    flick-vw: flickable.viewport-width;
+                    flick-w: flickable.width;
+                    rb-cur-cy: root.rb-cur-cy;
+                    rb-min-vy: root.rb-min-vy;
+                    rows-vy <=> rows-scroll.viewport-y;
+                    flick-vx <=> flickable.viewport-x;
+                    rb-active <=> root.rb-active;
+                    rb-anchor-x <=> root.rb-anchor-x;
+                    rb-anchor-cy <=> root.rb-anchor-cy;
+                    rb-cur-x <=> root.rb-cur-x;
+                    rb-cur-vy <=> root.rb-cur-vy;
+                    activate => { root.activate(); }
+                    close-ctx-menu => { root.close-ctx-menu(); }
+                    deselect-all => { root.deselect-all(); }
+                    empty-right-clicked(x, y) => { root.empty-right-clicked(x, y); }
+                    file-drag-started(i, x, y) => { root.file-drag-started(i, x, y); }
+                    file-drag-progress(x, y) => { root.file-drag-progress(x, y); }
+                    file-drag-dropped(x, y) => { root.file-drag-dropped(x, y); }
+                    go-back => { root.go-back(); }
+                    go-forward => { root.go-forward(); }
+                    rename-selected => { root.rename-selected(); }
+                    request-focus => { root.request-focus(); }
+                    right-clicked(i, x, y) => { root.right-clicked(i, x, y); }
+                    row-activated(i) => { root.row-activated(i); }
+                    row-clicked(i) => { return root.row-clicked(i); }
+                    row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
+                    row-shift-clicked(i) => { root.row-shift-clicked(i); }
+                    rubber-band-begin(m) => { root.rubber-band-begin(m); }
+                    rubber-band-update(x0, y0, x1, y1) => { root.rubber-band-update(x0, y0, x1, y1); }
+                    toggle-section(k) => { root.toggle-section(k); }
+                    zoom-step(d, t, h, y) => { return root.zoom-step(d, t, h, y); }
+                    hit-test(x, y) => { return root.row-idx-at-xy(x, y); }
+                    cancel-column-drag => {
+                        if (root.col-drag-active) {
+                            root.col-drag-active = false;
+                            root.col-drag-id = "";
+                            root.col-drop-idx = -1;
+                        }
+                    }
+                    report-rows-viewport => { root.report-rows-viewport(); }
+                    update-drag-hover-row => { root.update-drag-hover-row(); }
                 }
             }
-            Text {
-                text: root.strings.tab-unavailable;
-                font-size: 14px;
-                font-weight: 700;
-                color: Theme.foreground;
-                horizontal-alignment: left;
-                wrap: word-wrap;
-            }
-            Text {
-                text: root.view.current-path;
-                font-size: 12px;
-                color: Theme.foreground.with-alpha(0.65);
-                horizontal-alignment: left;
-                overflow: elide;
-            }
-            Text {
-                text: root.strings.tab-unavailable-hint;
-                font-size: 11px;
-                color: Theme.foreground.with-alpha(0.5);
-                horizontal-alignment: left;
-                wrap: word-wrap;
-            }
-        }
-    }
-
-    // ===== Selection layer =====
-    // Pointer gestures over the list (hover, clicks, rubber-band,
-    // middle-click auto-scroll, deferred rename, drag edge auto-scroll)
-    // live in `panel/selection.slint`, in the same frame. The
-    // rubber-band state is shared with `gutter-strip` below and the
-    // scroll positions are two-way; `update-pointer-hover` stays public
-    // for the relayout watches above.
-    selection := PanelSelection {
-        x: 0;
-        y: 0;
-        width: parent.width;
-        height: parent.height;
-        view: root.view;
-        active: root.active;
-        overlay-open: root.overlay-open;
-        file-drag-active: root.file-drag-active;
-        file-drag-over: root.file-drag-over;
-        file-drag-abs-y: root.file-drag-abs-y;
-        keyboard-interaction-gen: root.keyboard-interaction-gen;
-        rows-vh: rows-scroll.viewport-height;
-        rows-h: rows-scroll.height;
-        flick-vw: flickable.viewport-width;
-        flick-w: flickable.width;
-        rb-cur-cy: root.rb-cur-cy;
-        rb-min-vy: root.rb-min-vy;
-        rows-vy <=> rows-scroll.viewport-y;
-        flick-vx <=> flickable.viewport-x;
-        rb-active <=> root.rb-active;
-        rb-anchor-x <=> root.rb-anchor-x;
-        rb-anchor-cy <=> root.rb-anchor-cy;
-        rb-cur-x <=> root.rb-cur-x;
-        rb-cur-vy <=> root.rb-cur-vy;
-        activate => { root.activate(); }
-        close-ctx-menu => { root.close-ctx-menu(); }
-        deselect-all => { root.deselect-all(); }
-        empty-right-clicked(x, y) => { root.empty-right-clicked(x, y); }
-        file-drag-started(i, x, y) => { root.file-drag-started(i, x, y); }
-        file-drag-progress(x, y) => { root.file-drag-progress(x, y); }
-        file-drag-dropped(x, y) => { root.file-drag-dropped(x, y); }
-        go-back => { root.go-back(); }
-        go-forward => { root.go-forward(); }
-        rename-selected => { root.rename-selected(); }
-        request-focus => { root.request-focus(); }
-        right-clicked(i, x, y) => { root.right-clicked(i, x, y); }
-        row-activated(i) => { root.row-activated(i); }
-        row-clicked(i) => { return root.row-clicked(i); }
-        row-ctrl-clicked(i) => { root.row-ctrl-clicked(i); }
-        row-shift-clicked(i) => { root.row-shift-clicked(i); }
-        rubber-band-begin(m) => { root.rubber-band-begin(m); }
-        rubber-band-update(x0, y0, x1, y1) => { root.rubber-band-update(x0, y0, x1, y1); }
-        toggle-section(k) => { root.toggle-section(k); }
-        zoom-step(d, t, h, y) => { return root.zoom-step(d, t, h, y); }
-        hit-test(x, y) => { return root.row-idx-at-xy(x, y); }
-        cancel-column-drag => {
-            if (root.col-drag-active) {
-                root.col-drag-active = false;
-                root.col-drag-id = "";
-                root.col-drop-idx = -1;
-            }
-        }
-        report-rows-viewport => { root.report-rows-viewport(); }
-        update-drag-hover-row => { root.update-drag-hover-row(); }
-    }
-}
         } // closes the VerticalLayout inside the Flickable
     } // closes Flickable
 

@@ -156,256 +156,256 @@ export component PanelNavBar inherits HorizontalLayout {
         horizontal-stretch: 1;
 
         url-clip := Rectangle {
-        width: 100%;
-        height: 100%;
-        clip: true;
+            width: 100%;
+            height: 100%;
+            clip: true;
 
-        // --- DISPLAY mode: breadcrumbs ---
-        if !root.path-edit-mode : TouchArea {
-            // Click on the empty area (not on a segment) → edit mode.
-            clicked => {
-                root.activate();
-                root.close-ctx-menu();
-                root.url-edit-text = root.view.current-path;
-                root.path-edit-mode = true;
-            }
-            // Right-click → enters edit mode (pre-filled field) + Paste/Copy
-            // menu, so "Paste" fills the field.
-            pointer-event(ev) => {
-                if (ev.kind == PointerEventKind.down
-                        && ev.button == PointerEventButton.right) {
+            // --- DISPLAY mode: breadcrumbs ---
+            if !root.path-edit-mode : TouchArea {
+                // Click on the empty area (not on a segment) → edit mode.
+                clicked => {
                     root.activate();
                     root.close-ctx-menu();
                     root.url-edit-text = root.view.current-path;
                     root.path-edit-mode = true;
-                    root.open-url-menu(
-                        self.absolute-position.x + self.mouse-x,
-                        self.absolute-position.y + self.mouse-y);
                 }
-            }
-            // The trail is kept END-aligned as soon as it overflows.
-            // A view narrowed by its splitter then hides the start of
-            // the path instead of its last segments — the folder being
-            // looked at is what identifies the view, the drive it sits
-            // on rarely is.
-            crumbs-flick := Flickable {
-                width: parent.width;
-                height: parent.height;
-                viewport-width: max(self.width, crumbs-row.preferred-width);
-                viewport-height: self.height;
-                interactive: false;
-                // Zero while the trail fits, so a wide view keeps it
-                // against the left edge exactly as before. Nothing else
-                // writes this property, and `crumbs-row` never reads it,
-                // so the binding cannot feed back into the layout that
-                // produces it.
-                viewport-x: min(0px, self.width - self.viewport-width);
-
-                crumbs-row := HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    spacing: 0px;
-                    alignment: start;
-                    for crumb[ci] in root.view.crumbs : HorizontalLayout {
-                        spacing: 0px;
-                        // "›" separator between segments (not before the first).
-                        if ci > 0 : Rectangle {
-                            width: 16px;
-                            Image {
-                                source: @image-url("../../../assets/icons/chevron-right.svg");
-                                width: 11px;
-                                height: 11px;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                colorize: Theme.foreground.with-alpha(0.4);
-                            }
-                        }
-                        crumb-rect := Rectangle {
-                            height: parent.height;
-                            border-radius: 3px;
-                            background: crumb-touch.has-hover
-                                ? Theme.accent-background.with-alpha(0.18)
-                                : transparent;
-                            HorizontalLayout {
-                                padding-left: 5px;
-                                padding-right: 5px;
-                                Text {
-                                    text: crumb.label;
-                                    font-size: 12px;
-                                    color: Theme.foreground;
-                                    vertical-alignment: center;
-                                }
-                            }
-                            crumb-touch := TouchArea {
-                                clicked => {
-                                    root.activate();
-                                    root.close-ctx-menu();
-                                    root.navigate-to(crumb.path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- EDIT mode: TextInput + "confirm" button on the right ---
-        if root.path-edit-mode : Rectangle {
-            // Right-click thread BEHIND the TextInput: the latter only
-            // handles the left button (cursor/selection), so the
-            // right-click falls through here → Paste/Copy menu.
-            TouchArea {
+                // Right-click → enters edit mode (pre-filled field) + Paste/Copy
+                // menu, so "Paste" fills the field.
                 pointer-event(ev) => {
                     if (ev.kind == PointerEventKind.down
                             && ev.button == PointerEventButton.right) {
+                        root.activate();
+                        root.close-ctx-menu();
+                        root.url-edit-text = root.view.current-path;
+                        root.path-edit-mode = true;
                         root.open-url-menu(
                             self.absolute-position.x + self.mouse-x,
                             self.absolute-position.y + self.mouse-y);
                     }
                 }
-            }
-            // The field is wider than its frame as soon as the path
-            // overflows, so it lives in a viewport that follows the
-            // caret. Without this, extending a selection past the
-            // right edge selects text that stays invisible. The
-            // rename field gets the same behaviour from `LineEdit`,
-            // whose chrome would be out of place inside this bar.
-            url-flick := Flickable {
-                x: 8px;
-                y: 0;
-                // Leaves room for the confirm button (28px) on the right.
-                width: parent.width - 8px - 30px;
-                height: parent.height;
-                // Dragging scrolls the text selection, never the
-                // viewport: the caret alone drives it.
-                interactive: false;
-                viewport-width: max(self.width, url-input.preferred-width);
-                viewport-height: self.height;
-                url-input := EditTextInput {
-                    width: parent.viewport-width;
+                // The trail is kept END-aligned as soon as it overflows.
+                // A view narrowed by its splitter then hides the start of
+                // the path instead of its last segments — the folder being
+                // looked at is what identifies the view, the drive it sits
+                // on rarely is.
+                crumbs-flick := Flickable {
+                    width: parent.width;
                     height: parent.height;
-                    // Keeps the caret inside the frame. `viewport-x` is
-                    // negative or zero, so the caret sits on screen at
-                    // `cursor.x + viewport-x`.
-                    cursor-position-changed(cursor) => {
-                        if (cursor.x + url-flick.viewport-x < 0px) {
-                            url-flick.viewport-x = -cursor.x;
-                        } else if (cursor.x + url-flick.viewport-x
-                                > url-flick.width - 2px) {
-                            url-flick.viewport-x =
-                                url-flick.width - 2px - cursor.x;
+                    viewport-width: max(self.width, crumbs-row.preferred-width);
+                    viewport-height: self.height;
+                    interactive: false;
+                    // Zero while the trail fits, so a wide view keeps it
+                    // against the left edge exactly as before. Nothing else
+                    // writes this property, and `crumbs-row` never reads it,
+                    // so the binding cannot feed back into the layout that
+                    // produces it.
+                    viewport-x: min(0px, self.width - self.viewport-width);
+
+                    crumbs-row := HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        spacing: 0px;
+                        alignment: start;
+                        for crumb[ci] in root.view.crumbs : HorizontalLayout {
+                            spacing: 0px;
+                            // "›" separator between segments (not before the first).
+                            if ci > 0 : Rectangle {
+                                width: 16px;
+                                Image {
+                                    source: @image-url("../../../assets/icons/chevron-right.svg");
+                                    width: 11px;
+                                    height: 11px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    colorize: Theme.foreground.with-alpha(0.4);
+                                }
+                            }
+                            crumb-rect := Rectangle {
+                                height: parent.height;
+                                border-radius: 3px;
+                                background: crumb-touch.has-hover
+                                    ? Theme.accent-background.with-alpha(0.18)
+                                    : transparent;
+                                HorizontalLayout {
+                                    padding-left: 5px;
+                                    padding-right: 5px;
+                                    Text {
+                                        text: crumb.label;
+                                        font-size: 12px;
+                                        color: Theme.foreground;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                crumb-touch := TouchArea {
+                                    clicked => {
+                                        root.activate();
+                                        root.close-ctx-menu();
+                                        root.navigate-to(crumb.path);
+                                    }
+                                }
+                            }
                         }
-                    }
-                    // Shared text (initialized to the current path on entering
-                    // edit mode; replaceable via "Paste").
-                    text <=> root.url-edit-text;
-                    font-size: 12px;
-                    color: Theme.foreground;
-                    single-line: true;
-                    vertical-alignment: center;
-                    selection-background-color: Theme.accent-background.with-alpha(0.5);
-                    selection-foreground-color: Theme.foreground;
-                    // Focus + select the WHOLE path (direct replacement
-                    // on click; desired default behavior).
-                    init => {
-                        self.focus();
-                        self.set-selection-offsets(0, 99999);
-                        self.copy-seen = root.url-copy-serial;
-                        self.paste-seen = root.url-paste-serial;
-                    }
-                    // "Copy" in the URL menu acts on the SELECTION, like
-                    // this field's own Ctrl+C — copying the whole path
-                    // whatever was highlighted made selecting part of it
-                    // pointless. Only the field knows its selection, and
-                    // the menu lives at window level, out of reach of it;
-                    // the menu therefore bumps a counter and the field
-                    // acts on it. Same broadcast idiom as `Dismiss`.
-                    //
-                    // The snapshot taken on `init` is what keeps entering
-                    // edit mode from copying on its own: only a counter
-                    // that moved AFTER this field appeared is a request.
-                    property <int> copy-seen;
-                    property <int> copy-request: root.url-copy-serial;
-                    changed copy-request => {
-                        if (self.copy-request > self.copy-seen) {
-                            self.copy-seen = self.copy-request;
-                            self.copy();
-                        }
-                    }
-                    // Same reasoning for "Paste": handing the clipboard to
-                    // the field through its text replaced the whole line,
-                    // where the toolkit's own paste drops it at the caret
-                    // and replaces just the selection — what every text
-                    // field does, and what Ctrl+V here already did.
-                    property <int> paste-seen;
-                    property <int> paste-request: root.url-paste-serial;
-                    changed paste-request => {
-                        if (self.paste-request > self.paste-seen) {
-                            self.paste-seen = self.paste-request;
-                            self.paste();
-                        }
-                    }
-                    // Focus loss → exits edit mode without navigating
-                    // ("cancel on blur"). BUT not if the URL menu is
-                    // open (right-click → menu): we must stay in edit mode
-                    // so "Paste" fills the field.
-                    changed has-focus => {
-                        if (!self.has-focus && !root.url-menu-open) {
-                            root.path-edit-mode = false;
-                        }
-                    }
-                    accepted => {
-                        root.path-edit-mode = false;
-                        root.activate();
-                        root.navigate-to(self.text);
-                        root.request-focus();
-                    }
-                    key-pressed(event) => {
-                        if (event.text == Key.Escape) {
-                            root.path-edit-mode = false;
-                            root.request-focus();
-                            return accept;
-                        }
-                        // Shared editing shortcuts (see EditTextInput):
-                        // this field overrides `key-pressed`, so it must
-                        // call them explicitly.
-                        if (self.edit-shortcut(event)) { return accept; }
-                        return reject;
                     }
                 }
             }
 
-            // "Confirm" button: applies the entered path and exits
-            // edit mode (equivalent to Enter), clickable.
-            Rectangle {
-                width: 22px;
-                height: 22px;
-                x: parent.width - 26px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: validate-touch.has-hover
-                    ? Theme.accent-background
-                    : Theme.accent-background.with-alpha(0.85);
-                Image {
-                    source: @image-url("../../../assets/icons/check.svg");
-                    width: 13px;
-                    height: 13px;
-                    colorize: Theme.accent-foreground;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+            // --- EDIT mode: TextInput + "confirm" button on the right ---
+            if root.path-edit-mode : Rectangle {
+                // Right-click thread BEHIND the TextInput: the latter only
+                // handles the left button (cursor/selection), so the
+                // right-click falls through here → Paste/Copy menu.
+                TouchArea {
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down
+                                && ev.button == PointerEventButton.right) {
+                            root.open-url-menu(
+                                self.absolute-position.x + self.mouse-x,
+                                self.absolute-position.y + self.mouse-y);
+                        }
+                    }
                 }
-                validate-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
-                        root.path-edit-mode = false;
-                        root.activate();
-                        root.close-ctx-menu();
-                        root.navigate-to(url-input.text);
-                        root.request-focus();
+                // The field is wider than its frame as soon as the path
+                // overflows, so it lives in a viewport that follows the
+                // caret. Without this, extending a selection past the
+                // right edge selects text that stays invisible. The
+                // rename field gets the same behaviour from `LineEdit`,
+                // whose chrome would be out of place inside this bar.
+                url-flick := Flickable {
+                    x: 8px;
+                    y: 0;
+                    // Leaves room for the confirm button (28px) on the right.
+                    width: parent.width - 8px - 30px;
+                    height: parent.height;
+                    // Dragging scrolls the text selection, never the
+                    // viewport: the caret alone drives it.
+                    interactive: false;
+                    viewport-width: max(self.width, url-input.preferred-width);
+                    viewport-height: self.height;
+                    url-input := EditTextInput {
+                        width: parent.viewport-width;
+                        height: parent.height;
+                        // Keeps the caret inside the frame. `viewport-x` is
+                        // negative or zero, so the caret sits on screen at
+                        // `cursor.x + viewport-x`.
+                        cursor-position-changed(cursor) => {
+                            if (cursor.x + url-flick.viewport-x < 0px) {
+                                url-flick.viewport-x = -cursor.x;
+                            } else if (cursor.x + url-flick.viewport-x
+                                    > url-flick.width - 2px) {
+                                url-flick.viewport-x =
+                                    url-flick.width - 2px - cursor.x;
+                            }
+                        }
+                        // Shared text (initialized to the current path on entering
+                        // edit mode; replaceable via "Paste").
+                        text <=> root.url-edit-text;
+                        font-size: 12px;
+                        color: Theme.foreground;
+                        single-line: true;
+                        vertical-alignment: center;
+                        selection-background-color: Theme.accent-background.with-alpha(0.5);
+                        selection-foreground-color: Theme.foreground;
+                        // Focus + select the WHOLE path (direct replacement
+                        // on click; desired default behavior).
+                        init => {
+                            self.focus();
+                            self.set-selection-offsets(0, 99999);
+                            self.copy-seen = root.url-copy-serial;
+                            self.paste-seen = root.url-paste-serial;
+                        }
+                        // "Copy" in the URL menu acts on the SELECTION, like
+                        // this field's own Ctrl+C — copying the whole path
+                        // whatever was highlighted made selecting part of it
+                        // pointless. Only the field knows its selection, and
+                        // the menu lives at window level, out of reach of it;
+                        // the menu therefore bumps a counter and the field
+                        // acts on it. Same broadcast idiom as `Dismiss`.
+                        //
+                        // The snapshot taken on `init` is what keeps entering
+                        // edit mode from copying on its own: only a counter
+                        // that moved AFTER this field appeared is a request.
+                        property <int> copy-seen;
+                        property <int> copy-request: root.url-copy-serial;
+                        changed copy-request => {
+                            if (self.copy-request > self.copy-seen) {
+                                self.copy-seen = self.copy-request;
+                                self.copy();
+                            }
+                        }
+                        // Same reasoning for "Paste": handing the clipboard to
+                        // the field through its text replaced the whole line,
+                        // where the toolkit's own paste drops it at the caret
+                        // and replaces just the selection — what every text
+                        // field does, and what Ctrl+V here already did.
+                        property <int> paste-seen;
+                        property <int> paste-request: root.url-paste-serial;
+                        changed paste-request => {
+                            if (self.paste-request > self.paste-seen) {
+                                self.paste-seen = self.paste-request;
+                                self.paste();
+                            }
+                        }
+                        // Focus loss → exits edit mode without navigating
+                        // ("cancel on blur"). BUT not if the URL menu is
+                        // open (right-click → menu): we must stay in edit mode
+                        // so "Paste" fills the field.
+                        changed has-focus => {
+                            if (!self.has-focus && !root.url-menu-open) {
+                                root.path-edit-mode = false;
+                            }
+                        }
+                        accepted => {
+                            root.path-edit-mode = false;
+                            root.activate();
+                            root.navigate-to(self.text);
+                            root.request-focus();
+                        }
+                        key-pressed(event) => {
+                            if (event.text == Key.Escape) {
+                                root.path-edit-mode = false;
+                                root.request-focus();
+                                return accept;
+                            }
+                            // Shared editing shortcuts (see EditTextInput):
+                            // this field overrides `key-pressed`, so it must
+                            // call them explicitly.
+                            if (self.edit-shortcut(event)) { return accept; }
+                            return reject;
+                        }
+                    }
+                }
+
+                // "Confirm" button: applies the entered path and exits
+                // edit mode (equivalent to Enter), clickable.
+                Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    x: parent.width - 26px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 4px;
+                    background: validate-touch.has-hover
+                        ? Theme.accent-background
+                        : Theme.accent-background.with-alpha(0.85);
+                    Image {
+                        source: @image-url("../../../assets/icons/check.svg");
+                        width: 13px;
+                        height: 13px;
+                        colorize: Theme.accent-foreground;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    validate-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.path-edit-mode = false;
+                            root.activate();
+                            root.close-ctx-menu();
+                            root.navigate-to(url-input.text);
+                            root.request-focus();
+                        }
                     }
                 }
             }
-        }
         } // closes url-clip (rectangular clip wrapper = crisp)
     }
 
