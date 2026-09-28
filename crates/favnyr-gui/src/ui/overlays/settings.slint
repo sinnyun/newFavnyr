@@ -1,11 +1,12 @@
-// The Settings dialog and the shortcut context menu it raises.
+// The Settings dialog: the shell (window, title bar, tab strip) plus the
+// shortcut context menu it raises.
 //
-// Three tab pages — General (language, theme, zoom, clock, tab bar, shell
-// menu, columns, sizes), Shortcuts (search, capture, conflicts, reset) and
-// "Open with" (openers, recipes, ffmpeg) — plus the two popups that hang off
-// them: the shell-extension list of the General page and the small "unassign"
-// menu of a shortcut row, which is declared last so it renders above the
-// panel.
+// The three tab pages live next to this file: `settings/general.slint`
+// (language, theme, zoom, clock, tab bar, shell menu, columns, sizes),
+// `settings/shortcuts.slint` (search, capture, conflicts, reset) and
+// `settings/openwith.slint` (openers, recipes, the Windows shell entries).
+// Each page is a ScrollView; the shell forwards the state they edit and the
+// actions they raise.
 //
 // Extracted from main_window.slint. The pages edit a lot of window state, so
 // the fields they bind two-way are in-out here; everything they only display
@@ -13,14 +14,11 @@
 
 import { ColumnInfo, OpenerItem, OwRecipe, ShellExtRow, ShortcutGroup, Strings } from "../structs.slint";
 import { Dismiss, Theme, Tokens } from "../theme.slint";
-import { PathRow, SearchField, SettingsRowButton } from "../widgets/inputs.slint";
 import { ModalBackdrop } from "../widgets/tabs.slint";
-import { CommandIcon, MenuItem, OwRecipeButton } from "../widgets/menus.slint";
-import { FfmpegCmdRow } from "../progress.slint";
-import { SidebarHeaderAction } from "../sidebar.slint";
-import { Button, CheckBox, ComboBox, HorizontalBox, ScrollView, SpinBox } from "std-widgets.slint";
+import { MenuItem } from "../widgets/menus.slint";
 import { SettingsShortcuts } from "settings/shortcuts.slint";
 import { SettingsGeneral } from "settings/general.slint";
+import { SettingsOpenWith } from "settings/openwith.slint";
 
 export component OverlaySettings inherits Rectangle {
     // Transparent, full-window host; the panel centres itself on it.
@@ -332,299 +330,29 @@ export component OverlaySettings inherits Rectangle {
                 return-focus() => { root.return-focus(); }
             }
             // Scrollable content — OPEN WITH tab
-            if root.settings-tab == 2 : ScrollView {
+            if root.settings-tab == 2 : SettingsOpenWith {
                 vertical-stretch: 1;
-                VerticalLayout {
-                    padding: 20px;
-                    spacing: 12px;
-                    // "Open with" and "Detected Windows entries" sub-tabs.
-                    // The segmented style follows the shortcut popup's. A
-                    // fixed height keeps the buttons from occupying the free space
-                    // when the content is empty.
-                    if root.platform-windows : HorizontalBox {
-                        height: 32px;
-                        padding: 0px;
-                        spacing: 6px;
-                        Button {
-                            text: root.strings.settings-openers-section;
-                            primary: root.ow-subtab == 0;
-                            clicked => { root.ow-subtab = 0; }
-                        }
-                        Button {
-                            text: root.strings.settings-shellext-list-label;
-                            primary: root.ow-subtab == 1;
-                            clicked => { root.ow-subtab = 1; }
-                        }
-                        Rectangle { horizontal-stretch: 1; }
-                    }
-                    if root.ow-subtab == 0 : HorizontalLayout {
-                        height: 32px;
-                        spacing: 8px;
-                        SearchField {
-                            horizontal-stretch: 1;
-                            placeholder-text: root.strings.ow-search-placeholder;
-                            text <=> root.opener-search-text;
-                            edited(value) => { root.opener-search(value); }
-                        }
-                        Rectangle {
-                            width: owadd-txt.preferred-width + 22px;
-                            height: 32px;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: owadd-ta.has-hover ? Theme.accent-background : Theme.border;
-                            background: owadd-ta.has-hover ? Theme.alternate-background : transparent;
-                            owadd-txt := Text { text: root.strings.ow-add; font-size: 12px; color: Theme.foreground; x: (parent.width - self.width)/2; vertical-alignment: center; height: parent.height; }
-                            owadd-ta := TouchArea { clicked => { root.ow-add(); } }
-                        }
-                    }
-                    // Ready-made archiving/sharing commands, on their own
-                    // block under the search row. Wrapped over two rows so
-                    // the menu never scrolls sideways — even in the longer
-                    // languages or when every tool is installed. The label
-                    // keeps a fixed height so its box cannot grow with the
-                    // platform font's line spacing (which left a gap above
-                    // the buttons on Linux).
-                    // Ready-made commands, collapsed by default. The
-                    // whole header line toggles it, on the model of the
-                    // sidebar section headers.
-                    // Shown even with nothing detected: the block is how
-                    // one learns the recipes exist at all, and that
-                    // installing an archiver makes them appear.
-                    if root.ow-subtab == 0 : VerticalLayout {
-                        spacing: 6px;
-                        Rectangle {
-                            // Fixed height: a bare Text grew with the system
-                            // line spacing and left a gap on Linux.
-                            height: 26px;
-                            border-radius: 5px;
-                            background: rcp-hdr.has-hover ? Theme.alternate-background : transparent;
-                            accessible-role: button;
-                            accessible-label: root.strings.ow-recipes-label;
-                            accessible-action-default => { root.ow-recipes-open = !root.ow-recipes-open; }
-                            rcp-hdr := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.ow-recipes-open = !root.ow-recipes-open; }
-                            }
-                            HorizontalLayout {
-                                padding-left: 6px;
-                                padding-right: 8px;
-                                spacing: 6px;
-                                // Fixed slot: the two chevrons differ in
-                                // width, and the label would shift on toggle.
-                                Rectangle {
-                                    width: 12px;
-                                    Image {
-                                        width: 10px;
-                                        height: 10px;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
-                                        source: root.ow-recipes-open
-                                            ? @image-url("../../../assets/icons/chevron-down.svg")
-                                            : @image-url("../../../assets/icons/chevron-right.svg");
-                                        colorize: Theme.foreground.with-alpha(rcp-hdr.has-hover ? 0.75 : 0.45);
-                                    }
-                                }
-                                Text {
-                                    text: root.strings.ow-recipes-label;
-                                    font-size: 11px;
-                                    font-weight: 600;
-                                    color: Theme.foreground.with-alpha(rcp-hdr.has-hover ? 0.8 : 0.55);
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                // Collapsed, this count is the only thing
-                                // saying the section holds anything.
-                                Text {
-                                    text: "(" + (root.ow-recipes-col1.length + root.ow-recipes-col2.length) + ")";
-                                    font-size: 11px;
-                                    color: Theme.foreground.with-alpha(0.4);
-                                    vertical-alignment: center;
-                                    horizontal-stretch: 1;
-                                }
-                            }
-                        }
-                        if root.ow-recipes-open : VerticalLayout {
-                            padding-left: 18px;
-                            spacing: 6px;
-                            Text {
-                                text: root.strings.ow-recipes-hint;
-                                font-size: 11px;
-                                color: Theme.foreground.with-alpha(0.55);
-                                wrap: word-wrap;
-                            }
-                            if root.ow-recipes-missing != "" : Text {
-                                text: root.ow-recipes-missing;
-                                font-size: 11px;
-                                color: Theme.foreground.with-alpha(0.4);
-                                wrap: word-wrap;
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                VerticalLayout {
-                                    spacing: 3px;
-                                    horizontal-stretch: 1;
-                                    min-width: 0px;
-                                    for r in root.ow-recipes-col1 : OwRecipeButton {
-                                        recipe: r;
-                                        activate => { root.ow-recipe-add(r.index); }
-                                    }
-                                }
-                                VerticalLayout {
-                                    spacing: 3px;
-                                    horizontal-stretch: 1;
-                                    min-width: 0px;
-                                    for r in root.ow-recipes-col2 : OwRecipeButton {
-                                        recipe: r;
-                                        activate => { root.ow-recipe-add(r.index); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if root.ow-subtab == 0 : Rectangle {
-                        background: Theme.alternate-background.with-alpha(0.5);
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        VerticalLayout {
-                            padding: 6px;
-                            spacing: 2px;
-                            if root.openers-all.length == 0 : Text {
-                                text: root.opener-search-text == ""
-                                    ? root.strings.ow-empty
-                                    : root.strings.ow-no-results;
-                                font-size: 12px;
-                                color: Theme.foreground.with-alpha(0.45);
-                                height: 30px;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
-                            }
-                            for op[oi] in root.openers-all : Rectangle {
-                                height: 32px;
-                                border-radius: 5px;
-                                background: oprow.has-hover ? Theme.alternate-background : transparent;
-                                oprow := TouchArea { }
-                                HorizontalLayout {
-                                    padding-left: 8px;
-                                    padding-right: 4px;
-                                    spacing: 6px;
-                                    CommandIcon {
-                                        kind: op.icon-kind;
-                                        extracted: op.icon;
-                                        available: op.available;
-                                    }
-                                    Text {
-                                        text: op.label;
-                                        font-size: 13px;
-                                        color: op.available ? Theme.foreground : Theme.foreground.with-alpha(0.45);
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                    }
-                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/chevron-up.svg"); tooltip: root.strings.ow-move-up; clicked => { root.ow-move(op.id, -1); } }
-                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/chevron-down.svg"); tooltip: root.strings.ow-move-down; clicked => { root.ow-move(op.id, 1); } }
-                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/duplicate.svg"); tooltip: root.strings.ow-duplicate-tip; clicked => { root.ow-duplicate(op.id); } }
-                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/pencil.svg"); tooltip: root.strings.ow-edit-tip; clicked => { root.ow-edit(op.id); } }
-                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/trash.svg"); tooltip: root.strings.ow-delete-tip; clicked => { root.ow-delete(op.id); } }
-                                }
-                            }
-                        }
-                    }
-
-                    // ===== Detected Windows entries (shell extensions) =====
-                    // Dedicated sub-tab. List built at LAUNCH
-                    // (completed as right-clicks happen); unchecking hides
-                    // the entry from the context menu.
-                    // Global toggle for the Windows context menu —
-                    // moved here from the General tab: everything
-                    // related to shell extensions lives in this sub-tab.
-                    if root.platform-windows && root.ow-subtab == 1 : Rectangle {
-                        background: Theme.alternate-background.with-alpha(0.5);
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        VerticalLayout {
-                            padding: 12px;
-                            HorizontalLayout {
-                                spacing: 12px;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 3px;
-                                    Text {
-                                        text: root.strings.settings-shellmenu-label;
-                                        font-size: 13px;
-                                        font-weight: 600;
-                                        color: Theme.foreground;
-                                    }
-                                    Text {
-                                        text: root.strings.settings-shellmenu-hint;
-                                        font-size: 11px;
-                                        color: Theme.foreground.with-alpha(0.55);
-                                        wrap: word-wrap;
-                                    }
-                                }
-                                CheckBox {
-                                    checked <=> root.shell-menu-enabled;
-                                    toggled => { root.shell-menu-changed(self.checked); }
-                                }
-                            }
-                        }
-                    }
-                    // The list below only makes sense if the integration is
-                    // active → greyed out/hidden otherwise.
-                    if root.platform-windows && root.ow-subtab == 1 && root.shell-menu-enabled : Text {
-                        text: root.strings.settings-shellext-list-hint;
-                        font-size: 11px;
-                        color: Theme.foreground.with-alpha(0.55);
-                        wrap: word-wrap;
-                    }
-                    if root.platform-windows && root.ow-subtab == 1 && root.shell-menu-enabled && root.shell-ext-rows.length == 0 : Text {
-                        text: root.strings.settings-shellext-empty;
-                        font-size: 12px;
-                        color: Theme.foreground.with-alpha(0.45);
-                        height: 40px;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                    }
-                    if root.platform-windows && root.ow-subtab == 1 && root.shell-menu-enabled && root.shell-ext-rows.length > 0 : Rectangle {
-                        background: Theme.alternate-background.with-alpha(0.5);
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        VerticalLayout {
-                            padding: 6px;
-                            spacing: 2px;
-                            for sx in root.shell-ext-rows : Rectangle {
-                                height: 28px;
-                                border-radius: 5px;
-                                background: sxrow.has-hover ? Theme.alternate-background : transparent;
-                                sxrow := TouchArea { }
-                                HorizontalLayout {
-                                    padding-left: 8px;
-                                    padding-right: 4px;
-                                    spacing: 6px;
-                                    Text {
-                                        text: sx.label;
-                                        font-size: 13px;
-                                        color: Theme.foreground;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                    }
-                                    CheckBox {
-                                        checked: sx.enabled;
-                                        toggled => { root.shell-ext-toggle(sx.label, self.checked); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // End spring: absorbs the free space → the
-                    // cards/tabs keep their natural height even when
-                    // the list is empty or hidden.
-                    Rectangle { vertical-stretch: 1; }
-                }
-            }
+                strings: root.strings;
+                platform-windows: root.platform-windows;
+                openers-all: root.openers-all;
+                ow-recipes-col1: root.ow-recipes-col1;
+                ow-recipes-col2: root.ow-recipes-col2;
+                ow-recipes-missing: root.ow-recipes-missing;
+                shell-ext-rows: root.shell-ext-rows;
+                opener-search-text <=> root.opener-search-text;
+                ow-subtab <=> root.ow-subtab;
+                ow-recipes-open <=> root.ow-recipes-open;
+                shell-menu-enabled <=> root.shell-menu-enabled;
+                opener-search(query) => { root.opener-search(query); }
+                ow-add() => { root.ow-add(); }
+                ow-edit(id) => { root.ow-edit(id); }
+                ow-duplicate(id) => { root.ow-duplicate(id); }
+                ow-delete(id) => { root.ow-delete(id); }
+                ow-move(id, dir) => { root.ow-move(id, dir); }
+                ow-recipe-add(index) => { root.ow-recipe-add(index); }
+                shell-ext-toggle(label, enabled) => { root.shell-ext-toggle(label, enabled); }
+                shell-menu-changed(on) => { root.shell-menu-changed(on); }
+            } // <- end of the OPEN WITH tab
         }
     }
     // ===== Context menu of a keyboard shortcut =====
