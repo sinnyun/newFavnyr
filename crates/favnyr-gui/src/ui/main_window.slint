@@ -28,6 +28,7 @@ import { CommandIcon, IconMenuRow, MenuItem, OwRecipeButton, ShellMenuRow, Split
 import { PanelComponent } from "panel.slint";
 import { WorkspaceRow, WsButton } from "workspaces.slint";
 import { FfmpegCmdRow, ProgressToast } from "progress.slint";
+import { OverlayToasts } from "overlays/toasts.slint";
 import { ActivityRail, FavPanel, Sidebar, SidebarHeaderAction } from "sidebar.slint";
 import { ComboBox, VerticalBox, HorizontalBox, ScrollView, LineEdit, Button, SpinBox, CheckBox, Palette } from "std-widgets.slint";
 
@@ -6706,250 +6707,38 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ===== Non-blocking progress toasts, stacked bottom-right =====
-        // Cards are drawn upwards from the bottom corner. Past the third one the
-        // stack would eat the window, so the remainder is summarised by the chip
-        // below. Each card runs its own auto-dismiss countdown.
-        for op[i] in root.ops : ProgressToast {
-            visible: i < 3;
-            x: parent.width - self.width - 16px;
-            y: parent.height - 16px - (i + 1) * 88px - i * 8px;
-            op-state: op.state;
-            progress: op.progress;
-            indeterminate: op.indeterminate;
-            title: op.title;
-            detail: op.detail;
-            percent: op.percent;
-            cancel-label: root.strings.btn-cancel;
-            cancel => { root.op-cancel(op.id); }
-            dismiss => { root.op-dismiss(op.id); }
-        }
-        // Sits one slot above the third card, on the same right edge.
-        if root.ops.length > 3 : Rectangle {
-            x: parent.width - self.width - 16px;
-            y: parent.height - 16px - 3 * 88px - 3 * 8px - 32px;
-            width: 360px;
-            height: 32px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-            // Absorbs clicks on the chip (but NOT elsewhere → non-blocking).
-            TouchArea { }
-            Text {
-                text: root.ops-more-text;
-                font-size: 12px;
-                color: Theme.foreground.with-alpha(0.7);
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-
-        // ===== Drag-and-drop indicator — pill following the cursor =====
-        // Icon, tint and label reflect the action in real time. It rides a FILE
-        // drag anywhere, a TAB drag while it hovers the favorites, and a sidebar
-        // location drag while no tab gap or panel zone can accept it. A
-        // favorite that only supports reordering uses the same forbidden state
-        // outside its tree. Over the favorites, a file/tab drag reads as "Add to
-        // favorites"; otherwise the file action drives it: open with the
-        // executable target, copy (Ctrl), or move/menu.
-        if root.file-drag-active
-                || (root.drag-active && fav-panel.hover-panel)
-                || root.sidebar-item-drop-will-cancel
-                || root.favorite-reorder-drop-will-cancel : drag-pill := Rectangle {
-            // A drag over the favorites bookmarks the target — same for a file
-            // or a tab drag — which outranks the file-specific move/copy states.
-            property <bool> over-fav: fav-panel.hover-panel;
-            // File drags and non-droppable location/reorder drags share the
-            // same compact forbidden state. Valid sidebar and favorite targets
-            // already have an insertion line or panel preview, so this is only
-            // a no-op.
-            property <bool> will-cancel:
-                root.file-drop-will-cancel
-                || root.sidebar-item-drop-will-cancel
-                || root.favorite-reorder-drop-will-cancel;
-            // Beside the cursor (not underneath). File, location and pure
-            // favorite-reorder drags each contribute their live coordinates.
-            x: (root.file-drag-active
-                ? root.file-drag-abs-x
-                : (root.favorite-reorder-drop-will-cancel
-                    ? fav-panel.reorder-drag-abs-x
-                    : root.drag-abs-x)) + 14px;
-            y: (root.file-drag-active
-                ? root.file-drag-abs-y
-                : (root.favorite-reorder-drop-will-cancel
-                    ? fav-panel.reorder-drag-abs-y
-                    : root.drag-abs-y)) + 12px;
-            width: drag-feedback-row.preferred-width + 18px;
-            height: 26px;
-            border-radius: 7px;
-            // Favorites first (accent). Otherwise the NON-DROPPABLE ZONE takes
-            // priority (red + "forbidden"), then exec, copy, move. A single
-            // element (no separate floating badge) → lighter display.
-            background: drag-pill.over-fav
-                ? Theme.accent-background
-                : (drag-pill.will-cancel
-                    ? Tokens.danger
-                    : (root.file-drag-target-exec
-                        ? Tokens.warning
-                        : (root.file-drag-copy ? Tokens.success : Theme.accent-background)));
-            drop-shadow-blur: 10px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drag-feedback-row := HorizontalLayout {
-                padding-left: 9px;
-                padding-right: 9px;
-                spacing: 7px;
-                // An Image directly nested in a Layout is top-aligned
-                // by Slint. The full-height slot guarantees vertical centering.
-                Rectangle {
-                    width: 15px;
-                    Image {
-                        width: 15px;
-                        height: 15px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        source: drag-pill.over-fav
-                            ? @image-url("../../assets/icons/bookmark.svg")
-                            : (drag-pill.will-cancel
-                                ? @image-url("../../assets/icons/no-drop.svg")
-                                : (root.file-drag-target-exec
-                                    ? @image-url("../../assets/icons/application.svg")
-                                    : (root.file-drag-copy
-                                        ? @image-url("../../assets/icons/plus.svg")
-                                        : @image-url("../../assets/icons/move.svg"))));
-                        colorize: Theme.accent-foreground;
-                    }
-                }
-                // Non-droppable zone shows only the "forbidden" icon → no label
-                // (the pill shrinks to a round dot). The favorites case always
-                // labels ("Add to favorites").
-                if drag-pill.over-fav || !drag-pill.will-cancel : Text {
-                    text: drag-pill.over-fav
-                        ? root.strings.drop-favorite
-                        : (root.file-drag-target-exec
-                            ? root.strings.drag-open-with
-                            : (root.file-drag-copy ? root.strings.drop-copy : root.strings.drop-move));
-                    font-size: 11px;
-                    color: Theme.accent-foreground;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        // ===== Swap pill — the verb of a view drag =====
-        // Its own pill rather than a fifth branch in the cascade above: the two
-        // drags can never run at once (one starts on a row, the other on the
-        // grip), and that cascade is deep enough already.
-        //
-        // ONE glyph, on the cursor, rather than one per tile: the subject of
-        // the verb is the PAIR, and saying it twice would read as "each of them
-        // does something".
-        if root.view-drag-active : Rectangle {
-            x: root.view-drag-abs-x + 14px;
-            y: root.view-drag-abs-y + 12px;
-            width: swap-pill-row.preferred-width + 18px;
-            height: 26px;
-            border-radius: 7px;
-            // Leaving the window is a placement ELSEWHERE, not a loss:
-            // accent, never red. The red is kept for "releasing here does
-            // nothing at all".
-            background: (root.view-drag-target >= 0 || root.view-drag-outside)
-                ? Theme.accent-background
-                : Tokens.danger;
-            drop-shadow-blur: 10px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            swap-pill-row := HorizontalLayout {
-                padding-left: 9px;
-                padding-right: 9px;
-                spacing: 7px;
-                // An Image nested directly in a layout is top-aligned by
-                // Slint; the full-height slot centres it.
-                Rectangle {
-                    width: 15px;
-                    Image {
-                        width: 15px;
-                        height: 15px;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        source: root.view-drag-outside
-                            ? @image-url("../../assets/icons/detach.svg")
-                            : (root.view-drag-target >= 0
-                                ? @image-url("../../assets/icons/swap.svg")
-                                : @image-url("../../assets/icons/no-drop.svg"));
-                        colorize: Theme.accent-foreground;
-                    }
-                }
-                // Nothing under the cursor → the icon alone and the pill
-                // shrinks to a dot, the same abbreviation the file pill uses.
-                if root.view-drag-target >= 0 || root.view-drag-outside : Text {
-                    text: root.view-drag-outside
-                        ? root.strings.drop-detach
-                        : root.strings.drop-swap;
-                    font-size: 11px;
-                    color: Theme.accent-foreground;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        // ===== GLOBAL "notice" toast (bottom-center, non-blocking) =====
-        // Transient feedback for silent cases (e.g. access denied to an
-        // unreadable folder, which would otherwise look like an empty folder). Subtle
-        // "danger" tint + lock icon. Auto-dismiss after 2.8s.
-        if root.notice-text != "" : notice-box := Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: parent.height - self.height - 18px;
-            height: 38px;
-            width: notice-row.preferred-width + 32px;
-            border-radius: 10px;
-            // Tint based on tone: success green · info accent · danger red.
-            property <color> tone-color: root.notice-tone == 1
-                ? Tokens.success
-                : (root.notice-tone == 2 ? Theme.accent-background : Tokens.danger);
-            background: root.notice-tone == 1
-                ? (Theme.dark ? #1e2a1c : #eef4e8)
-                : (root.notice-tone == 2
-                    ? (Theme.dark ? #1c2530 : #e9eff8)
-                    : (Theme.dark ? #2a1c20 : #fbe9ea));
-            border-width: 1px;
-            border-color: self.tone-color.with-alpha(0.45);
-            drop-shadow-blur: 16px;
-            drop-shadow-color: #000000.with-alpha(0.30);
-            drop-shadow-offset-y: 3px;
-            notice-row := HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                spacing: 9px;
-                Image {
-                    width: 15px;
-                    height: 15px;
-                    y: (parent.height - self.height) / 2;
-                    // 0 lock · 1 open lock · 2 check · 3 bookmark.
-                    source: root.notice-icon == 1
-                        ? @image-url("../../assets/icons/unlock.svg")
-                        : (root.notice-icon == 2
-                            ? @image-url("../../assets/icons/check.svg")
-                            : (root.notice-icon == 3
-                                ? @image-url("../../assets/icons/bookmark.svg")
-                                : @image-url("../../assets/icons/lock.svg")));
-                    colorize: notice-box.tone-color;
-                }
-                Text {
-                    text: root.notice-text;
-                    font-size: 12.5px;
-                    font-weight: 600;
-                    color: Theme.foreground;
-                    vertical-alignment: center;
-                }
-            }
-        }
-        Timer {
-            interval: root.notice-duration;
-            running: root.notice-text != "";
-            triggered => { root.notice-text = ""; }
+        // ===== Progress toasts, drag pills and the global notice =====
+        // Extracted to overlays/toasts.slint; the forwards below are the
+        // whole contract with it (state in, dismissals back out).
+        OverlayToasts {
+            strings: root.strings;
+            ops: root.ops;
+            ops-more-text: root.ops-more-text;
+            op-cancel(id) => { root.op-cancel(id); }
+            op-dismiss(id) => { root.op-dismiss(id); }
+            drag-active: root.drag-active;
+            drag-abs-x: root.drag-abs-x;
+            drag-abs-y: root.drag-abs-y;
+            file-drag-active: root.file-drag-active;
+            file-drag-abs-x: root.file-drag-abs-x;
+            file-drag-abs-y: root.file-drag-abs-y;
+            file-drag-target-exec: root.file-drag-target-exec;
+            file-drag-copy: root.file-drag-copy;
+            file-drop-will-cancel: root.file-drop-will-cancel;
+            sidebar-item-drop-will-cancel: root.sidebar-item-drop-will-cancel;
+            favorite-reorder-drop-will-cancel: root.favorite-reorder-drop-will-cancel;
+            fav-hover-panel: fav-panel.hover-panel;
+            fav-reorder-drag-abs-x: fav-panel.reorder-drag-abs-x;
+            fav-reorder-drag-abs-y: fav-panel.reorder-drag-abs-y;
+            view-drag-active: root.view-drag-active;
+            view-drag-abs-x: root.view-drag-abs-x;
+            view-drag-abs-y: root.view-drag-abs-y;
+            view-drag-target: root.view-drag-target;
+            view-drag-outside: root.view-drag-outside;
+            notice-text <=> root.notice-text;
+            notice-tone: root.notice-tone;
+            notice-icon: root.notice-icon;
+            notice-duration: root.notice-duration;
         }
         // Auto-expand: a collapsed container hovered during a drag
         // expands after a short delay (in-place insertion on the bridge side → the ongoing
