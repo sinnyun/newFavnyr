@@ -252,5 +252,6 @@ files touched, so a behaviour can be traced back to its source.
 **Notes**
 
 - 验证：每块搬完都跑**行级校验**——脚本从 `git show HEAD:…` 取原始文件，把搬走的区块去缩进后与新区块逐行比对，只允许三类改写（标识符替换、跨边界几何改读 `root.*` / `parent.*`、注释列对齐），任何越界改写或孤儿 id 都会拒绝写盘；再核对组件声明成员与实例转发一一对应、大括号配平、单文件 ≤ 800 行。每个提交后 `cargo check -p favnyr-gui` 全绿（Slint codegen 确实重跑：`slint-build` 对每个被加载的 `.slint` 都发了 `rerun-if-changed`）。收尾：`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed；`cargo fmt --check`、`cargo clippy -p favnyr-gui --all-targets -- -D warnings` 干净。
+- 冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，日志到 `starting Slint event loop init_ms=97`（工作区恢复 panels=1），无 panic、无 Slint 加载错误。
 - 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突），**列表区选择（单击 / Ctrl / Shift / 右键 / 双击）**、**左侧 gutter 条拉出的橡皮筋与拖到上下边缘的自动滚动**、**列头的排序 / 重排 / 调整宽度**、**两条自绘滚动条的拖动**。
 - 本地 `main` 领先 `origin/main`（`6e1fe75`…`f0806dc` 共 11 个提交未推送），本轮未推送。
