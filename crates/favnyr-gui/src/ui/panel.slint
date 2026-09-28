@@ -8,6 +8,7 @@ import { FilterBar } from "widgets/inputs.slint";
 import { PanelTabsBar } from "panel/tabs_bar.slint";
 import { PanelNavBar } from "panel/nav_bar.slint";
 import { PanelList } from "panel/list.slint";
+import { PanelOverlays } from "panel/overlays.slint";
 
 export component PanelComponent inherits Rectangle {
     // IMPORTANT: `preferred-width: 0` is necessary for the splitter
@@ -710,104 +711,23 @@ export component PanelComponent inherits Rectangle {
 
     } // closes content-clip (rectangular clip wrapper = crisp)
 
-    // ===== File drop target =====
-    // Veil + accent outline on the hovered view during a file drag
-    // (except the source view). Purely visual (no TouchArea).
-    if root.file-drag-over && !root.is-file-drag-source : Rectangle {
-        background: Theme.accent-background.with-alpha(0.10);
-        border-width: 2px;
-        border-color: Theme.accent-background;
-        border-radius: Tokens.radius-panel;
-    }
-
-    // ===== Close / merge previews =====
-    // (A) Hovering the "x" → RED veil (explicit close = destruction).
-    if root.close-hover : Rectangle {
-        background: Tokens.danger.with-alpha(0.10);
-    }
-    // (B) Dragging the last tab → NEUTRAL grey veil (absorption, not danger).
-    // The content is additionally faded to 55% (see the VerticalLayout's opacity).
-    if root.leaving : Rectangle {
-        background: Theme.foreground.with-alpha(0.05);
-    }
-    // (C) Swap: both views of the pair carry the SAME mark, at the same
-    // instant. Two scales of one signal — the veil carries far, and is what
-    // makes the far end of the pair noticed across the screen; the inner filet
-    // says the verb up close.
-    //
-    // A filet was chosen over a fill because it is one pixel whatever the
-    // tile's area: the two members of a pair weigh the same to the eye even
-    // when their sizes do not. And the accent outline alone could not carry
-    // the message — the view being carried is almost always the ACTIVE one,
-    // which already wears it.
-    //
-    // Nothing fades here. Fading to 55% is the word for "this view dissolves",
-    // which is true of an absorption and false of a swap: nothing is lost, it
-    // comes back elsewhere.
-    //
-    // These two are NOT conditional, unlike the veils above: they fade rather
-    // than cut, and an element that comes and goes cannot fade. The colour
-    // itself is animated, so no layer is forced on the subtree. At rest both
-    // are fully transparent.
-    Rectangle {
-        background: root.swap-lit
-            ? Theme.accent-background.with-alpha(0.08)
-            : Theme.accent-background.with-alpha(0.0);
-        animate background { duration: 110ms; easing: ease-out; }
-    }
-    // Inset by 3px, so the filet runs on the bare surface ring that
-    // `Tokens.panel-pad` leaves all around the content: no listing, no
-    // thumbnail, however colourful, ever reaches it.
-    Rectangle {
-        x: 3px;
-        y: 3px;
-        width: parent.width - 6px;
-        height: parent.height - 6px;
-        background: transparent;
-        border-width: 1px;
-        border-color: root.swap-lit
-            ? Theme.accent-background.with-alpha(0.45)
-            : Theme.accent-background.with-alpha(0.0);
-        border-radius: Tokens.radius-panel - 3px;
-        animate border-color { duration: 110ms; easing: ease-out; }
-    }
-
-    // ===== Drop zone overlay =====
-    // During a tab drag, the hovered panel shows the candidate zone:
-    // the accent plate occupies the half the new panel would take (or
-    // the whole panel in the center = move), + an oriented cut line.
-    // Only one zone visible at a time (by design): only the panel under the
-    // cursor has `drag-over`. Purely visual (no TouchArea → intercepts
-    // nothing; the drag stays driven by the tab).
-    // No plate when the tab insertion line is active (header):
-    // strip → insertion line; body → zone plate. Clean separation.
-    if root.drag-panel-zones && root.drag-over
-            && (root.drag-zone == 1 || root.drag-panel-split-edges)
-            && root.drag-zone > 0 && root.drag-preview-idx < 0 : Rectangle {
-        // Candidate plate.
-        Rectangle {
-            x: root.drag-zone == 3 ? root.width / 2 : 0px;
-            y: root.drag-zone == 5 ? root.height / 2 : 0px;
-            width: (root.drag-zone == 2 || root.drag-zone == 3) ? root.width / 2 : root.width;
-            height: (root.drag-zone == 4 || root.drag-zone == 5) ? root.height / 2 : root.height;
-            background: Theme.accent-background.with-alpha(0.16);
-            border-width: 2px;
-            border-color: Theme.accent-background.with-alpha(0.9);
-            border-radius: Tokens.radius-overlay;
-        }
-        // Cut line — vertical (side by side) or horizontal (stacked).
-        if root.drag-zone == 2 || root.drag-zone == 3 : Rectangle {
-            x: root.width / 2 - 1px;
-            width: 2px;
-            height: root.height;
-            background: Theme.accent-background;
-        }
-        if root.drag-zone == 4 || root.drag-zone == 5 : Rectangle {
-            y: root.height / 2 - 1px;
-            width: root.width;
-            height: 2px;
-            background: Theme.accent-background;
-        }
+    // ===== Overlays: drop veil, previews, drop zones =====
+    // Purely visual layers above the content — veils saying what a release
+    // would do (file drop, close, merge, swap) and the tab-drag drop-zone
+    // plate. They live in `panel/overlays.slint`, each with its rationale.
+    overlays := PanelOverlays {
+        width: 100%;
+        height: 100%;
+        file-drag-over: root.file-drag-over;
+        is-file-drag-source: root.is-file-drag-source;
+        close-hover: root.close-hover;
+        leaving: root.leaving;
+        swap-lit: root.swap-lit;
+        drag-panel-zones: root.drag-panel-zones;
+        drag-over: root.drag-over;
+        drag-panel-split-edges: root.drag-panel-split-edges;
+        drag-zone: root.drag-zone;
+        drag-preview-idx: root.drag-preview-idx;
     }
 }
 
