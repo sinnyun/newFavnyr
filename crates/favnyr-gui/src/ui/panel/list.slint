@@ -1,7 +1,7 @@
 // The list body of one panel: the column header, the rows (list or grid) with
-// their vertical scroll, the "folder not found" banner, the custom scrollbars,
-// the pointer-selection layer on top of it all, and the left gutter strip
-// that shares its rubber band.
+// their vertical scroll, the "folder not found" banner, the pointer-selection
+// layer on top of it all, and the left gutter strip that shares its rubber
+// band. The two custom scrollbars live in `panel/scrollbars.slint`.
 //
 // Extracted from panel.slint. Both pointer layers of the rubber band live
 // here, so the band's state does too; the panel keeps the file-drag flags
@@ -12,6 +12,7 @@ import { PanelView, Strings } from "../structs.slint";
 import { Note, Theme, Tokens } from "../theme.slint";
 import { ColumnHeader, FileRowView, FileTileView, SectionHeaderView } from "../widgets/rows.slint";
 import { PanelSelection } from "selection.slint";
+import { PanelScrollbars } from "scrollbars.slint";
 
 export component PanelList inherits Rectangle {
     vertical-stretch: 1;
@@ -660,112 +661,26 @@ export component PanelList inherits Rectangle {
         } // closes the VerticalLayout inside the Flickable
     } // closes Flickable
 
-    // ===== Custom horizontal scrollbar (visible on overflow) =====
-    if needs-hscroll : hscrollbar := Rectangle {
+    // ===== Custom scrollbars =====
+    // Both bars live in `panel/scrollbars.slint`. They stay children of THIS
+    // component (sized to it, in front of the Flickable): the Flickable and
+    // `list-area` clip, so a bar placed inside them would be clipped away
+    // together with the content it is meant to follow.
+    scrollbars := PanelScrollbars {
         x: 0;
-        y: parent.height - 7px;
+        y: 0;
         width: parent.width;
-        height: 5px;
-        // TRANSPARENT track (no more background band): discreet, can
-        // no longer read as a dark line.
-        background: transparent;
-        border-radius: 2.5px;
-
-        property <length> thumb-w:
-            max(30px, self.width * flickable.width / max(1px, flickable.viewport-width));
-
-        // Thumb: position driven by the Flickable's viewport-x.
-        Rectangle {
-            x: -flickable.viewport-x
-                / max(1px, flickable.viewport-width - flickable.width)
-                * (hscrollbar.width - hscrollbar.thumb-w);
-            y: 0;
-            width: hscrollbar.thumb-w;
-            height: parent.height;
-            // Dimmed (0.22 at rest, formerly 0.4) → light indicator, not a
-            // dark bar; crisp accent on hover/drag.
-            background: thumb-touch.has-hover || thumb-touch.pressed
-                ? Theme.accent-background.with-alpha(0.7)
-                : Theme.foreground.with-alpha(0.22);
-            border-radius: parent.border-radius;
-
-            property <length> drag-start-x;
-            property <length> drag-start-viewport-x;
-            thumb-touch := TouchArea {
-                mouse-cursor: pointer;
-                pointer-event(ev) => {
-                    if (ev.button == PointerEventButton.left
-                            && ev.kind == PointerEventKind.down) {
-                        root.close-ctx-menu();
-                        parent.drag-start-x = self.absolute-position.x + self.mouse-x;
-                        parent.drag-start-viewport-x = flickable.viewport-x;
-                    }
-                }
-                moved => {
-                    if (self.pressed) {
-                        flickable.viewport-x = parent.drag-start-viewport-x
-                            - (self.absolute-position.x + self.mouse-x - parent.drag-start-x)
-                                / max(1px, hscrollbar.width - hscrollbar.thumb-w)
-                                * (flickable.viewport-width - flickable.width);
-                    }
-                }
-            }
-        }
-    }
-
-    // ===== Custom VERTICAL scrollbar (visible on vertical overflow) =====
-    // Pinned to the RIGHT edge of the VIEW (not the content) → ALWAYS visible,
-    // even when the columns overflow horizontally. Same
-    // style/logic as the
-    // custom horizontal scrollbar.
-    if root.rb-min-vy < 0px : vscrollbar := Rectangle {
-        x: parent.width - 7px;
-        y: 32px;                              // below the header (30px + 2px spacing)
-        width: 5px;
-        height: flickable.height - 32px;      // stops above the hscrollbar
-        background: transparent;
-        border-radius: 2.5px;
-
-        property <length> thumb-h:
-            max(30px, self.height * rows-scroll.height / max(1px, rows-scroll.viewport-height));
-
-        Rectangle {
-            x: 0;
-            // Position driven by viewport-y (∈ [rb-min-vy, 0]).
-            y: -rows-scroll.viewport-y
-                / max(1px, rows-scroll.viewport-height - rows-scroll.height)
-                * (vscrollbar.height - vscrollbar.thumb-h);
-            width: parent.width;
-            height: vscrollbar.thumb-h;
-            background: vthumb-touch.has-hover || vthumb-touch.pressed
-                ? Theme.accent-background.with-alpha(0.7)
-                : Theme.foreground.with-alpha(0.22);
-            border-radius: parent.border-radius;
-
-            property <length> drag-start-y;
-            property <length> drag-start-viewport-y;
-            vthumb-touch := TouchArea {
-                mouse-cursor: pointer;
-                pointer-event(ev) => {
-                    if (ev.button == PointerEventButton.left
-                            && ev.kind == PointerEventKind.down) {
-                        root.close-ctx-menu();
-                        parent.drag-start-y = self.absolute-position.y + self.mouse-y;
-                        parent.drag-start-viewport-y = rows-scroll.viewport-y;
-                    }
-                }
-                moved => {
-                    if (self.pressed) {
-                        rows-scroll.viewport-y = clamp(
-                            parent.drag-start-viewport-y
-                                - (self.absolute-position.y + self.mouse-y - parent.drag-start-y)
-                                    / max(1px, vscrollbar.height - vscrollbar.thumb-h)
-                                    * (rows-scroll.viewport-height - rows-scroll.height),
-                            root.rb-min-vy, 0px);
-                    }
-                }
-            }
-        }
+        height: parent.height;
+        needs-hscroll: root.needs-hscroll;
+        rb-min-vy: root.rb-min-vy;
+        flick-w: flickable.width;
+        flick-h: flickable.height;
+        flick-vw: flickable.viewport-width;
+        flick-vx <=> flickable.viewport-x;
+        rows-h: rows-scroll.height;
+        rows-vh: rows-scroll.viewport-height;
+        rows-vy <=> rows-scroll.viewport-y;
+        close-ctx-menu => { root.close-ctx-menu(); }
     }
 
     // ===== Left gutter: draggable strip =====

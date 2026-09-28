@@ -1,0 +1,139 @@
+// The two custom scrollbars of the list: the horizontal one for column
+// overflow, the vertical one for the rows.
+//
+// Extracted from panel/list.slint. Both sit in the LIST's frame rather than
+// the Flickable's because the Flickable and `list-area` clip, and a clip
+// would hide the bar together with the content it tracks. Nothing here owns
+// a scroll position: the bars only read and set the two offsets the list
+// already keeps, and the vertical one is clamped by the same `rb-min-vy`
+// bound the keyboard scroll and the edge auto-scroll use.
+
+import { Theme } from "../theme.slint";
+
+export component PanelScrollbars inherits Rectangle {
+    // ===== Contract with PanelList =====
+    // The bars live in the LIST frame (see the header), so they are sized to it
+    // and the two scroll offsets they track are handed over: read-only for the
+    // extents, two-way for the positions themselves. `rb-min-vy` is the single
+    // lower bound of the vertical scroll, so it comes from the list too rather
+    // than being computed twice.
+    in property <bool> needs-hscroll;
+    in property <length> rb-min-vy;
+    in property <length> flick-w;
+    in property <length> flick-h;
+    in property <length> flick-vw;
+    in-out property <length> flick-vx;
+    in property <length> rows-h;
+    in property <length> rows-vh;
+    in-out property <length> rows-vy;
+
+    callback close-ctx-menu();
+
+    // ===== Custom horizontal scrollbar (visible on overflow) =====
+    if needs-hscroll : hscrollbar := Rectangle {
+        x: 0;
+        y: root.height - 7px;
+        width: root.width;
+        height: 5px;
+        // TRANSPARENT track (no more background band): discreet, can
+        // no longer read as a dark line.
+        background: transparent;
+        border-radius: 2.5px;
+
+        property <length> thumb-w:
+            max(30px, self.width * root.flick-w / max(1px, root.flick-vw));
+
+        // Thumb: position driven by the Flickable's viewport-x.
+        Rectangle {
+            x: -root.flick-vx
+                / max(1px, root.flick-vw - root.flick-w)
+                * (hscrollbar.width - hscrollbar.thumb-w);
+            y: 0;
+            width: hscrollbar.thumb-w;
+            height: parent.height;
+            // Dimmed (0.22 at rest, formerly 0.4) → light indicator, not a
+            // dark bar; crisp accent on hover/drag.
+            background: thumb-touch.has-hover || thumb-touch.pressed
+                ? Theme.accent-background.with-alpha(0.7)
+                : Theme.foreground.with-alpha(0.22);
+            border-radius: parent.border-radius;
+
+            property <length> drag-start-x;
+            property <length> drag-start-viewport-x;
+            thumb-touch := TouchArea {
+                mouse-cursor: pointer;
+                pointer-event(ev) => {
+                    if (ev.button == PointerEventButton.left
+                            && ev.kind == PointerEventKind.down) {
+                        root.close-ctx-menu();
+                        parent.drag-start-x = self.absolute-position.x + self.mouse-x;
+                        parent.drag-start-viewport-x = root.flick-vx;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.flick-vx = parent.drag-start-viewport-x
+                            - (self.absolute-position.x + self.mouse-x - parent.drag-start-x)
+                                / max(1px, hscrollbar.width - hscrollbar.thumb-w)
+                                * (root.flick-vw - root.flick-w);
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== Custom VERTICAL scrollbar (visible on vertical overflow) =====
+    // Pinned to the RIGHT edge of the VIEW (not the content) → ALWAYS visible,
+    // even when the columns overflow horizontally. Same
+    // style/logic as the
+    // custom horizontal scrollbar.
+    if root.rb-min-vy < 0px : vscrollbar := Rectangle {
+        x: root.width - 7px;
+        y: 32px;                              // below the header (30px + 2px spacing)
+        width: 5px;
+        height: root.flick-h - 32px;          // stops above the hscrollbar
+        background: transparent;
+        border-radius: 2.5px;
+
+        property <length> thumb-h:
+            max(30px, self.height * root.rows-h / max(1px, root.rows-vh));
+
+        Rectangle {
+            x: 0;
+            // Position driven by viewport-y (∈ [rb-min-vy, 0]).
+            y: -root.rows-vy
+                / max(1px, root.rows-vh - root.rows-h)
+                * (vscrollbar.height - vscrollbar.thumb-h);
+            width: parent.width;
+            height: vscrollbar.thumb-h;
+            background: vthumb-touch.has-hover || vthumb-touch.pressed
+                ? Theme.accent-background.with-alpha(0.7)
+                : Theme.foreground.with-alpha(0.22);
+            border-radius: parent.border-radius;
+
+            property <length> drag-start-y;
+            property <length> drag-start-viewport-y;
+            vthumb-touch := TouchArea {
+                mouse-cursor: pointer;
+                pointer-event(ev) => {
+                    if (ev.button == PointerEventButton.left
+                            && ev.kind == PointerEventKind.down) {
+                        root.close-ctx-menu();
+                        parent.drag-start-y = self.absolute-position.y + self.mouse-y;
+                        parent.drag-start-viewport-y = root.rows-vy;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.rows-vy = clamp(
+                            parent.drag-start-viewport-y
+                                - (self.absolute-position.y + self.mouse-y - parent.drag-start-y)
+                                    / max(1px, vscrollbar.height - vscrollbar.thumb-h)
+                                    * (root.rows-vh - root.rows-h),
+                            root.rb-min-vy, 0px);
+                    }
+                }
+            }
+        }
+    }
+}
