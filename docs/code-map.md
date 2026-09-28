@@ -3,7 +3,7 @@
 本文件是仓库的"文件级说明书"：每个自有文件负责什么、关键标识符、依赖关系、契约。
 正文中文，文件路径 / 类型 / 函数名保留英文原文。
 
-- 统计日期：2026-09-28（**行形状拆分落地后**统计；§1 合计已含 `.slint` 全部 35 个文件，拆分前基线与对照见 §6）
+- 统计日期：2026-09-28（**第二批 Rust 拆分落地后**统计；§1 合计已含 `.slint` 全部 35 个文件，拆分前基线与两批对照见 §6）
 - 统计口径：`find` 遍历仓库，行数取 `wc -l`；**代码文件** = `.rs` / `.slint` / `.toml` / `.bat` / `.yml` / `.md`；**排除** `vendor/`（第三方源码）、`target/`、`.git/`、`.reasonix/`（工具快照）；资源文件（`assets/icons/*.svg` 等、`Cargo.lock`、`LICENSE`、`.gitattributes`、`.gitignore`）不计入
 - 拆分方案与执行记录另见 [split-plan.md](split-plan.md)（§16 为进度与偏差）
 
@@ -11,20 +11,20 @@
 
 | 范围 | 文件数 | 行数 |
 | --- | --- | --- |
-| `crates/favnyr-core`（.rs） | 52 | 15 211 |
-| `crates/favnyr-gui`（.rs，含 `build.rs`） | 84 | 28 452 |
+| `crates/favnyr-core`（.rs） | 53 | 15 214 |
+| `crates/favnyr-gui`（.rs，含 `build.rs`） | 99 | 28 505 |
 | `crates/favnyr-gui`（.slint） | 35 | 18 014 |
 | `crates/favnyr-gui/i18n`（6 个 .toml） | 6 | 2 850 |
 | 两个 crate 的 `Cargo.toml` | 2 | 115 |
-| 工作区根 / CI / 文档（.toml / .bat / .yml / .md） | 16 | 2 307 |
-| **自有合计** | **195** | **66 949** |
+| 工作区根 / CI / 文档（.toml / .bat / .yml / .md） | 16 | 2 394 |
+| **自有合计** | **211** | **67 092** |
 | `vendor/parley`（第三方，不计入，按其全部文件计） | 46 | 13 997 |
 
 两个拆分重点的现状（拆分前：`bridge.rs` 19 001 行、`main_window.slint` 15 897 行，合计占自有代码 56%）：
 
-- `crates/favnyr-gui/src/bridge.rs` → **`bridge/` 47 个文件**，`mod.rs` 仅 151 行（模块声明 + 重导出 + `defer`）。最大者：`tests.rs` 2 346、`state.rs` 1 508、`thumbs.rs` 862、`rows/build.rs` 855、`install/mod.rs` 791。对外的 `crate::bridge::…` 路径全部不变。
+- `crates/favnyr-gui/src/bridge.rs` → **`bridge/` 62 个文件**，`mod.rs` 仅 151 行（模块声明 + 重导出 + `defer`）。最大者：`install/mod.rs` 791、`tests.rs` 790、`tabs.rs` 735、`install/cb_files.rs` 714、`state.rs` 674。对外的 `crate::bridge::…` 路径全部不变。
 - `crates/favnyr-gui/src/ui/main_window.slint` → **`ui/` 35 个 .slint**：`main_window.slint`（3 195 行）保留 `MainWindow` 契约面（518 个成员，见 §4.4）、布局骨架与覆盖层实例（转发层）；内部组件按 `structs` / `theme` / `widgets/` / `panel` / `sidebar` / `workspaces` / `progress` 分文件，`MainWindow` 内的覆盖层区块（右键菜单、弹窗、设置面板、toast…）已全部提取到 `ui/overlays/*.slint`，设置面板的三页再下沉到 `ui/overlays/settings/*.slint`；`panel.slint` 的第二层同样落地，面板现有外壳 + `ui/panel/{tabs_bar,nav_bar,selection,list,scrollbars,overlays}.slint` 六个组件；`sidebar.slint` 也按组件再分，侧栏现有外壳（节头一族 + `Sidebar`）+ `ui/sidebar/{item,fav,rail}.slint` 三个组件；`widgets/rows.slint` 的最后一块再拆出 `ui/widgets/rows/{header,marks}.slint`（可交互的列头 + 菜单用的两个标记控件），行/分组头/瓦片三个纯视觉形状留在原文件。方案与执行记录见 split-plan.md §2 步骤 3 与 §16。
-- 13 个超 800 行文件（拆分前）中 12 个已拆到目标结构；`main_window.slint` 的转发层、`panel.slint` 的第二层、`sidebar.slint` 与 `widgets/rows.slint` 的分块均已完成，`.slint` 侧仍超 800 行的只剩 `main_window.slint`（3 195，契约面）一个，理由见 §6。
+- 13 个超 800 行文件（拆分前）已全部拆到目标结构；`main_window.slint` 的转发层、`panel.slint` 的第二层、`sidebar.slint` 与 `widgets/rows.slint` 的分块均已完成。第一批拆出的子文件里仍有 5 个超 800（`bridge/tests.rs`、`bridge/state.rs`、`bridge/thumbs.rs`、`bridge/rows/build.rs`、`core/src/fs/tests.rs`），已在第二批下沉为子模块（见 §6）。现在全仓（`vendor/parley` 除外）只剩 `main_window.slint`（3 195，契约面）一个文件超过 800 行。
 
 ## 2. 仓库结构
 
@@ -44,7 +44,7 @@ newFavnyr/
 └── crates/
     ├── favnyr-core/               与 UI 无关的核心逻辑（无网络、无 UI 依赖）
     │   └── src/
-    │       ├── fs/mod.rs  fs/{typed_path,sort,format,stats,tests}.rs
+    │       ├── fs/mod.rs  fs/{typed_path,sort,format,stats,tests}.rs  fs/tests/sorting.rs
     │       ├── fs/ops/mod.rs  fs/ops/{rename,name,copy,link,deletion,path_eq,tests}.rs
     │       ├── places/mod.rs  places/{windrives,linux,tests}.rs   mount.rs  eject.rs
     │       ├── thumbnail/mod.rs  thumbnail/{decode,psd,affinity,audio,video,pdf,tests}.rs
@@ -70,9 +70,12 @@ newFavnyr/
             ├── ui/overlays/settings/     设置面板的三页（general / shortcuts / openwith）
             ├── bridge/mod.rs      模块声明 + 重导出 + defer
             ├── bridge/*.rs        桥接外围模块（state/colinfo/nav/tabs/thumbs/…）
+            ├── bridge/state/      AppState 的数据类型（tab / panel / clipdrop / nav / opreg）
+            ├── bridge/thumbs/     scheduler.rs：缩略图队列、LRU 与在途登记
             ├── bridge/install/    install() 编排 + cb_*.rs 12 个回调簇
             ├── bridge/open_with/  picker / shellmenu / recipes / launch
-            ├── bridge/rows/       行模型：mod.rs / build.rs / icons.rs
+            ├── bridge/rows/       行模型：mod.rs / build.rs / build/{entry,subscan}.rs / icons.rs
+            ├── bridge/tests/      桥接测试的 7 个分节（opening / opregistry / openwith / thumbnails / geometry / workspace / grid）
             ├── i18n/mod.rs  i18n/{strings,labels,units,messages,tests}.rs
             ├── actions/mod.rs  actions/{opening,program,properties,shell,spawn,terminal,ffmpeg,timezone,tests}.rs
             ├── openwith/mod.rs  openwith/{windows,linux,tests}.rs
@@ -89,13 +92,13 @@ newFavnyr/
 
 ## 3. 文件清单（按行数降序）
 
-### 3.1 `crates/favnyr-core`（52 个 .rs）
+### 3.1 `crates/favnyr-core`（53 个 .rs）
 
 | 行数 | 文件 | 一句话职责 |
 | ---: | --- | --- |
-| 807 | `src/fs/tests.rs` | fs 模块测试（全仓唯一略超 800 行的文件） |
 | 754 | `src/eject.rs` | 设备安全移除 / 网络盘断开 |
 | 666 | `src/annotations.rs` | 路径级颜色与备注存储 |
+| 621 | `src/fs/tests.rs` | fs 模块测试（排序那组已下沉到 `fs/tests/sorting.rs`） |
 | 596 | `src/fs/ops/tests.rs` | 文件操作测试 |
 | 590 | `src/shortcuts.rs` | 快捷键目录、解析与键位映射 |
 | 563 | `src/thumbnail/tests.rs` | 预览生成测试 |
@@ -122,6 +125,7 @@ newFavnyr/
 | 206 | `src/thumbnail/video.rs` | ffmpeg 抽帧与时长探测 |
 | 205 | `src/workspace/named.rs` | 具名工作区文件 CRUD |
 | 198 | `src/columns.rs` | 列顺序 / 可见性 / 宽度模型 |
+| 189 | `src/fs/tests/sorting.rs` | fs 测试的排序 / 分组 / 类别那一组 |
 | 187 | `src/mount.rs` | Linux 挂载未挂载卷（udisksctl） |
 | 185 | `src/thumbnail/mod.rs` | 预览生成入口与资源上限 |
 | 179 | `src/i18n.rs` | `Lang` / `Theme` 枚举与序列化 |
@@ -146,20 +150,19 @@ newFavnyr/
 | 31 | `src/workspace/mod.rs` | `MAX_CLOSED_TABS` 与 re-export |
 | 21 | `src/error.rs` | 统一错误类型 |
 
-### 3.2 `crates/favnyr-gui`（.rs，84 个）
+### 3.2 `crates/favnyr-gui`（.rs，99 个）
 
 | 行数 | 文件 | 一句话职责 |
 | ---: | --- | --- |
-| 2 346 | `src/bridge/tests.rs` | 桥接测试（原 `bridge.rs` 测试区，未再分） |
-| 1 508 | `src/bridge/state.rs` | `AppState`、`Panel`/`Tab`/`TabBook`、剪贴板与拖拽暂存、后台作业类型 |
-| 862 | `src/bridge/thumbs.rs` | 缩略图调度（LRU + 工作线程 + 两个决策点） |
-| 855 | `src/bridge/rows/build.rs` | 行模型重建（分区 / 分组 / 子文件夹 / 样式） |
 | 791 | `src/bridge/install/mod.rs` | `install()` 编排：197 个 `install_*` 调用 + 模块声明 |
+| 790 | `src/bridge/tests.rs` | 桥接测试外壳：共享 helper 与未分节的用例（7 个分节见 `tests/`） |
 | 790 | `src/main.rs` | 二进制入口与会话恢复（未拆分） |
 | 735 | `src/bridge/tabs.rs` | 标签页与视图的取出 / 撕离 / 序列化 / 跨窗口转移 |
 | 714 | `src/bridge/install/cb_files.rs` | 安装：文件与操作回调簇（23 个） |
+| 674 | `src/bridge/state.rs` | `AppState`、`ImgMeta`、`MAX_PANELS` 与 `impl AppState`（数据类型见 `state/`） |
 | 633 | `src/winportable.rs` | Windows 便携设备（MTP/WPD） |
 | 625 | `src/bridge/progress.rs` | 进度 toast 栈、`OpRegistry` 驱动、重活入口 |
+| 603 | `src/bridge/rows/build.rs` | 行模型重建（分区 / 分组 / 样式；条目与子扫描见 `build/`） |
 | 594 | `src/openwith/linux.rs` | XDG `.desktop` 解析 |
 | 579 | `src/bridge/install/cb_view.rs` | 安装：视图 / 排序 / 分组 / 标签栏回调簇（23 个） |
 | 561 | `src/shellmenu.rs` | Windows Shell 上下文菜单宿主 |
@@ -167,6 +170,8 @@ newFavnyr/
 | 500 | `src/bridge/listing.rs` | 异步与同步列目录、孤儿行、网络提示 |
 | 499 | `src/clipboard.rs` | 与系统文件管理器互通的剪贴板 |
 | 463 | `src/bridge/open_with/recipes.rs` | 参数配方（`Recipe`/`RECIPES`/参数解析与引用） |
+| 462 | `src/bridge/thumbs/scheduler.rs` | 调度器本体：`ThumbJob`/`ThumbQueue`/`ThumbScheduler`/`ThumbLru` 与在途登记 |
+| 454 | `src/bridge/tests/geometry.rs` | 桥接测试：标签几何、缩放后的行几何与图标路由 |
 | 445 | `src/bridge/install/cb_sidebar.rs` | 安装：侧栏回调簇（14 个） |
 | 445 | `src/bridge/nav.rs` | 首次填充、刷新、`relist_panel`、加载目录 |
 | 441 | `src/bridge/selection.rs` | 选中集合、焦点与打字定位、名称过滤 |
@@ -174,6 +179,7 @@ newFavnyr/
 | 426 | `src/bridge/install/cb_openwith.rs` | 安装：打开方式回调簇（16 个） |
 | 426 | `src/bridge/install/cb_prefs.rs` | 安装：设置项回调簇（27 个） |
 | 418 | `src/winmsg.rs` | 跨实例 IPC（标签页跨窗口） |
+| 409 | `src/bridge/thumbs.rs` | 缩略图的两个决策点与 worker 接线（调度器已下沉 `thumbs/scheduler.rs`） |
 | 404 | `src/openwith/windows.rs` | `SHAssocEnumHandlers` / `IAssocHandler` |
 | 392 | `src/bridge/install/cb_nav.rs` | 安装：导航回调簇（15 个） |
 | 388 | `src/bridge/geometry.rs` | 面板几何、splitter 视图、均衡与撤销 |
@@ -183,8 +189,11 @@ newFavnyr/
 | 356 | `src/bridge/install/cb_dnd.rs` | 安装：拖放回调簇（7 个） |
 | 352 | `src/bridge/open_with/launch.rs` | 启动规划、快捷方式 / 链接、新标签打开 |
 | 337 | `src/bridge/install/cb_rows.rs` | 安装：行区宽度 / 缩放 / 图片元数据回调簇（9 个） |
+| 336 | `src/bridge/state/tab.rs` | `Tab`/`TabBook`/`ViewMode` 与会话状态的双向转换 |
 | 331 | `src/i18n/strings.rs` | `strings_for`：321 字段 `Strings` 的机械展开 |
 | 324 | `src/linportable.rs` | Linux MTP 设备发现 |
+| 320 | `src/bridge/tests/thumbnails.rs` | 桥接测试：调度优先级、去重、失效世代与 LRU |
+| 301 | `src/bridge/tests/openwith.rs` | 桥接测试：扩展名解析、配方与参数引用 / 预览 |
 | 294 | `src/bridge/favpanel.rs` | 收藏面板推送、路径解析、打开与拖拽落点 |
 | 293 | `src/bridge/install/cb_open.rs` | 安装：打开 / 上下文菜单回调簇（16 个） |
 | 287 | `src/bridge/open_with/picker.rs` | 自建打开方式 picker 的枚举与图标 |
@@ -202,26 +211,35 @@ newFavnyr/
 | 216 | `src/bridge/notices.rs` | `NoticeKind` 与 toast 文案 |
 | 210 | `src/actions/tests.rs` | 系统动作测试 |
 | 210 | `src/bridge/workspaces.rs` | 具名工作区签名 / 脏检查 / 加载 / 重置 |
+| 207 | `src/bridge/state/panel.rs` | `Panel` 与异步列表 / 子扫描的交付类型、行模型入口 |
 | 193 | `src/bridge/open_with/shellmenu.rs` | Windows shell 菜单与扩展扫描 |
 | 187 | `src/winddrag/target.rs` | 自建 `IDropTarget` |
 | 183 | `src/winddrag/mod.rs` | 拖放分类入口与注册 |
 | 180 | `src/actions/properties.rs` | 原生属性对话框 / D-Bus `FileManager1` |
+| 180 | `src/bridge/tests/grid.rs` | 桥接测试：网格排布、光标跨分区头、子文件夹与类别分组 |
 | 175 | `src/winutil.rs` | Windows 宽字符 / 长路径工具 |
 | 151 | `src/bridge/mod.rs` | 模块声明 + 重导出 + `defer` |
+| 146 | `src/bridge/rows/build/subscan.rs` | 子文件夹扫描：请求、分组、worker 与回填 |
 | 145 | `src/bridge/datafiles.rs` | 批注 / 收藏 / 打开方式的 stamp 与同步 |
 | 138 | `src/i18n/messages.rs` | 错误与提示文案构造 |
+| 137 | `src/bridge/state/opreg.rs` | 后台作业登记（`OpHandle`/`OpRegistry`/`OpDelivery`/占用键） |
 | 136 | `src/bridge/colinfo.rs` | 列宽计算、列重排、`ColumnInfo` 推送 |
 | 132 | `src/winddrag/formats.rs` | 剪贴板格式分类（`CF_HDROP` / 流 / shell IDList） |
 | 130 | `src/i18n/mod.rs` | 翻译装载、目录与 `tr` |
+| 125 | `src/bridge/tests/workspace.rs` | 桥接测试：`workspaces_differ` 的判定与易变字段 |
 | 121 | `src/openwith/mod.rs` | 中性入口与平台选择 |
 | 119 | `src/winthumb.rs` | 系统缩略图 API + PDF 的 WinRT 兜底 |
 | 116 | `src/actions/ffmpeg.rs` | ffmpeg 环境探测 |
 | 115 | `src/winshare.rs` | Windows 分享面板 |
+| 114 | `src/bridge/rows/build/entry.rs` | `entry_to_row`：`Entry` → `FileRow` 的字段填充 |
 | 110 | `src/winddrag/paths.rs` | 路径抓取与临时落盘 |
+| 110 | `src/bridge/state/clipdrop.rs` | 剪贴板与拖拽暂存（`ClipOp`/`PasteJob`/落点守卫） |
 | 109 | `src/actions/shell.rs` | 提权运行 / 打开方式 / 命令行引用 |
 | 109 | `src/winddrag/tests.rs` | 拖放测试 |
 | 104 | `src/winddrag/drag_out.rs` | shell `IDataObject` + `SHDoDragDrop` 拖出 |
+| 100 | `src/bridge/tests/opregistry.rs` | 桥接测试：`OpRegistry` 的 id、目的地占用与删除声明 |
 | 91 | `src/actions/mod.rs` | 系统动作公共 helpers 与 re-export |
+| 91 | `src/bridge/tests/opening.rs` | 桥接测试：`plan_open` 的分组与顺序 |
 | 90 | `src/bridge/watcher.rs` | `notify` 监听与防抖 |
 | 89 | `src/actions/terminal.rs` | 终端 / 回收站打开 |
 | 85 | `src/actions/timezone.rs` | `local_utc_offset_secs` |
@@ -231,8 +249,9 @@ newFavnyr/
 | 82 | `src/bridge/window.rs` | 窗口尺寸持久化 |
 | 77 | `src/bridge/settings.rs` | UI 缩放预设、ffmpeg 信息展示 |
 | 74 | `src/i18n/units.rs` | 大小 / 年龄单位桥接 |
-| 47 | `src/bridge/language.rs` | `apply_language` |
+| 65 | `src/bridge/state/nav.rs` | `NavHistory` 与 `SortState` |
 | 30 | `build.rs` | 编译 .slint（64 MB 栈线程）+ 嵌入图标 |
+| 23 | `src/bridge/language.rs` | `apply_language` |
 | 11 | `src/bridge/open_with/mod.rs` | `open_with` 子模块声明与重导出 |
 
 ### 3.3 `crates/favnyr-gui/src/ui`（35 个 .slint）
@@ -280,9 +299,9 @@ newFavnyr/
 | 行数 | 文件 | 一句话职责 |
 | ---: | --- | --- |
 | 475 ×6 | `favnyr-gui/i18n/*.toml` | 六套翻译目录（en/fr/es/de/it/zh，各 415 键） |
-| 570 | `docs/code-map.md` | 本文件 |
-| 381 | `docs/split-plan.md` | 超 800 行文件拆分方案与执行记录 |
-| 321 | `docs/CHANGELOG.md` | 变更记录（按日期倒序追加） |
+| 596 | `docs/code-map.md` | 本文件 |
+| 398 | `docs/split-plan.md` | 超 800 行文件拆分方案与执行记录 |
+| 365 | `docs/CHANGELOG.md` | 变更记录（按日期倒序追加） |
 | 178 | `deny.toml` | cargo-deny 配置 |
 | 134 | `.github/workflows/release.yml` | 打 tag 构建发布产物 |
 | 132 | `docs/view-modes-and-sections.md` | 视图模式 / 分组 / 子文件夹展开设计 |
@@ -325,7 +344,7 @@ newFavnyr/
 - `sort.rs`：`SortColumn`、`SortOrder`、`Category`、`GroupMode`（Folders/…/Category）、`sort()`。
 - `format.rs`：`SizeUnits`/`format_size`/`format_used_total`、`free_space_level`、`format_mtime`、`AgeUnits`/`format_age`/`age_bucket`、`civil_from_days`。
 - `stats.rs`：`recursive_folder_stats`、`recursive_max_mtime`（目录遍历，与格式化无关）。
-- `tests.rs`：fs 模块测试（807 行，唯一略超 800 的文件）。
+- `tests.rs`：fs 模块测试（621 行），排序 / 分组 / 类别那组 9 个用例在 `tests/sorting.rs`（189 行，含 `typed_entry` helper）。
 
 **`fs/ops/`（文件操作，全部同步，由 bridge 决定是否放后台线程）**
 
@@ -400,11 +419,11 @@ newFavnyr/
 - 退出：`persist_window_size`（`suppress_workspace_persist` 为真时跳过）、控制台 Ctrl+C 处理器。
 - 平台模块声明在此：`linportable` 仅 Linux；`winddrag`/`winportable`/`winshare`/`winthumb`/`winutil` 仅 Windows；`winmsg`/`shellmenu`/`clipboard`/`openwith`/`actions` 两平台都编（内部按平台分实现）。
 
-**`bridge/`（47 个文件）** — Rust 状态与 Slint 界面的唯一桥梁。`mod.rs` 只做模块声明与重导出（`pub use state::*;` 等），**`crate::bridge::…` 对外路径不变**。
+**`bridge/`（62 个文件）** — Rust 状态与 Slint 界面的唯一桥梁。`mod.rs` 只做模块声明与重导出（`pub use state::*;` 等），**`crate::bridge::…` 对外路径不变**。
 
 | 模块 | 文件（行数） | 内容 |
 | --- | --- | --- |
-| 状态 | `state.rs`（1 508） | `AppState`（`Rc` 共享）、`Panel`/`Tab`/`TabBook`/`ViewMode`、`NavHistory`/`SortState`、剪贴板与拖拽暂存（`ClipOp`/`TransientDropGuard`/`IncomingDropStaging`）、`OpRegistry`/`OpHandle`/`OpDelivery`、后台作业类型（`SubScanJob`/`AsyncListingDelivery`）、`MAX_PANELS` |
+| 状态 | `state.rs`（674）+ `state/`（855） | 外壳留 `AppState`（`Rc` 共享）、`ImgMeta`、`MAX_PANELS`、`impl AppState`、`remember_closed_panel`；数据类型分文件：`tab.rs`（`Tab`/`TabBook`/`ViewMode` 与序列化）、`panel.rs`（`Panel`、`AsyncListing*`/`SubScan*`）、`clipdrop.rs`（`ClipOp`/`TransientDropGuard`/`IncomingDropStaging`/`PasteJob`）、`nav.rs`（`NavHistory`/`SortState`）、`opreg.rs`（`OpRegistry`/`OpHandle`/`OpDelivery`/`reservation_key`）。子模块一律 `pub(in crate::bridge)` + 父层 `pub(super) use x::*;`，对外路径不变 |
 | 列信息 | `colinfo.rs`（136） | `col_width`/`set_col_width`/`reorder_column_by_delta`/`push_settings_columns` |
 | 通知 | `notices.rs`（216） | `NoticeKind`、`show_notice`、锁定/跳过/改名失败文案 |
 | 设置 | `settings.rs`（77） | `UI_SCALE_PRESETS`、缩放应用、ffmpeg 信息展示 |
@@ -420,13 +439,13 @@ newFavnyr/
 | 列目录 | `listing.rs`（500） | 网络路径提示、异步/同步列目录、异步结果落地、孤儿行 |
 | 几何 | `geometry.rs`（388） | 布局几何、splitter 视图、`EqualizeUndo`、`update_panels_ui` |
 | 快捷键 | `keys.rs`（236） | 分组/显示/冲突、菜单快捷键、覆盖写回、页脚 |
-| 缩略图 | `thumbs.rs`（862） | `ThumbScheduler`/`ThumbLru`/工作线程、`thumbnail_kind_for_row`、`generate_thumb`、渲染窗口 |
+| 缩略图 | `thumbs.rs`（409）+ `thumbs/scheduler.rs`（462） | 外壳留两个决策点 `thumbnail_kind_for_row`/`generate_thumb` 与 worker 接线、渲染窗口；`scheduler.rs` 留 `ThumbJob`/`ThumbLocation`/`ThumbRequest`/`ScheduledThumb`/`InFlightThumb`/`ThumbWork`/`ThumbPriority`/`ThumbQueue`/`ThumbScheduler`/`ThumbLru` |
 | 统计 | `stats.rs`（282） | 递归 mtime worker、图片元数据 worker |
-| 行模型 | `rows/`（1 623） | `mod.rs`（缩放常量、行高、`RowStyle`、分区构建）、`build.rs`（`RowsSource`/`Section`/子文件夹）、`icons.rs`（扩展名/路径/`.lnk` 图标） |
+| 行模型 | `rows/`（1 631） | `mod.rs`（缩放常量、行高、`RowStyle`、分区构建）、`build.rs`（`RowsSource`/`Section`/样式）+ `build/entry.rs`（`entry_to_row`）+ `build/subscan.rs`（子文件夹扫描的请求/分组/worker/回填）、`icons.rs`（扩展名/路径/`.lnk` 图标） |
 | 选中 | `selection.rs`（441） | 选中集合操作、焦点与打字定位、名称过滤、剪切标记 |
 | 其他 | `language.rs`（23）、`restore.rs`（82）、`tabstrip.rs`（284）、`watcher.rs`（90）、`window.rs`（82）、`workspaces.rs`（210） | `apply_language`；恢复会话的 `home_dir`/`build_panels`；面包屑与标签条几何；`notify` 防抖；窗口尺寸持久化；具名工作区签名与加载 |
 | 安装 | `install/mod.rs`（791）+ `cb_*.rs` ×12 | `install()` 编排（197 个调用，**顺序即初始化时序，不得重排**）；回调按簇分文件：`cb_nav`(15)/`cb_view`(23)/`cb_rows`(9)/`cb_open`(16)/`cb_openwith`(16)/`cb_files`(23)/`cb_sidebar`(14)/`cb_favorites`(21)/`cb_clipboard`(12)/`cb_dnd`(7)/`cb_workspace`(14)/`cb_prefs`(27) |
-| 测试 | `tests.rs`（2 346） | 原 `bridge.rs` 测试区，未再分 |
+| 测试 | `tests.rs`（790）+ `tests/`（1 571） | 原 `bridge.rs` 测试区。外壳留共享 helper（`plain_style`/`layout_at`/`opener_for`/`files`、`tab`/`panel`/`ws`、`grid_style`/`named_row`/`header_row`/`test_entry`、`op_handle`/`op_handle_writing`）与未分节的用例；7 个分节下沉 `tests/`：`opening`(6)/`opregistry`(7)/`openwith`(10)/`thumbnails`(9)/`geometry`(14)/`workspace`(7)/`grid`(6) 个用例，外壳自留 33 个。测试项保持私有，故子模块只声明 `mod x;`，不加重导出 |
 
 关键约定（拆分后仍必须遵守）：闭包捕获的 `Rc`/`Weak` 克隆原样保留（`AppState` 是 `Rc<RefCell>`，非 `Send`）；`defer()`（0 ms 定时器）不得改成直接调用（避免模型回调里改模型触发 "Recursion detected"）；可见性只升不降，内部项用 `pub(super)` / `pub(in crate::bridge)`，不提升为 `pub`。
 
@@ -544,9 +563,9 @@ newFavnyr/
 
 | 拆分前 | 行数 | 现状 |
 | --- | ---: | --- |
-| `favnyr-gui/src/bridge.rs` | 19 001 | ✅ `bridge/` 47 文件（`mod.rs` 151 行） |
+| `favnyr-gui/src/bridge.rs` | 19 001 | ✅ `bridge/` 62 文件（`mod.rs` 151 行） |
 | `favnyr-gui/src/ui/main_window.slint` | 15 897 | 🟡 35 个 .slint；`main_window.slint` 3 195 行（覆盖层已全部提取，只剩契约面 + 骨架 + 转发），设置面板三页另在 `overlays/settings/`，面板内部另有一层 `panel/`（2 897 → 外壳 732 + 6 个组件），侧栏拆为外壳 + `sidebar/{item,fav,rail}`（1 113 → 287 + 3 个组件），行形状拆为 `widgets/rows.slint` + `widgets/rows/{header,marks}`（922 → 596 + 2 个组件） |
-| `favnyr-core/src/fs.rs` | 1 919 | ✅ `fs/` 6 文件（`tests.rs` 807） |
+| `favnyr-core/src/fs.rs` | 1 919 | ✅ `fs/` 7 文件（`tests.rs` 621 + `tests/sorting.rs` 189） |
 | `favnyr-core/src/fs/ops.rs` | 1 834 | ✅ `fs/ops/` 8 文件 |
 | `favnyr-core/src/places.rs` | 1 771 | ✅ `places/` 4 文件 |
 | `favnyr-core/src/thumbnail.rs` | 1 733 | ✅ `thumbnail/` 8 文件 |
@@ -563,8 +582,15 @@ newFavnyr/
 | 文件 | 行数 | 原因 / 后续 |
 | --- | ---: | --- |
 | `ui/main_window.slint` | 3 195 | 518 个契约成员（约 1 000 行）+ 布局骨架 + 覆盖层转发（552 行）。转发是显式契约，不再机械下推；如需再缩，只能按"每覆盖层一个 `install` 式子组件"组织，收益有限 |
-| `bridge/tests.rs` | 2 346 | 纯测试，方案允许"可后续按模块再分" |
-| `bridge/state.rs` | 1 508 | 中心状态定义，按访问面聚合比按行数切更可读；如需再分可按 `AppState` / 会话与作业类型两块 |
-| `bridge/thumbs.rs` | 862 | 调度器 + LRU + 线程 + 两个决策点，属同一子系统 |
-| `bridge/rows/build.rs` | 855 | 行模型重建的单一流程 |
-| `core/src/fs/tests.rs` | 807 | 纯测试，略超 800 |
+
+**第二批落地的 5 个文件**（同日继续，全部逐行校验的机械搬移，行为与契约不变）：
+
+| 拆分前 | 行数 | 现状 |
+| --- | ---: | --- |
+| `bridge/tests.rs` | 2 346 | ✅ `tests.rs` 790（共享 helper + 33 个用例）+ `tests/` 7 个分节模块 |
+| `bridge/state.rs` | 1 508 | ✅ `state.rs` 674（`AppState` 外壳）+ `state/` 5 个类型模块（`tab`/`panel`/`clipdrop`/`nav`/`opreg`） |
+| `bridge/thumbs.rs` | 862 | ✅ `thumbs.rs` 409（两个决策点 + worker 接线）+ `thumbs/scheduler.rs` 462 |
+| `bridge/rows/build.rs` | 855 | ✅ `build.rs` 603 + `build/entry.rs` 114 + `build/subscan.rs` 146 |
+| `core/src/fs/tests.rs` | 807 | ✅ `tests.rs` 621 + `tests/sorting.rs` 189 |
+
+至此除上表的 `main_window.slint`（`vendor/parley` 不计入），仓库内**已没有超过 800 行的代码文件**。

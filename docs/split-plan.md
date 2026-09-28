@@ -336,7 +336,9 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 | 4 | `bridge.rs` 的 `install()`（791 + 12 个 `cb_*.rs`） | ✅ 完成 |
 | 5 | `.slint` 拆分 | ✅ `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 10 个文件、11 个组件已完成**（`main_window.slint` 5 541 → 3 195 行），**设置对话框按页拆分已完成**（`overlays/settings.slint` 1 507 → 外壳 385 + `settings/{general,shortcuts,openwith}`），**`panel.slint` 第二层已完成**（2 897 → 732 行 + `panel/` 6 个文件），**`sidebar.slint` 按组件拆分已完成**（1 113 → 287 行 + `sidebar/{item,fav,rail}` 3 个文件），**`widgets/rows.slint` 按组件拆分已完成**（922 → 596 行 + `widgets/rows/{header,marks}` 2 个文件） |
 
-**验证**：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` 全绿（core 205 + gui 138，0 失败）；GUI 冷启动冒烟通过（恢复工作区 + 进入事件循环，无 panic）。覆盖层每一层搬完后都另有**行级校验**：搬走的区块按去缩进后与原文逐行比对（`block verbatim`），并核对组件成员与实例转发一一对应、无遗漏，再跑 `cargo check -p favnyr-gui`。**人工点检仍欠**：见 §2"迁移顺序"前的说明。
+| 6 | 第二批：第一批拆出后仍超 800 行的 5 个子文件 | ✅ `bridge/state.rs`、`bridge/thumbs.rs`、`bridge/rows/build.rs`、`bridge/tests.rs`、`core/src/fs/tests.rs` 全部再下沉为子模块（偏差第 31–40 条）；除 `main_window.slint` 外无超 800 行文件 |
+
+**验证**：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` 全绿（core 205 + gui 138，0 失败）；GUI 冷启动冒烟通过（恢复工作区 + 进入事件循环，无 panic）。第二批每一块落盘后另跑 `cargo check -p favnyr-gui --tests`，收尾再跑一次冷启动（debug 二进制 15 s 存活）。覆盖层每一层搬完后都另有**行级校验**：搬走的区块按去缩进后与原文逐行比对（`block verbatim`），并核对组件成员与实例转发一一对应、无遗漏，再跑 `cargo check -p favnyr-gui`。**人工点检仍欠**：见 §2"迁移顺序"前的说明。
 
 **实际偏差**（与方案表格不同之处，均为命名/组织选择，不影响验收标准）：
 
@@ -371,11 +373,26 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 29. 本轮的取舍标准是**形状是否自带指针**，而不是组件名字里有没有"row"：三个行形状纯视觉——点击/拖拽/hover 由 `panel/selection.slint` 里那个稳定的 `sel-touch` 统一路由，这正是行能虚拟化的前提，且三者同读一份 `ColumnInfo` 列模型、行与瓦片还共用 `row-h` 与 `Tokens.row-*` 口径，再切就把一份渲染口径摊到两个文件；`ColumnHeader` 是这一族里唯一自带 TouchArea 的（排序点击 + 重排拖拽 + 右边缘改宽），`FolderSwatchRow` / `MarkBox` 服务的是菜单飞出与清理清单、各自带 TouchArea，与文件视图无关，只是原本同处一文件。搬走后方向仍是 `widgets/rows.slint` ← `widgets/rows/*`，两个子文件只 import `theme`，是 `widgets/*` 的叶子，无环。
 30. 消费方只有三行 import 变化，成员面一字未动：`panel/list.slint` 的一行拆成两行（三个形状 + 列头，761 → 762 行），`overlays/menus.slint` 与 `overlays/notes.slint` 各把一行指向 `rows/marks.slint`。校验仍按第 23、26 条那一套（写盘前断言 + 收尾整体 round-trip：三块按原声明顺序缝回、去空行/import/注释、`../../../../assets/` 还原为 `../../../assets/`，与 `6ead5e3` 的 682 行代码逐行一致）。
 
+**第二批：第一批拆出的子文件仍超 800 行的 5 个（同日继续）**
+
+31. `bridge/state.rs`（1 508）→ 外壳 **674** + `state/{tab,panel,clipdrop,nav,opreg}.rs`（336 / 207 / 110 / 65 / 137）。外壳留 `AppState` 横幅、`ImgMeta`、`pub struct AppState`、`MAX_PANELS`、`impl AppState`、`remember_closed_panel`；分块口径是**数据类型**而非访问面。孙模块可见性沿用第 3 条：子模块里的 `pub(super)` 含义是"`state` 内可见"，父层的 `pub(super) use x::*;` 无法把它再升回 `bridge`，因此抽取时把 142 处标记整体改写为 `pub(in crate::bridge)`（clipdrop 21 / nav 12 / opreg 17 / panel 56 / tab 36）；校验脚本对"改写可逆"有断言（折回 `pub(super)` 后与该 base 区间逐行相等）。
+32. 名字遮蔽**第二次**出现（同第 1 条）：`state/ops.rs` 会让 `bridge` 内 `ops::paths_equal` 解析到新子模块——`bridge/mod.rs:35` 已有 `use favnyr_core::fs::ops::{self}`——故该模块改名 `state/opreg.rs`。
+33. `cargo fmt` 的两个必然副作用：可见性变长后 **2 处签名被重新折行**（`state/panel.rs` 的 `with_mode`、`thumbs/scheduler.rs` 的 `in_flight_locations`），以及 `mod` / `use` 块按字母序重排。这两块因此从"逐行相等"降级为 **token 流相等**（去掉折行处的空白差异与 rustfmt 补的尾逗号后比对），round-trip 同样按 token 流跑；抽取脚本改为**按字母序写头部**以省去事后格式化。其余全部保持逐行相等。
+34. `bridge/thumbs.rs`（862）→ 外壳 **409** + `thumbs/scheduler.rs` **462**。两个决策点 `thumbnail_kind_for_row` / `generate_thumb`（`docs/thumbnails.md` 的入口）与 worker 接线留父文件，调度用的数据结构（`ThumbJob`/`ThumbLocation`/`ThumbRequest`/`ScheduledThumb`/`InFlightThumb`/`ThumbWork`/`ThumbPriority`/`ThumbQueue`/`ThumbScheduler`/`ThumbLru`）整体下沉；`// Previews / thumbnails` 横幅留父文件。
+35. `bridge/rows/build.rs`（855）→ **603** + `build/entry.rs` **114**（`entry_to_row`）+ `build/subscan.rs` **146**（子文件夹扫描的请求 / 分组 / worker / 回填）。这些项原本就是 `pub(in crate::bridge)`，故本轮**不改写可见性**，重导出用 `pub(in crate::bridge) use {m}::*;`。
+36. `core/src/fs/tests.rs`（807）→ **621** + `fs/tests/sorting.rs` **189**。该文件的 `use super::*;` 在第 83 行而非第 1 行，`mod` 块因此**追加到文件末尾**（`--pos bottom`）且不加重导出；`typed_entry` helper 只被排序那组使用，随块一起下沉（已核实父文件零引用）。
+37. `bridge/tests.rs`（2 346）→ 外壳 **790** + `tests/` 7 个分节（`opening` / `opregistry` / `openwith` / `thumbnails` / `geometry` / `workspace` / `grid`，454 行最大）。测试项是私有的，子模块**不能**被父层引用，所以共享 helper 必须留外壳：`op_handle` / `op_handle_writing` 还被外壳里的 `op_registry_cancels_only_the_targeted_operation` 用，`tab`/`panel`/`ws`、`grid_style`/`named_row`/`header_row`/`test_entry` 同理。相应区块的起点因此从"分节横幅"改到 helper 之后（`opregistry` 从 145、`workspace` 从 1958、`grid` 从 2131）。第一次按方案的 125..242 抽 `opregistry` 后 `cargo check --tests` 报 3 处 `E0425: op_handle inaccessible`，已 `git checkout` 回到上一块提交的状态重跑，未把错误状态留在历史里。`geometry` 一块把横幅一起带走（1218 起），使横幅与其内容同文件。
+38. 抽取工具的一处真 bug（值得记录，因为它一度看起来像"文件本身有问题"）：数大括号用的手词法器把 `r#"…"#` 的结束判成"遇引号就吃掉其后连续的 `#`"，于是 `r#"a "/tmp/My Archive.7z" {file}"#` 会在第一个内层引号提前闭合，报 `unterminated str at EOF`。现记录开串的 `#` 数量并要求闭合处数量相等。
+39. 每块的门禁顺序：dry-run → 写盘 → `cargo fmt --all` → **独立**校验脚本（不复用抽取脚本自己的 round-trip）→ `cargo check -p favnyr-gui --tests` → 提交。`bridge/tests.rs` 这轮 7 块合为 2 次提交（`d129ea1` opening、`c117dfe` 其余六块）：外壳要到最后一块才降到 800 以下，中途校验因此放宽父文件上限（`--parentceil`），子文件上限与逐行 / token 相等照旧。
+40. 第二批的收尾门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` = core 205（1 ignored）+ gui 138，**用例数与拆分前逐字节一致**；debug 二进制冷启动 15 s 存活冒烟通过（窗口标题 `Favnyr`）。
+
 **剩余项**（有意保留，不是遗漏）：
+
+- ✅ 第一批拆出后仍超 800 行的 5 个子文件已完成第二批下沉（`bridge/state.rs`、`bridge/thumbs.rs`、`bridge/rows/build.rs`、`bridge/tests.rs`、`core/src/fs/tests.rs`），实际形状、命名与校验口径见上文第 31–40 条。至此仓库内（`vendor/parley` 除外）**只剩 `main_window.slint` 一个文件超过 800 行**。**仍需维护者人工点检**：导航与历史、tear-off、拖放（含虚拟文件）、粘贴进度、缩略图请求与失效、子文件夹扫描、设置各页、快捷键——这些块搬的是 `AppState` / 调度器 / 行模型的类型与测试，运行时行为应完全不变。
 
 - ✅ `ui/main_window.slint` 的约 40 个覆盖层区块（约 4 000 行）→ `ui/overlays/*.slint`（10 文件 11 组件），已完成；`main_window.slint` 5 541 → 3 193 行（含 552 行转发）。**仍需维护者人工点检**：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（含 capture 与冲突）。
 - ✅ `ui/panel.slint`（2 897 行）的第二层分块已完成：`panel/{tabs_bar,nav_bar,selection,list,scrollbars,overlays}.slint` 六个组件 + 面板外壳 732 行，实际形状与偏差见上文第 21–23 条。方案原设想要先盘点读写方向再动手，实施时确实是这一步决定了下沉策略（脚本统计 `root.X` 的读/写方向 → `in` / `in-out` / `callback`），也正是它把列表边界上的 5 个 `in-out` 转发全部消掉，只剩 1 个 `in`（`gutter-w`）与 3 个 `out`（`area-abs-x` / `area-abs-y` / `drag-hover-row`）。**仍需维护者人工点检**：列表区选择、左侧 gutter 条拉出的橡皮筋（含拖到边缘自动滚动）、列头拖拽改序与改宽、标签条 tear-off、跨视图拖放。
 - ✅ `ui/overlays/settings.slint`（1 507 行）按页分块（`settings/{general,shortcuts,openwith}.slint` + 面板外壳）已完成：外壳 385 行，三页 680 / 323 / 331 行；快捷键菜单留在外壳里（须在面板之上）。
 - ✅ `ui/sidebar.slint`（1 113 行）按组件拆分已完成：外壳 287 行（节头一族 + `Sidebar`）+ `sidebar/{item,fav,rail}.slint`（271 / 467 / 115），三次提交各一块，实际形状与偏差见上文第 24–27 条。**仍需维护者人工点检**：Places 行的 hover / 拖拽 / 盘符容量条、收藏树的展开折叠与重排拖拽、activity rail 三个按钮（侧栏开关 / 工作区 / 设置）与其 tooltip、节的拖拽重排。
 - ✅ `ui/widgets/rows.slint`（922 行）按组件拆分已完成：父文件 596 行（`FileRowView` / `SectionHeaderView` / `FileTileView` 三个纯视觉形状）+ `widgets/rows/{header,marks}.slint`（223 / 114），两次提交各一块，取舍标准与偏差见上文第 28–30 条。**仍需维护者人工点检**：列头的排序点击 / 拖拽改序 / 右缘改宽 / 右键菜单，列表行与分组头的渲染（缩略图、应用图标、链接徽标、age 药丸），网格瓦片，"颜色与备注"飞出里的色条与清理清单的红勾——色条与红勾要打开飞出菜单才出现，冷启动冒烟覆盖不到。
-- `bridge/tests.rs`（2 346）按模块再分（方案原文即"可后续"）；`bridge/state.rs`（1 508）、`ui/main_window.slint`（3 195，契约面）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）为拆分后仍超 800 的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)。
+- `ui/main_window.slint`（3 195，契约面）仍是唯一超过 800 行的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)；`bridge/tests.rs`（2 346）按模块再分、`bridge/state.rs`（1 508）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）已在第二批完成，见上文第 31–40 条。

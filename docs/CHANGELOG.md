@@ -319,3 +319,47 @@ files touched, so a behaviour can be traced back to its source.
 - 至此 `.slint` 侧除 `main_window.slint`（契约面）之外没有文件超过 800 行；剩余候选回到 Rust 侧：`bridge/state.rs`（1 508）、`bridge/tests.rs`（2 346）。
 - 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键、列表区选择、gutter 条橡皮筋与边缘自动滚动、两条自绘滚动条、Places 行、收藏树、activity rail、节重排，**列头的排序 / 拖拽改序 / 右缘改宽 / 右键菜单**、**列表行与分组头的渲染（缩略图、应用图标、链接徽标、age 药丸）**、**网格瓦片**、**"颜色与备注"飞出里的色条与清理清单的红勾**（后两组冷启动冒烟覆盖不到）。
 - 本轮的四个代码提交与文档提交均未推送，`main` 领先 `origin/main`。
+
+## 2026-09-28 — 第二批 Rust 拆分：5 个仍超 800 行的子文件下沉为子模块
+
+**Changed**
+
+仍是纯搬迁拆分：不改行为、不动契约、不改任何对外符号。第一批拆出的 5 个文件本身仍超 800 行，本轮把它们再下沉一层，12 个提交每提交一块：
+
+| 提交 | 父文件 | 变化 | 新文件（行数） |
+| --- | --- | ---: | --- |
+| `1c2cd7c` | `bridge/state.rs` 1 508 → 1 403 | 剪贴板与拖拽暂存类型 | `state/clipdrop.rs`（110） |
+| `34768ac` | → 1 341 | `NavHistory` / `SortState` | `state/nav.rs`（65） |
+| `860275d` | → 1 008 | `Tab` / `TabBook` / `ViewMode` 与会话序列化 | `state/tab.rs`（336） |
+| `4ceb8de` | → 808 | `Panel` 与异步列表 / 子扫描交付类型 | `state/panel.rs`（207） |
+| `66564e0` | → **674** | `OpRegistry` / `OpHandle` / `OpDelivery` / `reservation_key` | `state/opreg.rs`（137） |
+| `f94f68b` | `bridge/thumbs.rs` 862 → **409** | 调度器 + 队列 + LRU + 在途登记 | `thumbs/scheduler.rs`（462） |
+| `b483b68` | — | 纯版面：`cargo fmt` 的字母序与两处签名折行 | — |
+| `b148f8e` | `bridge/rows/build.rs` 855 → 746 | `entry_to_row` | `build/entry.rs`（114） |
+| `42e7787` | → **603** | 子文件夹扫描的请求 / 分组 / worker / 回填 | `build/subscan.rs`（146） |
+| `f9c989d` | `core/src/fs/tests.rs` 807 → **621** | 排序 / 分组 / 类别那 9 个用例 + `typed_entry` | `fs/tests/sorting.rs`（189） |
+| `d129ea1` | `bridge/tests.rs` 2 346 → 2 258 | `plan_open` 那 6 个用例 | `tests/opening.rs`（91） |
+| `c117dfe` | → **790** | 其余 6 个分节 | `tests/{opregistry,openwith,thumbnails,geometry,workspace,grid}.rs`（100 / 301 / 320 / 454 / 125 / 180） |
+
+父文件只留外壳：`state.rs` 留 `AppState` / `ImgMeta` / `MAX_PANELS` / `impl AppState`，`thumbs.rs` 留两个决策点 `thumbnail_kind_for_row` / `generate_thumb` 与 worker 接线，`rows/build.rs` 留 `RowsSource` / `Section` / 样式流程，`tests.rs` 留共享 helper 与 33 个未分节用例，`fs/tests.rs` 留其余 26 个用例。
+
+**与方案的不同**（详见 `docs/split-plan.md` §16 偏差 31–40）：
+
+- 孙模块统一 `pub(in crate::bridge)` + 父层 `pub(super) use x::*;`：子模块里的 `pub(super)` 只到 `state` 为止，glob 升不回来，故 `state/*` 改写 142 处可见性标记（校验脚本断言"折回 `pub(super)` 后与原文逐行相等"）。`state/ops.rs` 因遮蔽 `bridge/mod.rs` 里的 `use favnyr_core::fs::ops` 改名 **`opreg.rs`**。
+- 测试项私有，子模块不能被父层反向引用，所以共享 helper 一律留外壳：`op_handle` / `op_handle_writing` / `tab` / `panel` / `ws` / `grid_style` / `named_row` / `header_row` / `test_entry`。第一次按方案的 125..242 抽 `opregistry` 后 `cargo check --tests` 报 3 处 `E0425: op_handle inaccessible`，已回到上一提交重跑（起点改为 145），错误状态没进历史。
+- `cargo fmt` 让 2 处签名重新折行、把 `mod` / `use` 块按字母序重排，这两块因此改为 **token 流相等**校验，其余仍逐行相等。
+- `fs/tests.rs` 的 `use super::*;` 在第 83 行，`mod` 块因此追加到文件末尾且不加重导出。
+- `bridge/tests.rs` 的 7 块合为 2 次提交：外壳要等最后一块才降到 800 以下，中途校验因此放宽父文件上限（子文件上限与逐行相等照旧）。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 进度表加"阶段 6"，偏差补 31–40（分块口径、可见性改写、`opreg` 改名、rustfmt token 口径、helper 留外壳与回退经过、抽取词法器对 `r#"…"#` 的真 bug、门禁顺序），剩余项改为"只剩 `main_window.slint`"。
+- `docs/code-map.md` — §1 概览（`bridge/` 62 文件、最大者名单、13 个文件全部拆完）、§2 结构树补 `bridge/state/` `bridge/thumbs/` `bridge/tests/` `bridge/rows/build/` 与 `fs/tests/sorting.rs`、§3.1（53 个 .rs）/§3.2（99 个 .rs）/§3.3 文件表按新行数与新增文件重排、§4.2–§4.3 相应条目、§6 新增"第二批落地的 5 个文件"表；顺带订正一处陈旧行数（`bridge/language.rs` 47 → 实际 23）。
+
+**Notes**
+
+- 验证：每块 dry-run → 写盘 → `cargo fmt --all` → **独立**校验脚本（不复用抽取脚本的 round-trip）→ `cargo check -p favnyr-gui --tests` → 提交。校验内容：父文件必须等于"原始文件减去已搬走的区间"、搬走的区间与 base 区间逐行（或 token）相等、大括号平衡、无重复空行、子文件 ≤ 800、把子文件按原顺序缝回去能逐行重现原始文件（`bridge/tests.rs` 2 346 行：780 留外壳 + 1 557 搬走 + 8 个接缝空行 + 1 个边缘空行，逐行一致）。
+- 收尾门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed，**用例数与拆分前一致**（bridge 92 个用例 = 外壳 33 + 分节 59）。冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，15 秒存活、窗口标题 `Favnyr`、无 panic。
+- 行数总检查：全仓（`vendor/parley` 除外）超过 800 行的代码文件只剩 `ui/main_window.slint`（3 195，`MainWindow` 的 518 个契约成员，理由见 code-map §6）。
+- 尚未人工点检（本轮搬的是 `AppState` / 调度器 / 行模型 / 剪贴板的类型与测试，运行时应无差异）：导航与历史、tear-off、拖放（含虚拟文件）、粘贴进度、缩略图请求与失效、子文件夹扫描、设置各页、快捷键，以及前几轮累计的列表区选择 / gutter 橡皮筋 / 两条自绘滚动条 / Places 行 / 收藏树 / activity rail / 节重排 / 列头操作 / 行与瓦片渲染 / 飞出菜单色条与红勾。
+- 本轮 12 个代码提交与文档提交均未推送，`main` 领先 `origin/main`（`d8cfc0d`）。
