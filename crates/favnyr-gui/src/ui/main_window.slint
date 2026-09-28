@@ -34,6 +34,7 @@ import { OverlayWorkspaces } from "overlays/workspaces.slint";
 import { OverlayCustomCommand } from "overlays/custom_command.slint";
 import { OverlayNoteBubble, OverlayNotes } from "overlays/notes.slint";
 import { OverlayFavorites } from "overlays/favorites.slint";
+import { OverlayOpenWith } from "overlays/openwith.slint";
 import { ActivityRail, FavPanel, Sidebar, SidebarHeaderAction } from "sidebar.slint";
 import { ComboBox, VerticalBox, HorizontalBox, ScrollView, LineEdit, Button, SpinBox, CheckBox, Palette } from "std-widgets.slint";
 
@@ -3069,8 +3070,7 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ===== "Open with" submenu (flyout on hover) =====
-        // NO full-screen backdrop: the parent menu stays active behind it.
+        // ===== "Colour & note" flyout (attached to the context menu) =====
         if root.mark-menu-open : Rectangle {
             x: min(root.mark-menu-x, root.width - self.width - 8px);
             y: min(root.mark-menu-y, root.height - self.height - 8px);
@@ -3105,335 +3105,51 @@ export component MainWindow inherits Window {
                 }
             }
         }
-        if root.ow-menu-open : Rectangle {
-            x: min(root.ow-menu-x, root.width - self.width - 8px);
-            y: min(root.ow-menu-y, root.height - self.height - 8px);
-            width: 240px;
-            height: 8px
-                + root.openers-suggested.length * 26px
-                + (root.openers-suggested.length > 0 ? 8px : 0px)
-                + 26px /* Choose an application */
-                + 26px /* Custom command */
-                + (root.selection-is-executable ? 26px : 0px)
-                + 8px + 26px /* Manage */;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            // Tracks the flyout's hover state (for the deferred close). The content
-            // is INSIDE the TouchArea → has-hover stays stable even while
-            // hovering the items (see the WorkspaceRow pattern).
-            TouchArea {
-                changed has-hover => { root.ow-flyout-hover = self.has-hover; }
-                VerticalLayout {
-                    padding: 4px;
-                    // Recent opener row: app icon (generic fallback) + label.
-                    for op in root.openers-suggested : Rectangle {
-                        height: 26px;
-                        border-radius: 4px;
-                        background: (sug-ta.has-hover || nav-on) ? Theme.alternate-background : transparent;
-                        // Keyboard navigation, as in `MenuItem` — this row is
-                        // drawn by hand rather than with that component.
-                        property <int> nav-level: 0;
-                        init => { self.nav-level = CtxNav.register(); }
-                        property <bool> nav-on: CtxNav.on(self.nav-level, self.y);
-                        property <int> nav-poll: CtxNav.poll;
-                        changed nav-poll => { CtxNav.offer(self.nav-level, self.y); }
-                        property <int> activate-watch: CtxNav.activate;
-                        changed activate-watch => {
-                            if (self.nav-on) {
-                                root.ctx-close();
-                                root.run-opener(op.id);
-                            }
-                        }
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 12px;
-                            spacing: 10px;
-                            CommandIcon {
-                                kind: op.icon-kind;
-                                extracted: op.icon;
-                            }
-                            Text {
-                                text: op.label;
-                                font-size: 12px;
-                                color: Theme.foreground;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 1;
-                            }
-                        }
-                        sug-ta := TouchArea {
-                            // `ctx-close` closes the parent menu AND the flyout (via
-                            // `changed ctx-menu-open`), like the normal items.
-                            clicked => { root.ctx-close(); root.run-opener(op.id); }
-                            changed has-hover => {
-                                if (self.has-hover) { CtxNav.point(parent.nav-level, parent.y); }
-                            }
-                        }
-                    }
-                if root.openers-suggested.length > 0 : Rectangle {
-                    height: 8px;
-                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-                }
-                MenuItem {
-                    label: root.strings.ow-choose;
-                    clicked => { root.ctx-close(); root.ow-open-picker(); }
-                }
-                MenuItem {
-                    label: root.strings.ow-custom;
-                    clicked => { root.ctx-close(); root.ow-add(); }
-                }
-                if root.selection-is-executable : MenuItem {
-                    label: root.strings.ow-use-as-app;
-                    clicked => { root.ctx-close(); root.ow-use-as-app(); }
-                }
-                Rectangle {
-                    height: 8px;
-                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-                }
-                MenuItem {
-                    label: root.strings.ow-manage;
-                    // Directly opens the "Open with" tab of Settings.
-                    clicked => {
-                        root.ctx-close();
-                        root.settings-tab = 2;
-                        // "Manage applications" always targets the Favnyr
-                        // applications list, never the last Windows
-                        // sub-tab remembered from a previous visit.
-                        root.ow-subtab = 0;
-                        root.settings-open = true;
-                    }
-                }
-                }
-            }
-        }
 
-        // ===== "New" submenu (flyout on hover) =====
-        // Same mechanism as "Open with" above (no backdrop: the parent
-        // menu stays active). Opens the creation popup with the right `create-kind`.
-        if root.new-menu-open : Rectangle {
-            x: min(root.new-menu-x, root.width - self.width - 8px);
-            y: min(root.new-menu-y, root.height - self.height - 8px);
-            width: 200px;
-            height: 8px + (root.platform-windows ? 3 : 2) * 26px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea {
-                changed has-hover => { root.new-flyout-hover = self.has-hover; }
-                VerticalLayout {
-                    padding: 4px;
-                    MenuItem {
-                        label: root.strings.ctx-new-folder;
-                        clicked => { root.ctx-close(); root.create-kind = 0; root.create-name = ""; root.create-target = ""; root.create-popup-open = true; }
-                    }
-                    MenuItem {
-                        label: root.strings.ctx-new-file;
-                        clicked => { root.ctx-close(); root.create-kind = 1; root.create-name = ""; root.create-target = ""; root.create-popup-open = true; }
-                    }
-                    // .lnk shortcut: Windows ONLY (a concept absent on Linux,
-                    // where symbolic links are followed natively).
-                    if root.platform-windows : MenuItem {
-                        label: root.strings.ctx-new-shortcut;
-                        clicked => { root.ctx-close(); root.create-kind = 2; root.create-name = ""; root.create-target = ""; root.create-shortcut-folder = true; root.create-popup-open = true; }
-                    }
-                }
-            }
-        }
-
-        // ===== Windows shell menu CASCADE flyout =====
-        // Same mechanism as the "Open with" flyout: no backdrop, the parent
-        // menu stays active; deferred close via the dedicated Timer.
-        if root.ctx-shell-sub-open : Rectangle {
-            x: min(root.ctx-shell-sub-x, root.width - self.width - 8px);
-            y: min(root.ctx-shell-sub-y, root.height - self.height - 8px);
-            width: 280px;
-            height: 8px + root.ctx-shell-sub-entries.length * 26px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea {
-                changed has-hover => { root.ctx-shell-sub-flyout-hover = self.has-hover; }
-                VerticalLayout {
-                    padding: 4px;
-                    for se in root.ctx-shell-sub-entries : ShellMenuRow {
-                        entry: se;
-                        run(id) => { root.ctx-close(); root.ctx-shell-run(id); }
-                    }
-                }
-            }
-        }
-
-        // ===== Home-grown application picker =====
-        if root.ow-picker-open : ModalBackdrop {
-            dismiss-on-click: true;
-            dismiss => { root.ow-picker-open = false; }
-        }
-        if root.ow-picker-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(440px, parent.width - 24px);
-            height: min(420px, parent.height - 24px);
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-            // This catch-all absorbs clicks in the panel's empty areas. Only
-            // a click outside the panel, received by the backdrop, closes the picker.
-            TouchArea { }
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-                HorizontalLayout {
-                    spacing: 12px;
-                    Text {
-                        text: root.strings.ow-choose;
-                        font-size: 16px;
-                        font-weight: 700;
-                        color: Theme.foreground;
-                        min-width: 0px;
-                        horizontal-stretch: 1;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                    if root.platform-linux : CheckBox {
-                        text: root.strings.ow-display-other-apps;
-                        checked <=> root.ow-picker-show-other-apps;
-                        toggled => { root.ow-picker-show-other-apps-changed(self.checked); }
-                    }
-                }
-                picker-search := SearchField {
-                    placeholder-text: root.strings.ow-search-placeholder;
-                    text <=> root.ow-picker-search-text;
-                    edited(value) => { root.ow-picker-search(value); }
-                }
-                Rectangle {
-                    vertical-stretch: 1;
-                    background: Theme.alternate-background.with-alpha(0.5);
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    ScrollView {
-                        VerticalLayout {
-                            padding: 6px;
-                            spacing: 1px;
-                            if root.ow-picker-handlers.length == 0 : Text {
-                                text: root.ow-picker-search-text == ""
-                                    ? root.strings.ow-empty
-                                    : root.strings.ow-no-results;
-                                font-size: 12px;
-                                color: Theme.foreground.with-alpha(0.45);
-                                height: 40px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            for h in root.ow-picker-handlers : Rectangle {
-                                height: 30px;
-                                border-radius: 5px;
-                                background: pick-ta.has-hover ? Theme.alternate-background : transparent;
-                                HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 10px;
-                                    spacing: 8px;
-                                    Rectangle {
-                                        width: 18px;
-                                        height: parent.height;
-                                        if h.icon.width > 0 : Image {
-                                            source: h.icon;
-                                            width: 16px;
-                                            height: 16px;
-                                            x: 0;
-                                            y: (parent.height - self.height) / 2;
-                                        }
-                                        if h.icon.width == 0 : Image {
-                                            width: 16px;
-                                            x: 0;
-                                            y: (parent.height - self.height) / 2;
-                                            source: @image-url("../../assets/icons/application.svg");
-                                            colorize: Theme.foreground.with-alpha(0.7);
-                                        }
-                                    }
-                                    Text {
-                                        text: h.label;
-                                        font-size: 13px;
-                                        color: Theme.foreground;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                    }
-                                }
-                                pick-ta := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.ow-picker-open = false; root.ow-pick(h.id); }
-                                }
-                            }
-                        }
-                    }
-                }
-                // "Set as default": when the app is chosen, also saves the
-                // file's extension as a Favnyr default (overrides the OS).
-                CheckBox {
-                    text: root.strings.ow-set-default;
-                    checked <=> root.ow-picker-set-default;
-                }
-                HorizontalBox {
-                    padding: 0px;
-                    // Browse the OS for a custom exe (like the "…" in Custom
-                    // Command): the handler saves it as an opener then launches it.
-                    Button {
-                        text: root.strings.ow-pick-browse;
-                        clicked => { root.ow-pick-browse(); }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    Button { text: root.strings.btn-cancel; clicked => { root.ow-picker-open = false; } }
-                }
-            }
-        }
-
-        // ===== Promotion toast after the native dialog (Windows) =====
-        if root.ow-promote-visible : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: parent.height - self.height - 18px;
-            height: 40px;
-            width: promo-row.preferred-width + 28px;
-            border-radius: 10px;
-            background: Theme.background;
-            border-width: 1px;
-            border-color: Theme.accent-background.with-alpha(0.45);
-            drop-shadow-blur: 16px;
-            drop-shadow-color: #000000.with-alpha(0.30);
-            drop-shadow-offset-y: 3px;
-            Timer { interval: 6s; running: root.ow-promote-visible; triggered => { root.ow-promote-visible = false; } }
-            promo-row := HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 10px;
-                spacing: 12px;
-                Text { text: root.strings.ow-promote; font-size: 12.5px; color: Theme.foreground; vertical-alignment: center; }
-                Rectangle {
-                    width: promo-btn-txt.preferred-width + 20px;
-                    height: 26px;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 6px;
-                    background: promo-ta.has-hover ? Theme.accent-background : Theme.accent-background.with-alpha(0.8);
-                    promo-btn-txt := Text { text: root.strings.ow-promote-add; font-size: 12px; color: Theme.accent-foreground; x: (parent.width - self.width)/2; vertical-alignment: center; height: parent.height; }
-                    promo-ta := TouchArea { clicked => { root.ow-promote-visible = false; root.ow-promote-accept(); } }
-                }
-            }
+        OverlayOpenWith {
+            strings: root.strings;
+            openers-suggested: root.openers-suggested;
+            selection-is-executable: root.selection-is-executable;
+            ow-menu-open <=> root.ow-menu-open;
+            ow-menu-x <=> root.ow-menu-x;
+            ow-menu-y <=> root.ow-menu-y;
+            ow-flyout-hover <=> root.ow-flyout-hover;
+            run-opener(id) => { root.run-opener(id); }
+            ow-use-as-app() => { root.ow-use-as-app(); }
+            ow-add() => { root.ow-add(); }
+            ow-open-picker() => { root.ow-open-picker(); }
+            ow-picker-open <=> root.ow-picker-open;
+            ow-picker-handlers: root.ow-picker-handlers;
+            ow-picker-search-text <=> root.ow-picker-search-text;
+            ow-picker-set-default <=> root.ow-picker-set-default;
+            ow-picker-show-other-apps <=> root.ow-picker-show-other-apps;
+            ow-picker-search(q) => { root.ow-picker-search(q); }
+            ow-picker-show-other-apps-changed(on) => { root.ow-picker-show-other-apps-changed(on); }
+            ow-pick(id) => { root.ow-pick(id); }
+            ow-pick-browse() => { root.ow-pick-browse(); }
+            ow-promote-visible <=> root.ow-promote-visible;
+            ow-promote-accept() => { root.ow-promote-accept(); }
+            new-menu-open <=> root.new-menu-open;
+            new-menu-x <=> root.new-menu-x;
+            new-menu-y <=> root.new-menu-y;
+            new-flyout-hover <=> root.new-flyout-hover;
+            create-popup-open <=> root.create-popup-open;
+            create-kind <=> root.create-kind;
+            create-name <=> root.create-name;
+            create-target <=> root.create-target;
+            create-shortcut-folder <=> root.create-shortcut-folder;
+            ctx-shell-sub-entries: root.ctx-shell-sub-entries;
+            ctx-shell-sub-open <=> root.ctx-shell-sub-open;
+            ctx-shell-sub-x <=> root.ctx-shell-sub-x;
+            ctx-shell-sub-y <=> root.ctx-shell-sub-y;
+            ctx-shell-sub-flyout-hover <=> root.ctx-shell-sub-flyout-hover;
+            ctx-shell-run(id) => { root.ctx-shell-run(id); }
+            platform-windows: root.platform-windows;
+            platform-linux: root.platform-linux;
+            settings-open <=> root.settings-open;
+            settings-tab <=> root.settings-tab;
+            ow-subtab <=> root.ow-subtab;
+            ctx-close() => { root.ctx-close(); }
         }
 
         // The New folder, Expand all, and Collapse all actions live
@@ -5539,4 +5255,5 @@ export component MainWindow inherits Window {
 
     }
 }
+
 
