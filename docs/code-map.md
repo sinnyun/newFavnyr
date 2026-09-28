@@ -23,8 +23,8 @@
 两个拆分重点的现状（拆分前：`bridge.rs` 19 001 行、`main_window.slint` 15 897 行，合计占自有代码 56%）：
 
 - `crates/favnyr-gui/src/bridge.rs` → **`bridge/` 47 个文件**，`mod.rs` 仅 151 行（模块声明 + 重导出 + `defer`）。最大者：`tests.rs` 2 346、`state.rs` 1 508、`thumbs.rs` 862、`rows/build.rs` 855、`install/mod.rs` 791。对外的 `crate::bridge::…` 路径全部不变。
-- `crates/favnyr-gui/src/ui/main_window.slint` → **`ui/` 11 个 .slint**：`main_window.slint`（7 483 行）保留 `MainWindow` 契约面（518 个成员，见 §4.4）与布局骨架；13 个内部组件按 `structs` / `theme` / `widgets/` / `panel` / `sidebar` / `workspaces` / `progress` 分文件。**尚未提取**的是 `MainWindow` 内的约 40 个覆盖层区块（右键菜单、弹窗、设置面板、toast…），方案见 split-plan.md §2 步骤 3 与 §16。
-- 13 个超 800 行文件（拆分前）中 12 个已拆到目标结构；`main_window.slint` 只完成了内部组件部分（覆盖层待提取），`panel.slint` 的建议第二层分块也为**有意保留**的后续项。
+- `crates/favnyr-gui/src/ui/main_window.slint` → **`ui/` 21 个 .slint**：`main_window.slint`（3 193 行）保留 `MainWindow` 契约面（518 个成员，见 §4.4）、布局骨架与覆盖层实例（转发层）；内部组件按 `structs` / `theme` / `widgets/` / `panel` / `sidebar` / `workspaces` / `progress` 分文件，`MainWindow` 内的覆盖层区块（右键菜单、弹窗、设置面板、toast…）已全部提取到 `ui/overlays/*.slint`。方案与执行记录见 split-plan.md §2 步骤 3 与 §16。
+- 13 个超 800 行文件（拆分前）中 12 个已拆到目标结构；`panel.slint`（2 897）的建议第二层分块、`overlays/settings.slint`（1 507）的按页分块，以及 `main_window.slint` 的转发层为**有意保留**的后续项（见 §6）。
 
 ## 2. 仓库结构
 
@@ -60,9 +60,10 @@ newFavnyr/
         ├── i18n/                  en fr es de it zh 六套 .toml 翻译（各 415 键）
         └── src/
             ├── main.rs            二进制入口
-            ├── ui/main_window.slint      编译入口：MainWindow 契约面 + 布局骨架（+ 覆盖层，待提取）
+            ├── ui/main_window.slint      编译入口：MainWindow 契约面 + 布局骨架 + 覆盖层实例
             ├── ui/{structs,theme,panel,sidebar,workspaces,progress}.slint
             ├── ui/widgets/{rows,inputs,menus,tabs}.slint
+            ├── ui/overlays/              11 个覆盖层组件（menus / openwith / favorites / settings / …）
             ├── bridge/mod.rs      模块声明 + 重导出 + defer
             ├── bridge/*.rs        桥接外围模块（state/colinfo/nav/tabs/thumbs/…）
             ├── bridge/install/    install() 编排 + cb_*.rs 12 个回调簇
@@ -230,21 +231,31 @@ newFavnyr/
 | 30 | `build.rs` | 编译 .slint（64 MB 栈线程）+ 嵌入图标 |
 | 11 | `src/bridge/open_with/mod.rs` | `open_with` 子模块声明与重导出 |
 
-### 3.3 `crates/favnyr-gui/src/ui`（11 个 .slint）
+### 3.3 `crates/favnyr-gui/src/ui`（21 个 .slint）
 
 | 行数 | 文件 | 内容 |
 | ---: | --- | --- |
-| 7 483 | `main_window.slint` | 编译入口：`MainWindow`（518 个契约成员 + 布局骨架 + 待提取的覆盖层）、`FocusScope`、侧栏与面板容器实例化、全局提示 |
+| 3 193 | `main_window.slint` | 编译入口：`MainWindow`（518 个契约成员 + `FocusScope` + 布局骨架 + 侧栏/面板容器 + 全部覆盖层实例 + 全局提示） |
 | 2 897 | `panel.slint` | `PanelComponent`（标签栏 / 路径 / 列头 / 行区 / 页脚；第二层分块待做） |
+| 1 507 | `overlays/settings.slint` | `OverlaySettings`：设置面板（General / Shortcuts / "Open with" + shell 扩展列表）与快捷键行的菜单（第二层分块待做） |
 | 1 113 | `sidebar.slint` | `SidebarItem` / `SidebarHeaderAction(Slot)` / `SidebarSectionHeader` / `Sidebar` / `FavRow` / `FavPanel` / `RailBtn` / `ActivityRail` |
 | 922 | `widgets/rows.slint` | `ColumnHeader` / `FileRowView` / `SectionHeaderView` / `FileTileView` / `FolderSwatchRow` / `MarkBox` |
 | 787 | `widgets/tabs.slint` | `NavIconButton` / `TabScrollButton` / 计时器 / 边滚动 / `ModalBackdrop` / `TabItem` / `VTabBar` / `PanelSplitterAbs` |
 | 742 | `structs.slint` | 21 个 `export struct`（Rust ↔ Slint 数据模型） |
+| 742 | `overlays/notes.slint` | `OverlayNotes` / `OverlayNoteBubble`：重命名、备注编辑器、新建文件夹/文件弹窗、颜色与备注清理列表、条目备注气泡 |
+| 641 | `overlays/menus.slint` | `OverlayMenus`：主右键菜单、Split、标签栏位置、视图模式、URL、回收站、盘符/网络菜单与"颜色与备注"飞出菜单 |
 | 487 | `widgets/menus.slint` | `MenuItem` / `SubmenuRow` / `CommandIcon` / `IconMenuRow` / `ShellMenuRow` / `OwRecipeButton` / `SplitMenuItem` / `TabBarMenuItem` |
 | 432 | `theme.slint` | `Theme` / `Tokens` / `Note` / `Tip` / `CtxNav` / `Dismiss` / `WindowFocus`（`export global`） |
 | 414 | `workspaces.slint` | `WsButton` / `WsIconBtn` / `WorkspaceRow` |
+| 412 | `overlays/openwith.slint` | `OverlayOpenWith`：打开方式/新建子菜单、shell 级联、应用选择器、提升 toast |
+| 393 | `overlays/custom_command.slint` | `OverlayCustomCommand`：自定义命令编辑器 / 已购应用只读视图 |
+| 383 | `overlays/favorites.slint` | `OverlayFavorites`：收藏容器的命名/保存/新建三个弹窗 + 容器与收藏项右键菜单 |
+| 383 | `overlays/workspaces.slint` | `OverlayWorkspaces`：工作区保存行、列表与反馈 toast |
+| 379 | `overlays/dialogs.slint` | `OverlayDialogs`：永久删除、打开全部、未保存更改、粘贴冲突 |
 | 376 | `widgets/inputs.slint` | `EditTextInput` / `EditLineEdit` / `SearchField` / `FieldLink` / `FilterBar` / `HintEdit` / `SettingsRowButton` / `PathRow` |
+| 363 | `overlays/panel_menus.slint` | `OverlayPanelMenus`：标签栏死区、标签页、列与跨视图拖放菜单 |
 | 343 | `progress.slint` | `ProgressToast` / `DriveGauge` / `FfmpegCmdRow` |
+| 302 | `overlays/toasts.slint` | `OverlayToasts`：进度 toast、拖放指示、swap pill、全局通知 |
 
 ### 3.4 工作区根 / CI / 文档 / 翻译
 
@@ -441,16 +452,19 @@ newFavnyr/
 | `winutil.rs`（175） | `wide`（UTF-16）、`long_path`（`\\?\` 长路径）、`has_short_component`。 |
 | `build.rs`（30） | ① 在**独立 64 MB 栈线程**里调 `slint_build::compile("src/ui/main_window.slint")`（Windows 主线程栈约 1 MB，大文件递归解析曾溢出）；② Windows 下用 `winresource` 嵌入 `assets/favnyr.ico`（失败仅告警，不阻断构建）。 |
 
-### 4.4 `crates/favnyr-gui/src/ui`（11 个 .slint）
+### 4.4 `crates/favnyr-gui/src/ui`（21 个 .slint）
 
-**依赖方向**（无环，编译器强制）：`structs` ← `theme` ← `widgets/*` ← `panel`/`sidebar`/`workspaces`/`progress` ← `main_window.slint`（编译入口）。
+**依赖方向**（无环，编译器强制）：`structs` ← `theme` ← `widgets/*` ← `panel`/`sidebar`/`workspaces`/`progress`/`overlays/*` ← `main_window.slint`（编译入口）。
 
 - `structs.slint`：21 个 `export struct`——Rust ↔ Slint 数据模型（`FileRow`、`PanelView`、`ColumnInfo`、`Strings`、`FavNode`、`SidebarPlace`…）。
 - `theme.slint`：`export global`：`Theme`（调色板，`apply-theme()` 单一写入点）、`Tokens`（尺寸/圆角/语义色）、`Note`/`Tip`/`CtxNav`/`Dismiss`/`WindowFocus`。`CtxNav` 由根文档 `export { CtxNav } from "theme.slint";` 重导出——**只有根文档的导出会被 `include_modules!()` 再导出**，Rust 侧的 `crate::CtxNav` 依赖于此。
-- `widgets/*`：纯展示组件，靠 `in property <Strings> strings` 等显式参数解耦；引用 `@image-url` 时路径相对**声明文件**解析（`widgets/*.slint` 用 `../../../assets/…`，`ui/*.slint` 用 `../../assets/…`）。
+- `widgets/*`：纯展示组件，靠 `in property <Strings> strings` 等显式参数解耦；引用 `@image-url` 时路径相对**声明文件**解析（`widgets/*.slint` 与 `overlays/*.slint` 用 `../../../assets/…`，`ui/*.slint` 用 `../../assets/…`）。
 - `panel.slint`：`PanelComponent`——标签栏 / 路径与列头 / 行区 / 页脚；**第二层分块（`panel/{header,columns,rows,footer}.slint`）尚未做**（split-plan §2 步骤 4 的后半）。
 - `sidebar.slint`：侧栏与收藏面板（`Sidebar`/`FavRow`/`FavPanel`/`ActivityRail`…）。
-- `main_window.slint`：`MainWindow` 契约面 + `FocusScope` 键盘处理 + 布局骨架 + 侧栏与面板容器实例化 + 全局提示；**约 40 个覆盖层区块仍在此文件内**（待提取，见 split-plan §16）。
+- `overlays/*`：10 个文件、11 个覆盖层组件（`notes.slint` 另含 `OverlayNoteBubble`），每个都是 `export component OverlayX inherits Rectangle { width: 100%; height: 100%; … }`——**透明宿主：自身不接收输入**，子元素命中原样生效；实例化位置保持原区块在子元素列表中的次序，因此 z 序不变。块内 `root.` 现在指向宿主（尺寸与窗口一致），窗口契约通过实例处的显式转发接入：只读 → `x: root.x;`、双向（覆盖层自关、字段编辑）→ `x <=> root.x;`、动作 → `cb(a) => { root.cb(a); }`。
+  - 拿不到的外层 id（`key-scope.focus()`）改为组件内 `callback return-focus();`，在实例处接回 `key-scope`（`notes`/`panel_menus`/`settings`）。
+  - 面板类覆盖层里唯一的例外：`overlays/settings.slint` 的快捷键菜单必须画在设置面板**之上**，故与面板同文件、声明在其后（原始次序即如此）。
+- `main_window.slint`：`MainWindow` 契约面（518 个成员，逐字未变）+ `FocusScope` 键盘处理 + 布局骨架 + 侧栏与面板容器实例化 + 全部 `Overlay*` 实例（转发层）+ 全局提示。覆盖层提取后，`main_window.slint` 只剩约 3 200 行，其中 552 行是转发。
 
 **`MainWindow` 契约面（拆分后逐字未变，518 个成员）**：
 
@@ -507,7 +521,7 @@ newFavnyr/
 | 拆分前 | 行数 | 现状 |
 | --- | ---: | --- |
 | `favnyr-gui/src/bridge.rs` | 19 001 | ✅ `bridge/` 47 文件（`mod.rs` 151 行） |
-| `favnyr-gui/src/ui/main_window.slint` | 15 897 | 🟡 11 个 .slint；`main_window.slint` 7 483 行（覆盖层待提取） |
+| `favnyr-gui/src/ui/main_window.slint` | 15 897 | 🟡 21 个 .slint；`main_window.slint` 3 193 行（覆盖层已全部提取，只剩契约面 + 骨架 + 转发） |
 | `favnyr-core/src/fs.rs` | 1 919 | ✅ `fs/` 6 文件（`tests.rs` 807） |
 | `favnyr-core/src/fs/ops.rs` | 1 834 | ✅ `fs/ops/` 8 文件 |
 | `favnyr-core/src/places.rs` | 1 771 | ✅ `places/` 4 文件 |
@@ -524,12 +538,13 @@ newFavnyr/
 
 | 文件 | 行数 | 原因 / 后续 |
 | --- | ---: | --- |
-| `ui/main_window.slint` | 7 483 | 覆盖层（约 40 个区块、约 4 000 行）需 `root.*` → 显式转发改写 + 人工点检；见 split-plan §2 步骤 3、§16 |
-| `ui/panel.slint` | 2 897 | `PanelComponent` 内部分块（header/columns/rows/footer）属同一次改写，建议与覆盖层一起做 |
+| `ui/main_window.slint` | 3 193 | 518 个契约成员（约 1 000 行）+ 布局骨架 + 覆盖层转发（552 行）。转发是显式契约，不再机械下推；如需再缩，只能按"每覆盖层一个 `install` 式子组件"组织，收益有限 |
+| `ui/panel.slint` | 2 897 | `PanelComponent` 内部分块（header/columns/rows/footer）属第二次改写，转发面与覆盖层同量级；见 split-plan §16 剩余项 |
+| `ui/overlays/settings.slint` | 1 507 | 设置面板三页 + shell 扩展列表 + 快捷键菜单；面板内部本就是"每页一块"，第二层按页拆（`settings/{general,shortcuts,openwith}.slint`）即可，见 split-plan §16 剩余项 |
 | `bridge/tests.rs` | 2 346 | 纯测试，方案允许"可后续按模块再分" |
-| `bridge/state.rs` | 1 508 | 中心状态定义，按访问面聚合比按行数切更可读；如需再分可按 `AppState` / 会话与作业类型两块 |
 | `ui/sidebar.slint` | 1 113 | 7 个组件同属侧栏一族；组件接口已显式，后续可机械分文件 |
 | `ui/widgets/rows.slint` | 922 | 6 个行/瓦片组件，紧密共用列头与行高常量 |
+| `bridge/state.rs` | 1 508 | 中心状态定义，按访问面聚合比按行数切更可读；如需再分可按 `AppState` / 会话与作业类型两块 |
 | `bridge/thumbs.rs` | 862 | 调度器 + LRU + 线程 + 两个决策点，属同一子系统 |
 | `bridge/rows/build.rs` | 855 | 行模型重建的单一流程 |
 | `core/src/fs/tests.rs` | 807 | 纯测试，略超 800 |

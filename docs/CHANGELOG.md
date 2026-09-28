@@ -144,3 +144,43 @@ files touched, so a behaviour can be traced back to its source.
 - 尚未人工点检：GUI 行为不在单测覆盖内，导航 / 标签页撕离 / 拖放 / 粘贴进度 / 缩略图 / 设置面板 / 快捷键需要跑一次。
 - 有意保留（未做）：`ui/overlays/*`（覆盖层提取需把 `root.*` 改写为显式 `in`/`in-out property` + `callback` 转发，须一个 overlay 一次提交并人工点检）、`panel.slint` 的第二层分块、`bridge/tests.rs` 的再分。拆分后仍超 800 行的文件与理由见 `docs/code-map.md` §6。
 - `.slint` 文件统一为 CRLF（仓库 `autocrlf=true`）；Linux 侧编译由 CI 的 `check` 任务覆盖（本机仅 Windows）。
+
+## 2026-09-28 — 覆盖层提取：`main_window.slint` 的 40 个区块 → `ui/overlays/*.slint`
+
+**Changed**
+
+仍是纯搬迁拆分：不改行为、不改对外路径、不引入依赖；`MainWindow` 的 518 个成员逐字未变。`main_window.slint` **5 541 → 3 193 行**（其中 552 行是转发），只剩契约面、`FocusScope`、布局骨架与覆盖层实例。
+
+每个覆盖层一次提交（共 10 次），逐个搬移：
+
+| 提交 | 新文件（行数） | 组件 |
+| --- | ---: | --- |
+| `ad2ae31` | `overlays/toasts.slint`（302） | `OverlayToasts`：进度 toast、拖放指示、swap pill、全局通知 |
+| `6623e28` | `overlays/dialogs.slint`（379） | `OverlayDialogs`：永久删除、打开全部、未保存更改、粘贴冲突 |
+| `d7a6fa7` | `overlays/workspaces.slint`（383） | `OverlayWorkspaces`：工作区保存行、列表、反馈 toast |
+| `91dcce0` | `overlays/custom_command.slint`（393） | `OverlayCustomCommand`：自定义命令编辑器 / 已购应用只读视图 |
+| `5919dcc` | `overlays/notes.slint`（742） | `OverlayNotes` + `OverlayNoteBubble`：重命名、备注编辑器、新建文件夹/文件、颜色与备注清理、条目备注气泡 |
+| `f7b83a2` | `overlays/favorites.slint` | `OverlayFavorites`：收藏容器命名/保存为收藏/新建容器三个弹窗 |
+| `4b2bb4a` | `overlays/openwith.slint`（412） | `OverlayOpenWith`：打开方式/新建子菜单、shell 级联、应用选择器、提升 toast |
+| `6f35f2e` | `overlays/menus.slint`（641）+ `overlays/panel_menus.slint`（363） | `OverlayMenus`（主右键菜单、Split、标签栏位置、视图模式、URL、回收站、盘符/网络、"颜色与备注"飞出菜单）+ `OverlayPanelMenus`（标签栏死区、标签页、列、跨视图拖放菜单） |
+| `b42688a` | `overlays/favorites.slint`（383） | 收藏容器/收藏项右键菜单并入 `OverlayFavorites` |
+| `c0a24cd` | `overlays/settings.slint`（1 507） | `OverlaySettings`：设置面板三页 + shell 扩展列表 + 快捷键行菜单 |
+
+做法（每个覆盖层相同）：
+
+- 包裹组件统一为 `export component OverlayX inherits Rectangle { width: 100%; height: 100%; … }`——透明全窗口宿主，自身不接收输入；实例化在原区块位置，z 序不变。块内 `root.` 现指向宿主（尺寸与窗口一致），`parent.*` 语义不变。
+- 窗口契约在实例处显式转发：只读 → `x: root.x;`；覆盖层会写回的（自关标志、表单字段、下拉索引）→ `x <=> root.x;`；动作 → `cb(a) => { root.cb(a); }`。
+- 覆盖层拿不到的窗口 id 改为组件内 `callback return-focus();`，在实例处接回 `key-scope`（`notes.slint`、`panel_menus.slint`、`settings.slint`）。
+- 快捷键菜单与设置面板同文件、声明在面板之后（原始次序即如此，它必须画在面板之上）。
+- `overlays/*.slint` 的 `@image-url` 下沉为 `../../../assets/…`；`main_window.slint` 的 import 表按"只留仍在用的名字"重写。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 阶段 5 状态更新；偏差记录补 6 条（13–18：overlays 实际为 10 文件 11 组件、`menus` 拆两个文件、快捷键菜单落 `settings.slint`、收藏容器菜单并入 `favorites.slint`、`return-focus` 转发、import 重写）；剩余项改写为 `panel.slint` 第二层、`settings.slint` 按页分块、`bridge/tests.rs` 再分。
+- `docs/code-map.md` — §3.3 文件表（21 个 `.slint`）、§4.4 依赖方向与覆盖层转发约定、§6 剩余项同步到拆分后状态。
+
+**Notes**
+
+- 验证：每个覆盖层都做**行级校验**（搬走的区块去缩进后与原文逐行比对，`block verbatim`）+ 组件成员与实例转发一一对应核查 + `cargo check -p favnyr-gui` 全绿；`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed。
+- 尚未人工点检：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突）需要跑一次。
+- 有意保留：`overlays/settings.slint`（1 507 行）按页分块、`panel.slint`（2 897）第二层分块；理由与后续见 `docs/split-plan.md` §16。

@@ -334,9 +334,9 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 | 2 | GUI 外围：`i18n`、`openwith`、`actions`、`winddrag` | ✅ 全部完成 |
 | 3 | `bridge.rs` 外围模块（47 个文件） | ✅ 全部完成（`bridge/mod.rs` 151 行） |
 | 4 | `bridge.rs` 的 `install()`（791 + 12 个 `cb_*.rs`） | ✅ 完成 |
-| 5 | `.slint` 拆分 | 🟡 `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 未做**、`panel.slint` 第二层未做 |
+| 5 | `.slint` 拆分 | 🟡 `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 10 个文件、11 个组件已完成**（`main_window.slint` 5 541 → 3 193 行）；`panel.slint` 第二层与 `overlays/settings.slint` 按页分块未做 |
 
-**验证**：`cargo fmt -p favnyr-gui`、`cargo clippy -p favnyr-gui --all-targets -- -D warnings` 干净；`cargo test -p favnyr-gui` 138 全绿（`favnyr-core` 同）；GUI 冷启动冒烟通过（恢复工作区 + 进入事件循环，无 panic）。**人工点检仍欠**：见 §2"迁移顺序"前的说明。
+**验证**：`cargo fmt -p favnyr-gui`、`cargo clippy -p favnyr-gui --all-targets -- -D warnings` 干净；`cargo test -p favnyr-gui` 138 全绿（`favnyr-core` 同）；GUI 冷启动冒烟通过（恢复工作区 + 进入事件循环，无 panic）。覆盖层每一层搬完后都另有**行级校验**：搬走的区块按去缩进后与原文逐行比对（`block verbatim`），并核对组件成员与实例转发一一对应、无遗漏，再跑 `cargo check -p favnyr-gui`。**人工点检仍欠**：见 §2"迁移顺序"前的说明。
 
 **实际偏差**（与方案表格不同之处，均为命名/组织选择，不影响验收标准）：
 
@@ -352,9 +352,16 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 10. `.slint` 拆分需要一处新增：`main_window.slint` 里加 `export { CtxNav } from "theme.slint";`——只有根文档的导出会被 `include_modules!()` 再导出，Rust 侧 `crate::CtxNav` 依赖它。
 11. 所有 `.slint` 文件统一为 CRLF（仓库 `autocrlf=true`），否则 `sed` 等工具会把单个文件改成 LF 造成混行。
 12. GUI 拆分的 Linux 编译无法在本机（Windows）验证，交由 CI 的 Linux `check` 任务覆盖；本机已确认 `#[cfg]` 门控的原样保留。
+13. `ui/overlays/*` 实际为 **10 个文件、11 个组件**：`toasts`(1)、`dialogs`(1)、`workspaces`(1)、`custom_command`(1)、`notes`(2：`OverlayNotes` + `OverlayNoteBubble`)、`favorites`(1)、`openwith`(1)、`panel_menus`(1)、`menus`(1)、`settings`(1)。每个覆盖层一次提交（`ad2ae31`…`c0a24cd`）。
+14. 方案的 `overlays/menus.slint`（预估 ~700 行）实施为**两个文件**：`menus.slint`（641：主右键菜单、Split、标签栏位置、视图模式、URL、回收站、盘符/网络、"颜色与备注"飞出菜单）+ `panel_menus.slint`（363：标签栏死区、标签页、列、跨视图拖放菜单），以守住 800 行上限。
+15. 快捷键菜单（方案归入 `menus.slint`）实际落在 `overlays/settings.slint`：它必须渲染在设置面板**之上**，因此与面板同文件并声明在其后（原始次序即如此），避免跨文件的 z 序耦合。
+16. `overlays/favorites.slint` 吸收收藏容器/收藏项的右键菜单（方案列在 `menus.slint` 区块）——它与三个收藏弹窗共用 `fav-menu-*` 状态，合在一起内聚更高。
+17. `notes.slint` / `panel_menus.slint` / `settings.slint` 新增组件内 `callback return-focus();`：原先直接调用窗口的 `key-scope.focus()`，覆盖层拿不到该 id，改由实例处接回。
+18. 覆盖层提取后 `main_window.slint` 的 import 表按"只留仍在用的名字"重写（`FfmpegCmdRow`/`SidebarHeaderAction`/`MenuItem`/`ModalBackdrop`/`PathRow`/`SearchField` 等移出），并在 `overlays/*.slint` 里把 `@image-url` 下沉为 `../../../assets/…`。
 
 **剩余项**（有意保留，不是遗漏）：
 
-- `ui/main_window.slint` 的约 40 个覆盖层区块（约 4 000 行）→ `ui/overlays/*.slint`。需把 `root.xxx` 读改写为组件 `in`/`in-out property` 与 `callback` 转发，按 §2 的建议**一个 overlay 一次提交**，且按 §0 说明必须人工点检——因此需要维护者参与（提交授权 + 点检）。
-- `ui/panel.slint`（2 897 行）的第二层分块（`panel/{header,columns,rows,footer}.slint`），与覆盖层同属"显式转发改写"一类，建议一并做。
+- ✅ `ui/main_window.slint` 的约 40 个覆盖层区块（约 4 000 行）→ `ui/overlays/*.slint`（10 文件 11 组件），已完成；`main_window.slint` 5 541 → 3 193 行（含 552 行转发）。**仍需维护者人工点检**：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（含 capture 与冲突）。
+- `ui/panel.slint`（2 897 行）的第二层分块（`panel/{header,columns,rows,footer}.slint`）：与覆盖层同属"显式转发改写"一类，但 `PanelComponent` 的成员面（含 500+ 行列头/行高/几何常量）需要先盘点读写方向，建议作为独立一轮，一次一块提交。
+- `ui/overlays/settings.slint`（1 507 行）按页分块（`settings/{general,shortcuts,openwith}.slint` + 面板外壳）：三页共用 `settings-*` 状态，拆分时要把每页用到的成员分别列清；快捷键菜单留在外壳里（须在面板之上）。
 - `bridge/tests.rs`（2 346）按模块再分（方案原文即"可后续"）；`bridge/state.rs`（1 508）、`ui/sidebar.slint`（1 113）、`ui/widgets/rows.slint`（922）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）为拆分后仍超 800 的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)。
