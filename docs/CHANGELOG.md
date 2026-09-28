@@ -362,4 +362,30 @@ files touched, so a behaviour can be traced back to its source.
 - 收尾门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed，**用例数与拆分前一致**（bridge 92 个用例 = 外壳 33 + 分节 59）。冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，15 秒存活、窗口标题 `Favnyr`、无 panic。
 - 行数总检查：全仓（`vendor/parley` 除外）超过 800 行的代码文件只剩 `ui/main_window.slint`（3 195，`MainWindow` 的 518 个契约成员，理由见 code-map §6）。
 - 尚未人工点检（本轮搬的是 `AppState` / 调度器 / 行模型 / 剪贴板的类型与测试，运行时应无差异）：导航与历史、tear-off、拖放（含虚拟文件）、粘贴进度、缩略图请求与失效、子文件夹扫描、设置各页、快捷键，以及前几轮累计的列表区选择 / gutter 橡皮筋 / 两条自绘滚动条 / Places 行 / 收藏树 / activity rail / 节重排 / 列头操作 / 行与瓦片渲染 / 飞出菜单色条与红勾。
-- 本轮 12 个代码提交与文档提交均未推送，`main` 领先 `origin/main`（`d8cfc0d`）。
+- 本轮 12 个代码提交与文档提交均未推送，`main` 领先 `origin/main`（`d8cfc0d`）。（后续：这批提交已于 2026-09-29 推送为 `d8cfc0d..bc80571`。）
+
+## 2026-09-29 — 侧栏列提取：`main_window.slint` 的 left-column → `ui/sidebar/column.slint`
+
+**Changed**
+
+- 新增 `crates/favnyr-gui/src/ui/sidebar/column.slint`（**374 行**）：`export component SidebarColumn inherits Rectangle`，装的是原来窗口里那段 245 行的"统一侧栏列"——四个可重排的 Places 节（`Sidebar` × 4，共用一个网格）+ `FavPanel` 收藏树 + 固定回收站节 + 节拖拽时的落点指示线。
+- `crates/favnyr-gui/src/ui/main_window.slint` 3 195 → **3 010 行**（−185，一次提交 `fcf7608`）：区块换成 `sidebar-column := SidebarColumn { … }`（60 行转发），import 由 `Sidebar` + `FavPanel` 两行收成 `SidebarColumn` 一行，`hover-*` / `reorder-*` / `stack-*` 的读取点（含两个 650 ms 计时器与 `OverlayToasts` 的三个转发）改指 `sidebar-column.*`，`sidebar-section-top/bottom` 变成两行委托。
+- `MainWindow` 的 540 个顶层声明（333 `property` / 207 `callback` / 29 `function`，其中 518 个是 Rust 契约面）**逐字未动**，Rust 侧一行未改。
+
+**成员面**
+
+- 子组件接口：33 `in`（含 4 个 `sidebar-places-*`、`fav-nodes` 等）+ 7 `in-out`（`fav-menu-*`）+ 20 `callback` + 11 `out`（`hover-container` 等拖放与计时器要读的名字、`stack-{x,y,w,h}`）+ 2 `public pure function`（`section-top` / `section-bottom`）。
+- 节的 rank 不重复实现：`sidebar-section-rank()` 与 `sidebar-section-order` 回退仍只在窗口里，列只收 5 个已解析整数。
+- 列实例**始终存在**（折叠时宽度 0），因为 `hover-container` 之类的读取是拉取式的，条件元素无法被引用——原区块注释记录过这条约束，现由组件根的 `width` / `visible` 绑定承接。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 标题改为"2026-09-28 起"，阶段 5 进度行补侧栏列，新增偏差 41–45（落点选 `ui/sidebar/` 而非 `ui/window/`、成员方向与三点处理、跨组件函数必须 `public`、始终实例化的原因、校验与门禁口径），剩余项补第 41–45 条要点并改写"停在侧栏列"的决定。
+- `docs/code-map.md` — §1 统计日期与合计（.slint 35 → **36 个**、18 014 → **18 203 行**，全仓 **212 文件 / 67 281 行**）、§2 结构树（侧栏 4 个组件）、§3.3 文件表（新增 374 行一行、`main_window.slint` 3 010）、§4.4 依赖链与成员拆分说明、§6 剩余项与人工点检范围。
+
+**Notes**
+
+- 校验：区块体去缩进后与 `git show HEAD:` 逐行一致（唯一改写是 5 处 rank 名）；子文件写盘前跑成员集合 / 自包含 / 大括号平衡 / 单组件 / 无重复空行 / 无死 import / 行数上限断言；收尾整体 round-trip——把区块缝回窗口原位后与拆分前逐行比对，**209 行代码完全一致**。
+- 一处编译期坑：子组件的几何函数起初写成私有 `pure function`，`build.rs` 以 `The function 'section-top' is private` 失败（EXIT=101），改为 `public pure function`（同 `theme.slint` 写法）后通过。
+- 门禁：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` → core 205（1 ignored）+ gui 138、0 failed，用例数与拆分前一致；debug 二进制冷启动 15 s 存活（`starting Slint event loop init_ms=108`、`workspace restored panels=1`）。
+- 尚未人工点检（本轮搬的是布局子树，运行时应无差异）：四节的折叠与拖拽重排（含落点指示线）、Places 行点击 / 中键 / 右键 / 拖出、收藏树展开折叠与重排拖拽、tab 或文件拖到收藏文件夹的落点高亮与自动展开、收藏右键菜单。

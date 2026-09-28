@@ -323,7 +323,7 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 7. **文档同步**：拆分完成后更新 `docs/CHANGELOG.md`（追加记录），并检查 `AGENTS.md` 中提到的文件路径（例如 "两个决策点都在 `crates/favnyr-gui/src/bridge.rs`" 若指向新文件需改写）。
 8. **不做的事**：本次不引入新依赖、不新增功能、不调整 UI 行为、不修改 `vendor/parley`。
 
-## 16. 执行状态与偏差记录（2026-09-28 拆分落地）
+## 16. 执行状态与偏差记录（2026-09-28 起拆分落地）
 
 **进度**（方案原样保留；本节记录实际执行）：
 
@@ -334,7 +334,7 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 | 2 | GUI 外围：`i18n`、`openwith`、`actions`、`winddrag` | ✅ 全部完成 |
 | 3 | `bridge.rs` 外围模块（47 个文件） | ✅ 全部完成（`bridge/mod.rs` 151 行） |
 | 4 | `bridge.rs` 的 `install()`（791 + 12 个 `cb_*.rs`） | ✅ 完成 |
-| 5 | `.slint` 拆分 | ✅ `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 10 个文件、11 个组件已完成**（`main_window.slint` 5 541 → 3 195 行），**设置对话框按页拆分已完成**（`overlays/settings.slint` 1 507 → 外壳 385 + `settings/{general,shortcuts,openwith}`），**`panel.slint` 第二层已完成**（2 897 → 732 行 + `panel/` 6 个文件），**`sidebar.slint` 按组件拆分已完成**（1 113 → 287 行 + `sidebar/{item,fav,rail}` 3 个文件），**`widgets/rows.slint` 按组件拆分已完成**（922 → 596 行 + `widgets/rows/{header,marks}` 2 个文件） |
+| 5 | `.slint` 拆分 | ✅ `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 10 个文件、11 个组件已完成**（`main_window.slint` 5 541 → 3 195 行），**设置对话框按页拆分已完成**（`overlays/settings.slint` 1 507 → 外壳 385 + `settings/{general,shortcuts,openwith}`），**`panel.slint` 第二层已完成**（2 897 → 732 行 + `panel/` 6 个文件），**`sidebar.slint` 按组件拆分已完成**（1 113 → 287 行 + `sidebar/{item,fav,rail}` 3 个文件），**`widgets/rows.slint` 按组件拆分已完成**（922 → 596 行 + `widgets/rows/{header,marks}` 2 个文件），**`main_window.slint` 的侧栏列已提出**（3 195 → 3 010 行 + `sidebar/column.slint` 374 行，仍为记录在案的例外） |
 
 | 6 | 第二批：第一批拆出后仍超 800 行的 5 个子文件 | ✅ `bridge/state.rs`、`bridge/thumbs.rs`、`bridge/rows/build.rs`、`bridge/tests.rs`、`core/src/fs/tests.rs` 全部再下沉为子模块（偏差第 31–40 条）；除 `main_window.slint` 外无超 800 行文件 |
 
@@ -386,6 +386,17 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 39. 每块的门禁顺序：dry-run → 写盘 → `cargo fmt --all` → **独立**校验脚本（不复用抽取脚本自己的 round-trip）→ `cargo check -p favnyr-gui --tests` → 提交。`bridge/tests.rs` 这轮 7 块合为 2 次提交（`d129ea1` opening、`c117dfe` 其余六块）：外壳要到最后一块才降到 800 以下，中途校验因此放宽父文件上限（`--parentceil`），子文件上限与逐行 / token 相等照旧。
 40. 第二批的收尾门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` = core 205（1 ignored）+ gui 138，**用例数与拆分前逐字节一致**；debug 二进制冷启动 15 s 存活冒烟通过（窗口标题 `Favnyr`）。
 
+**第三批：`main_window.slint` 的侧栏列（2026-09-29）**
+
+41. `main_window.slint` 里 245 行的"统一侧栏列"区块（`left-column := Rectangle`，含 4 个可重排 Places 节 + 收藏树 + 回收站 + 落点指示线）整体提成 **`ui/sidebar/column.slint`**（`export component SidebarColumn inherits Rectangle`，374 行）。窗口因此 3 195 → **3 010 行**（−185），`MainWindow` 的 540 个顶层声明（333 `property` / 207 `callback` / 29 `function`）**逐字未动**，Rust 侧 `install()` 的绑定面零改动。
+42. 落点选在 `ui/sidebar/` 而不是方案的 `ui/window/`：它与既有 `sidebar/{item,fav,rail}` 同族，且新文件只 import 这三者，目录即依赖方向；`ui/window/` 至今不存在，为单一组件新建一层目录没有收益。
+43. 成员方向沿用第 20 条的脚本分类，结果是 **33 `in` + 7 `in-out` + 20 `callback` + 11 `out` + 2 `public pure function`**（成员面 109 行，实例处转发 60 行）。三点具体处理：
+    - 节的 rank 只把 5 个已解析整数（`section-rank-0..3` + `section-source-rank`）作为 `in` 传下去，`sidebar-section-rank()` / `sidebar-section-order` 的回退逻辑不在子组件里重造，窗口仍是唯一持有者。
+    - `fav-menu-*` 是覆盖层与列共用的可变状态，按第 22 条同一路子走 `in-out` + `<=>`。
+    - 跨组件调用函数必须 `public`（否则 `build.rs` 直接以 `The function 'section-top' is private` 编译失败），故两个几何函数写成 `public pure function`，与 `theme.slint` 既有写法一致；窗口侧 `sidebar-section-top/bottom` 变成两行委托。
+44. 子组件必须**始终实例化**（折叠时宽度 0）：拖放路径要读 `sidebar-column.hover-container` 等 11 个 `out`，条件元素无法被引用——这正是原区块上面那段注释记录过的约束，提取后由组件根的 `width` / `visible` 绑定承接，行为等价。`hover-*` / `reorder-drag-abs-*` 的读取点（含两个 650 ms 计时器与 `OverlayToasts` 的三个转发）已逐一改指 `sidebar-column.*`。
+45. 校验同第 23、26 条那一套：子文件写盘前跑成员集合 / 自包含 / 大括号平衡 / 单组件 / 无重复空行 / 无死 import / 行数上限断言，搬走的区块体去缩进后与 `git show HEAD:` 逐行一致（唯一改写是 5 处 rank 名）；收尾再做**整体 round-trip**——把区块缝回窗口原位置、去空行与注释后与拆分前逐行比对，209 行代码完全一致。门禁 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p favnyr-core -p favnyr-gui`（core 205 / gui 138，用例数与拆分前一致）全绿，debug 二进制冷启动 15 s 存活（`init_ms=108`）。
+
 **剩余项**（有意保留，不是遗漏）：
 
 - ✅ 第一批拆出后仍超 800 行的 5 个子文件已完成第二批下沉（`bridge/state.rs`、`bridge/thumbs.rs`、`bridge/rows/build.rs`、`bridge/tests.rs`、`core/src/fs/tests.rs`），实际形状、命名与校验口径见上文第 31–40 条。至此仓库内（`vendor/parley` 除外）**只剩 `main_window.slint` 一个文件超过 800 行**。**仍需维护者人工点检**：导航与历史、tear-off、拖放（含虚拟文件）、粘贴进度、缩略图请求与失效、子文件夹扫描、设置各页、快捷键——这些块搬的是 `AppState` / 调度器 / 行模型的类型与测试，运行时行为应完全不变。
@@ -395,4 +406,5 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 - ✅ `ui/overlays/settings.slint`（1 507 行）按页分块（`settings/{general,shortcuts,openwith}.slint` + 面板外壳）已完成：外壳 385 行，三页 680 / 323 / 331 行；快捷键菜单留在外壳里（须在面板之上）。
 - ✅ `ui/sidebar.slint`（1 113 行）按组件拆分已完成：外壳 287 行（节头一族 + `Sidebar`）+ `sidebar/{item,fav,rail}.slint`（271 / 467 / 115），三次提交各一块，实际形状与偏差见上文第 24–27 条。**仍需维护者人工点检**：Places 行的 hover / 拖拽 / 盘符容量条、收藏树的展开折叠与重排拖拽、activity rail 三个按钮（侧栏开关 / 工作区 / 设置）与其 tooltip、节的拖拽重排。
 - ✅ `ui/widgets/rows.slint`（922 行）按组件拆分已完成：父文件 596 行（`FileRowView` / `SectionHeaderView` / `FileTileView` 三个纯视觉形状）+ `widgets/rows/{header,marks}.slint`（223 / 114），两次提交各一块，取舍标准与偏差见上文第 28–30 条。**仍需维护者人工点检**：列头的排序点击 / 拖拽改序 / 右缘改宽 / 右键菜单，列表行与分组头的渲染（缩略图、应用图标、链接徽标、age 药丸），网格瓦片，"颜色与备注"飞出里的色条与清理清单的红勾——色条与红勾要打开飞出菜单才出现，冷启动冒烟覆盖不到。
-- `ui/main_window.slint`（3 195，契约面）仍是唯一超过 800 行的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)；`bridge/tests.rs`（2 346）按模块再分、`bridge/state.rs`（1 508）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）已在第二批完成，见上文第 31–40 条。
+- ✅ `main_window.slint` 的侧栏列区块（245 行 / 56 个 `root.` 名）已提成 `ui/sidebar/column.slint`（374 行，一次提交），窗口 3 195 → 3 010 行，形状与偏差见上文第 41–45 条。**仍需维护者人工点检**：四节的折叠与拖拽重排（含落点指示线）、Places 行的点击 / 中键 / 右键 / 拖出、收藏树的展开折叠与重排拖拽、把 tab 或文件拖到收藏文件夹时的落点高亮与自动展开（两个 650 ms 计时器现在跨一层读 `sidebar-column.hover-*`）、收藏右键菜单（`fav-menu-*` 跨两层 `<=>`）。
+- `ui/main_window.slint`（3 010，契约面）仍是唯一超过 800 行的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)；2026-09-29 决定**停在侧栏列**这一刀：剩余可搬的最大块是 `panels-container`（434 行 / 156 个 `root.` 名），它要转发的成员太多、又把 `MainWindow` 的根布局夹在中间，收益/风险不如前几刀。`bridge/tests.rs`（2 346）按模块再分、`bridge/state.rs`（1 508）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）已在第二批完成，见上文第 31–40 条。
