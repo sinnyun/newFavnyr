@@ -1,0 +1,223 @@
+// The column header strip of a file view: one instance per visible column,
+// sorting, the reorder drag and the right-edge resize grip.
+//
+// Extracted from rows.slint. This is the only shape in that family that owns a
+// pointer: the row, section header and tile stay PURELY visual because a single
+// stable TouchArea above the viewport (`sel-touch` in `panel/selection.slint`)
+// routes their gestures, which is what lets rows be virtualized.
+
+import { Dismiss, Theme, Tokens } from "../../theme.slint";
+
+export component ColumnHeader inherits Rectangle {
+    callback clicked();
+    /// Resize in progress: new width (the parent applies it to the right
+    /// property via `set-col-width` → no two-way binding, `for`-compatible).
+    callback resized(length);
+    /// End of resize (to persist it).
+    callback resize-finished();
+    /// Right-click on the header (absolute position) → column menu.
+    callback right-clicked(length, length);
+    /// Column reordering. The delta is computed in the event
+    /// handlers, where `absolute-position` can be read without a reactive dependency.
+    /// The drop target uses the offsets provided by the bridge so as not to
+    /// create a cycle between layout and component properties.
+    callback reorder-start(length /*center of the dragged column, px*/);
+    callback reorder-move(length /*delta px*/);
+    callback reorder-end(length /*delta px*/);
+    callback report-drop-target(int);
+    /// Current width (read-only — provided by the parent: `width-of(id)`).
+    in property <length> column-width: 100px;
+    in property <string> label;
+    in property <string> column-id;
+    in property <bool> active: false;
+    in property <bool> asc: true;
+    in property <length> min-col-width: 60px;
+    in property <int> index;               // visible index (column 0 = anchor)
+    in property <int> count;               // number of visible columns
+    in property <length> offset;           // cumulative left offset (px), plain
+    in property <bool> col-drag-active: false;
+    in property <length> col-drag-new-center: 0px;  // dragged center + delta (plain)
+    in property <int> col-drop-idx: -1;    // current target gap (from the parent)
+
+    width: root.column-width;
+
+    property <length> drag-start-x;        // resize grip
+    property <length> drag-start-w;        // resize grip
+    property <length> press-x;             // reorder drag
+    property <bool> dragging: false;       // THIS header is being dragged
+    // The reorder can be cut from outside — a menu opening takes the pointer
+    // and the release never comes back. Same guard as the sidebar's
+    // reorderable sections.
+    changed col-drag-active => {
+        if (!root.col-drag-active) { root.dragging = false; }
+    }
+    // Gap claimed if the targeted center falls within THIS header (left half →
+    // before it = `index`; right half → after = `index+1`). ≥ 1 (anchor `name`).
+    // All in PLAIN (offset/width/new-center) → no layout cycle.
+    property <int> my-drop-target:
+        (!root.col-drag-active
+            || root.col-drag-new-center < root.offset
+            // Claimed zone = column + its right-hand gap → continuous tiling
+            // (no dead zone between columns).
+            || root.col-drag-new-center >= root.offset + root.column-width + Tokens.col-gap)
+        ? -1
+        : max(1, root.col-drag-new-center < root.offset + root.column-width / 2
+            ? root.index
+            : root.index + 1);
+    changed my-drop-target => {
+        if (root.my-drop-target >= 0) { root.report-drop-target(root.my-drop-target); }
+    }
+
+    opacity: root.dragging ? 0.4 : 1.0;
+
+    background: root.dragging
+        ? Theme.accent-background.with-alpha(0.18)
+        : (touch.has-hover && !grip.has-hover
+            ? Theme.alternate-background.with-alpha(0.6)
+            : transparent);
+    border-radius: 5px;
+
+    // Live insertion line: to the left of the header at the target gap, and to the right of
+    // the last header if the gap is "at the end".
+    if root.col-drag-active && root.col-drop-idx == root.index && root.index >= 1 : Rectangle {
+        // Aligned on the column separator (= right edge of the previous
+        // column, where the resize grip line sits), so that the
+        // preview coincides with the visible separation. The left edge of THIS
+        // header is at `-col-gap` from the previous separator.
+        x: -(Tokens.col-gap) - 1px;
+        width: 2px;
+        height: parent.height;
+        background: Theme.accent-background;
+    }
+    if root.col-drag-active && root.index == root.count - 1 && root.col-drop-idx == root.count : Rectangle {
+        // Drop at the end: on the right edge (separator) of the last header.
+        x: parent.width - 1px;
+        width: 2px;
+        height: parent.height;
+        background: Theme.accent-background;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.dragging ? grabbing : default;
+        pointer-event(ev) => {
+            // LEFT click on a header closes context menus; right-click
+            // (column menu) does not bump → it can teleport the menu.
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) { Dismiss.serial += 1; }
+            if (ev.button == PointerEventButton.left) {
+                if (ev.kind == PointerEventKind.down) {
+                    root.press-x = self.absolute-position.x + self.mouse-x;
+                    root.dragging = false;
+                }
+                if (ev.kind == PointerEventKind.up) {
+                    if (root.dragging) {
+                        root.reorder-end(self.absolute-position.x + self.mouse-x - root.press-x);
+                        root.dragging = false;
+                    } else {
+                        root.clicked();   // simple click = sort
+                    }
+                }
+            }
+            if (ev.kind == PointerEventKind.down
+                    && ev.button == PointerEventButton.right) {
+                root.right-clicked(
+                    self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                // Drag starts past a threshold; `name` (index 0) is frozen.
+                if (!root.dragging && root.index > 0
+                        && abs(self.absolute-position.x + self.mouse-x - root.press-x) > 5px) {
+                    root.dragging = true;
+                    root.reorder-start(root.offset + root.column-width / 2);
+                }
+                if (root.dragging) {
+                    root.reorder-move(self.absolute-position.x + self.mouse-x - root.press-x);
+                }
+            }
+        }
+    }
+
+    // This wrapper clips the label and caret to the column frame, even
+    // when it is narrow. The reordering lines and the resize
+    // grip stay outside this clip.
+    Rectangle {
+        clip: true;
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 14px; // room for the grip on the right
+            spacing: 4px;
+            alignment: start;
+            Text {
+                text: root.label;
+                font-size: 11px;
+                font-weight: root.active ? 700 : 600;
+                letter-spacing: 0.4px;
+                color: root.active
+                    ? Theme.foreground
+                    : Theme.foreground.with-alpha(0.55);
+                vertical-alignment: center;
+            }
+            // Full-height slot (the Rectangle fills the row height
+            // within the HorizontalLayout) with the caret explicitly centered — an
+            // `Image` placed directly in a layout snaps to the TOP, hence this
+            // wrapper + manual centering.
+            if root.active : Rectangle {
+                width: 14px;
+                Image {
+                    source: root.asc
+                        ? @image-url("../../../../assets/icons/caret-up.svg")
+                        : @image-url("../../../../assets/icons/caret-down.svg");
+                    width: 12px;
+                    height: 12px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    colorize: Theme.accent-background;
+                }
+            }
+        }
+    }
+
+    // Resize grip on the right edge. It stays instantiated for
+    // all columns, since the header background references the `grip` element.
+    Rectangle {
+        visible: true;
+        x: parent.width - self.width / 2;
+        y: 3px;
+        width: 8px;
+        height: parent.height - 6px;
+        background: grip.has-hover || grip.pressed
+            ? Theme.foreground.with-alpha(0.25)
+            : transparent;
+        // 1px line, always visible.
+        Rectangle {
+            x: parent.width / 2 - 0.5px;
+            width: 1px;
+            height: parent.height;
+            background: Theme.border;
+        }
+        grip := TouchArea {
+            mouse-cursor: ew-resize;
+            pointer-event(ev) => {
+                if (ev.kind == PointerEventKind.down
+                        && ev.button == PointerEventButton.left) {
+                    Dismiss.serial += 1;
+                    root.drag-start-x = self.absolute-position.x + self.mouse-x;
+                    root.drag-start-w = root.column-width;
+                }
+                if (ev.kind == PointerEventKind.up
+                        && ev.button == PointerEventButton.left) {
+                    root.resize-finished();
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    root.resized(max(root.min-col-width,
+                        root.drag-start-w
+                        + (self.absolute-position.x + self.mouse-x - root.drag-start-x)));
+                }
+            }
+        }
+    }
+}
