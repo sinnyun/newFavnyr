@@ -1,12 +1,12 @@
 // The list body of one panel: the column header, the rows (list or grid) with
 // their vertical scroll, the "folder not found" banner, the custom scrollbars,
-// and the pointer-selection layer on top of it all.
+// the pointer-selection layer on top of it all, and the left gutter strip
+// that shares its rubber band.
 //
-// Extracted from panel.slint. The panel keeps the rubber-band state (its left
-// gutter strip drives the same band) and the file-drag flags; what it still
-// measures of the list comes back through the `out` properties below.
-// Everything else — row hit-tests, the note bubble, the menu key, the drag
-// hover row — lives here.
+// Extracted from panel.slint. Both pointer layers of the rubber band live
+// here, so the band's state does too; the panel keeps the file-drag flags
+// and the left inset it passes down. What the panel still measures of the
+// list comes back through the `out` properties below.
 
 import { PanelView, Strings } from "../structs.slint";
 import { Note, Theme, Tokens } from "../theme.slint";
@@ -30,20 +30,16 @@ export component PanelList inherits Rectangle {
     in property <length> file-drag-abs-x;
     in property <length> file-drag-abs-y;
     in property <int> menu-key-serial;
-    // Rubber band: declared by the panel (the gutter strip drives it too),
-    // carried here in both directions and passed on to the selection layer.
-    in-out property <bool> rb-active;
-    in-out property <length> rb-anchor-x;
-    in-out property <length> rb-anchor-cy;
-    in-out property <length> rb-cur-x;
-    in-out property <length> rb-cur-vy;
-    // Measured here, read by the panel: the list area in window coordinates
-    // (its ghost position — `body-top`, `list-inset-x`, the gutter strip) and
-    // the vertical scroll the gutter strip converts to content coordinates.
+    // Width of the left gutter the panel keeps beside the list area: the
+    // row padding plus the gap the row consumes, or zero when the LEFT
+    // vertical tab bar occupies it. The strip that covers it (see the last
+    // child) works in `list-area`'s frame — hence the negative x below.
+    in property <length> gutter-w;
+    // Measured here, read by the panel: the list area in window coordinates.
+    // Everything the panel places against the list (`body-top`, the
+    // drag-target arithmetic) hangs off these two.
     out property <length> area-abs-x: list-area.absolute-position.x;
     out property <length> area-abs-y: list-area.absolute-position.y;
-    out property <length> area-h: list-area.height;
-    out property <length> rows-vy: rows-scroll.viewport-y;
 
     // ===== Callbacks up to the panel =====
     callback activate();
@@ -117,12 +113,24 @@ export component PanelList inherits Rectangle {
         else if (id == "age") { root.col-age-width = w; }
         else { root.col-name-width = w; }
     }
+    // Rubber-band (selection rectangle).
+    // To stay correct while the list is scrolled, the anchor and the current
+    // point are stored in **content coordinates** (= visible − scroll).
+    // The bridge compares them against the exact `visual-y/visual-h` bands; the
+    // drawn rectangle converts back to visible (+ viewport-y).
+    // Driven by the TWO pointer layers of this component: the selection layer
+    // over the rows, and the gutter strip beside them.
+    property <bool> rb-active: false;
+    property <length> rb-anchor-x;    // visible x at the start
+    property <length> rb-anchor-cy;   // CONTENT y at the start (anchor)
+    property <length> rb-cur-x;       // current visible x
+    property <length> rb-cur-vy;      // current VISIBLE y (mouse)
 
     // Lower (negative) bound of viewport-y; 0 if the content fits without scrolling.
     property <length> rb-min-vy: rows-scroll.viewport-height > rows-scroll.height
         ? -(rows-scroll.viewport-height - rows-scroll.height)
         : 0px;
-    out property <length> rb-cur-cy: root.rb-cur-vy - rows-scroll.viewport-y;
+    property <length> rb-cur-cy: root.rb-cur-vy - rows-scroll.viewport-y;
     // Hovered row index (-1 = none) — driven by `sel-touch`.
     property <int> hovered-idx: selection.hovered-idx;
     // Which row's note the pointer is asking for, or -1. The badge is drawn on
@@ -755,6 +763,83 @@ export component PanelList inherits Rectangle {
                                     * (rows-scroll.viewport-height - rows-scroll.height),
                             root.rb-min-vy, 0px);
                     }
+                }
+            }
+        }
+    }
+
+    // ===== Left gutter: draggable strip =====
+    // The panel's left inset (`gutter-w`) is VISUALLY part of the gutter, but
+    // no TouchArea in the body can cover it: `list-area` has `clip: true` and
+    // the Flickable also clips — and a clip bounds the HIT-TEST just as much as
+    // the rendering. (Trying to extend the selection layer toward negative x's
+    // therefore fails, and on top of that shifts all its local coordinates.)
+    // This strip, the LAST child of this component — above the list, below the
+    // panel's overlays (context menu, drop targets) — drives the SAME
+    // rubber-band as the selection layer: same `rb-*` properties, same
+    // callbacks, same auto-scroll (the timer only reads properties).
+    // Coordinates converted into `list-area`'s frame (`x - gutter-w`, hence
+    // always negative): consistent with `row-idx-at-xy`, which sees it as a
+    // dead zone there. Zero width when the LEFT vertical tab bar is
+    // displayed: that space then belongs to it.
+    gutter-strip := TouchArea {
+        x: -root.gutter-w;
+        y: list-area.absolute-position.y - root.absolute-position.y;
+        width: root.gutter-w;
+        height: list-area.height;
+
+        property <length> down-x;   // list-area position (negative)
+        property <length> down-y;
+        property <bool> dragging;
+        // Modifiers stored on press (event = authoritative source) →
+        // rubber-band mode robust to a keyboard focus loss.
+        property <bool> down-ctrl: false;
+        property <bool> down-shift: false;
+
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down
+                    && ev.button == PointerEventButton.left) {
+                root.activate();
+                root.close-ctx-menu();
+                self.down-x = self.mouse-x - root.gutter-w;
+                self.down-y = self.mouse-y;
+                self.down-ctrl = ev.modifiers.control;
+                self.down-shift = ev.modifiers.shift;
+                self.dragging = false;
+            }
+            if (ev.kind == PointerEventKind.up
+                    && ev.button == PointerEventButton.left) {
+                if (self.dragging) {
+                    root.rb-active = false;   // clean end of the rubber-band
+                } else {
+                    // Plain click on the blank area → deselection, like the
+                    // inner gutter (see `sel-touch`).
+                    root.deselect-all();
+                }
+                self.dragging = false;
+            }
+        }
+
+        moved => {
+            if (self.pressed) {
+                if (!self.dragging
+                        && (abs(self.mouse-x - root.gutter-w - self.down-x) > 4px
+                            || abs(self.mouse-y - self.down-y) > 4px)) {
+                    self.dragging = true;
+                    root.rb-active = true;
+                    root.rubber-band-begin(self.down-ctrl ? 2 : (self.down-shift ? 1 : 0));
+                    root.rb-anchor-x = self.down-x;
+                    root.rb-anchor-cy = self.down-y - rows-scroll.viewport-y;
+                }
+                if (self.dragging) {
+                    root.rb-cur-x = self.mouse-x - root.gutter-w;
+                    root.rb-cur-vy = self.mouse-y;
+                    root.rubber-band-update(
+                        min(root.rb-anchor-x, root.rb-cur-x),
+                        min(root.rb-anchor-cy, root.rb-cur-cy),
+                        max(root.rb-anchor-x, root.rb-cur-x),
+                        max(root.rb-anchor-cy, root.rb-cur-cy),
+                    );
                 }
             }
         }

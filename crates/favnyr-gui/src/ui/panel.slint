@@ -163,8 +163,8 @@ export component PanelComponent inherits Rectangle {
     // `body-left` (body bounds excluding the vertical bar, zero if tab-mode != 1).
     // Measured rather than hardcoded, to stay accurate if the layout changes.
     // Same read as `body-top` (panel absolute-position = proven safe):
-    // used only to place `gutter-strip`, which takes part in no layout →
-    // no cycle.
+    // handed to `list.slint` as the width of the gutter strip it draws
+    // (that strip takes part in no layout → no cycle).
     property <length> list-inset-x: list.area-abs-x - root.absolute-position.x;
     // Row of the list under the file-drag cursor (its own hit-test), and the
     // two ways it can receive a drop: runnable entry, or folder. -1 = none.
@@ -359,21 +359,6 @@ export component PanelComponent inherits Rectangle {
     /// copies, because only IT knows what is selected — see `url-input`.
     in property <int> url-copy-serial;
     in property <int> url-paste-serial;
-
-    // Rubber-band (selection rectangle).
-    // To stay correct while the list is scrolled, the anchor and the current
-    // point are stored in **content coordinates** (= visible − scroll).
-    // The bridge compares them against the exact `visual-y/visual-h` bands; the
-    // drawn rectangle converts back to visible (+ viewport-y).
-    property <bool> rb-active: false;
-    property <length> rb-anchor-x;    // visible x at the start
-    property <length> rb-anchor-cy;   // CONTENT y at the start (anchor)
-    property <length> rb-cur-x;       // current visible x
-    property <length> rb-cur-vy;      // current VISIBLE y (mouse)
-    // Content y of the rubber-band cursor — reactive to scroll (key to
-    // edge auto-scroll). Computed by the list, which owns the vertical
-    // scroll; read here by the left gutter strip.
-    property <length> rb-cur-cy: list.rb-cur-cy;
 
     // Menu key (the context-menu key of a PC keyboard). The window bumps a
     // counter, every view watches it, and only the active one answers — the
@@ -623,10 +608,10 @@ export component PanelComponent inherits Rectangle {
         }
 
         // ===== List: column header + rows + selection + scrollbars =====
-        // The list body lives in `panel/list.slint`; the panel forwards the
-        // model, the drag flags, the rubber-band state the gutter strip shares,
-        // and the callbacks. What it still measures comes back through
-        // `list.area-*` / `list.rows-vy` (see `body-top`, `list-inset-x`).
+        // The list body (and the gutter strip beside it) lives in
+        // `panel/list.slint`; the panel forwards the model, the drag
+        // flags and the callbacks. What it still measures of the list
+        // comes back through `list.area-*` (see `body-top`, `list-inset-x`).
         list := PanelList {
             view: root.view;
             strings: root.strings;
@@ -638,11 +623,7 @@ export component PanelComponent inherits Rectangle {
             file-drag-abs-x: root.file-drag-abs-x;
             file-drag-abs-y: root.file-drag-abs-y;
             menu-key-serial: root.menu-key-serial;
-            rb-active <=> root.rb-active;
-            rb-anchor-x <=> root.rb-anchor-x;
-            rb-anchor-cy <=> root.rb-anchor-cy;
-            rb-cur-x <=> root.rb-cur-x;
-            rb-cur-vy <=> root.rb-cur-vy;
+            gutter-w: root.tab-mode == 1 ? 0px : root.list-inset-x;
             activate => { root.activate(); }
             close-ctx-menu => { root.close-ctx-menu(); }
             column-moved(id, t) => { root.column-moved(id, t); }
@@ -727,82 +708,6 @@ export component PanelComponent inherits Rectangle {
         }
     } // closes the root row [left bar · content · right bar]
 
-    // ===== Left gutter: draggable strip =====
-    // The `body-left` inset is VISUALLY part of the gutter, but no
-    // TouchArea in the body can cover it: `list-area` has `clip: true` and the
-    // Flickable also clips — and a clip bounds the HIT-TEST just as much as the rendering.
-    // (Trying to extend `sel-touch` toward negative x's therefore fails, and on
-    // top of that shifts all its local coordinates.) We place here, as the last child of
-    // content-clip — so above the root row and `activate-bg`, but
-    // BELOW the panel's overlays (context menu, drop targets) — a
-    // strip that drives the SAME rubber-band: same `rb-*` properties, same
-    // callbacks, same auto-scroll (the Timer only reads root properties).
-    // Coordinates converted into `list-area`'s frame (`x - body-left`, hence
-    // always negative): consistent with `row-idx-at-xy`, which sees it as a dead
-    // zone there. Zero width when the LEFT vertical tab bar is
-    // displayed: that space then belongs to it.
-    gutter-strip := TouchArea {
-        x: 0;
-        y: root.body-top;
-        width: root.tab-mode == 1 ? 0px : root.list-inset-x;
-        height: list.area-h;
-
-        property <length> down-x;   // list-area position (negative)
-        property <length> down-y;
-        property <bool> dragging;
-        // Modifiers stored on press (event = authoritative source) →
-        // rubber-band mode robust to a keyboard focus loss.
-        property <bool> down-ctrl: false;
-        property <bool> down-shift: false;
-
-        pointer-event(ev) => {
-            if (ev.kind == PointerEventKind.down
-                    && ev.button == PointerEventButton.left) {
-                root.activate();
-                root.close-ctx-menu();
-                self.down-x = self.mouse-x - root.list-inset-x;
-                self.down-y = self.mouse-y;
-                self.down-ctrl = ev.modifiers.control;
-                self.down-shift = ev.modifiers.shift;
-                self.dragging = false;
-            }
-            if (ev.kind == PointerEventKind.up
-                    && ev.button == PointerEventButton.left) {
-                if (self.dragging) {
-                    root.rb-active = false;   // clean end of the rubber-band
-                } else {
-                    // Plain click on the blank area → deselection, like the
-                    // inner gutter (see `sel-touch`).
-                    root.deselect-all();
-                }
-                self.dragging = false;
-            }
-        }
-
-        moved => {
-            if (self.pressed) {
-                if (!self.dragging
-                        && (abs(self.mouse-x - root.list-inset-x - self.down-x) > 4px
-                            || abs(self.mouse-y - self.down-y) > 4px)) {
-                    self.dragging = true;
-                    root.rb-active = true;
-                    root.rubber-band-begin(self.down-ctrl ? 2 : (self.down-shift ? 1 : 0));
-                    root.rb-anchor-x = self.down-x;
-                    root.rb-anchor-cy = self.down-y - list.rows-vy;
-                }
-                if (self.dragging) {
-                    root.rb-cur-x = self.mouse-x - root.list-inset-x;
-                    root.rb-cur-vy = self.mouse-y;
-                    root.rubber-band-update(
-                        min(root.rb-anchor-x, root.rb-cur-x),
-                        min(root.rb-anchor-cy, root.rb-cur-cy),
-                        max(root.rb-anchor-x, root.rb-cur-x),
-                        max(root.rb-anchor-cy, root.rb-cur-cy),
-                    );
-                }
-            }
-        }
-    }
     } // closes content-clip (rectangular clip wrapper = crisp)
 
     // ===== File drop target =====
