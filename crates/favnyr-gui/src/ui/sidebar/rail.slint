@@ -1,0 +1,115 @@
+// The always-visible activity rail: the Places toggle at the top, the
+// Workspaces and Settings buttons at the bottom.
+//
+// Extracted from sidebar.slint. `RailBtn` is the one button shape the rail uses
+// (16px icon, tooltip on the RIGHT because the rail sits at the far left, an
+// optional active state); `ActivityRail` only arranges three of them and holds
+// no sidebar state — the panel's open/collapsed value comes in, the actions
+// leave as callbacks.
+
+import { MenuShortcuts, Strings } from "../structs.slint";
+import { Dismiss, Theme, Tip, Tokens } from "../theme.slint";
+
+// Activity rail button: centered 16px icon + tooltip on the RIGHT (the rail
+// is at the far left) + optional active state (sidebar toggle).
+// Modeled on WsIconBtn, tooltip repositioned.
+export component RailBtn inherits Rectangle {
+    callback clicked();
+    in property <image> icon;
+    in property <string> tooltip;
+    in property <bool> active: false;
+    width: 36px;
+    height: 34px;
+    border-radius: Tokens.radius-row;
+    background: root.active
+        ? Theme.accent-background.with-alpha(0.18)
+        : (touch.has-hover ? Theme.alternate-background : transparent);
+    border-width: root.active ? 1px : 0px;
+    border-color: root.active ? Theme.accent-background.with-alpha(0.5) : transparent;
+    animate background { duration: 110ms; easing: ease-out; }
+    // A shortcut customization can change the text while the
+    // mouse is still on the button: also keeps the global Tip synchronized.
+    changed tooltip => {
+        if (touch.has-hover) { Tip.text = root.tooltip; }
+    }
+    Image {
+        source: root.icon;
+        width: 16px;
+        height: 16px;
+        colorize: root.active
+            ? Theme.accent-background
+            : (touch.has-hover ? Theme.foreground : Theme.foreground.with-alpha(0.7));
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        clicked => { Dismiss.serial += 1; root.clicked(); }
+        // Tooltip toward the RIGHT (rail at the far left). Sets/clears the
+        // global Tip, rendered at the window level → never hidden by a panel.
+        changed has-hover => {
+            if (self.has-hover && root.tooltip != "") {
+                Tip.text = root.tooltip;
+                Tip.x = self.absolute-position.x + root.width + 6px;
+                Tip.y = self.absolute-position.y + (root.height - 22px) / 2;
+            } else if (Tip.text == root.tooltip) {
+                Tip.text = "";
+            }
+        }
+    }
+}
+
+// Always-visible vertical activity rail: "Places" panel toggle
+// at the top and system actions (Workspaces, Settings) at the bottom.
+export component ActivityRail inherits Rectangle {
+    // Left panel: 0 collapsed · 1 open (Places + Favorites unified).
+    in property <int> left-panel;
+    in property <Strings> strings;
+    in property <MenuShortcuts> shortcuts;
+    callback toggle-places();
+    callback open-workspaces();
+    callback open-settings();
+    width: 48px;
+    background: Theme.toolbar;
+    // Right thread only when NO panel is open (otherwise visual
+    // continuity with the panel that shares the same background).
+    if root.left-panel == 0 : Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Tokens.hairline;
+    }
+    VerticalLayout {
+        padding-top: 4px;
+        padding-bottom: 6px;
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 4px;
+        // Toggle for the unified side panel (Places + Favorites). Re-click = collapses.
+        RailBtn {
+            icon: @image-url("../../../assets/icons/sidebar.svg");
+            tooltip: root.strings.sidebar-tooltip;
+            active: root.left-panel == 1;
+            clicked => { root.toggle-places(); }
+        }
+        // Thin separator between the panel toggle and the system actions.
+        Rectangle {
+            height: 9px;
+            Rectangle { y: 4px; height: 1px; background: Tokens.hairline; }
+        }
+        RailBtn {
+            icon: @image-url("../../../assets/icons/workspaces.svg");
+            tooltip: root.strings.ws-tooltip
+                + (root.shortcuts.open-workspaces != ""
+                    ? "  (" + root.shortcuts.open-workspaces + ")" : "");
+            clicked => { root.open-workspaces(); }
+        }
+        RailBtn {
+            icon: @image-url("../../../assets/icons/gear.svg");
+            tooltip: root.strings.settings-tooltip
+                + (root.shortcuts.open-settings != ""
+                    ? "  (" + root.shortcuts.open-settings + ")" : "");
+            clicked => { root.open-settings(); }
+        }
+        // Spacer: takes up the bottom of the rail (buttons grouped at the top).
+        Rectangle { vertical-stretch: 1; }
+    }
+}
