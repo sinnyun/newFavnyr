@@ -1,0 +1,271 @@
+// One row of the Places sidebar: icon, label, and the drive gauge / free-space
+// text a drive row carries.
+//
+// Extracted from sidebar.slint. The row is self-contained — the drag state it
+// accumulates, the tier it falls back to as the panel narrows and the gauge
+// that feeds its layout all live here. The only geometry it cannot measure
+// itself is the panel width, which the sidebar hands down (see `panel-width`).
+
+import { DriveGauge } from "../progress.slint";
+import { ScrollView } from "std-widgets.slint";
+import { Dismiss, Theme, Tip, Tokens } from "../theme.slint";
+
+// A clickable sidebar entry (icon + label).
+export component SidebarItem inherits Rectangle {
+    callback clicked();
+    callback middle-clicked();                 // open in a new tab
+    callback right-clicked(length, length);   // absolute position
+    callback drag-started(length, length);
+    callback drag-moved(length, length);
+    callback drag-dropped(length, length);
+    in property <bool> drag-active: false;
+    in property <bool> draggable: true;
+    in property <string> label;
+    in property <int> kind;   // 0 folder · 1 home · 2 drive · 3 trash · 4 network · 5 phone · 6 unmounted volume · 7 locked volume
+    in property <int> space-level: -1;   // -1 = unmeasurable → no gauge at all
+    in property <float> space-used-ratio;
+    in property <string> space-text;
+    in property <string> space-text-short;
+    in property <string> space-hint;
+    /// Width of the whole side panel, handed down rather than measured.
+    ///
+    /// The gauge sizes itself to its text, so it FEEDS the row's layout. Were
+    /// its content chosen from the row's resolved width, that width would
+    /// depend on the gauge and the gauge on the width — a binding loop the
+    /// compiler rejects outright. The panel width is set by the user and
+    /// depends on nothing below it, which breaks the cycle at the source.
+    in property <length> panel-width;
+    property <length> down-abs-x;
+    property <length> down-abs-y;
+    property <bool> dragging: false;
+    property <bool> suppress-click: false;
+    changed drag-active => {
+        if (!root.drag-active) { root.dragging = false; }
+    }
+
+    // The row trades detail for room as the panel narrows: full figures, then
+    // free space alone — the bar already carries the ratio, so the total is
+    // the one redundant part — then the bare gauge, which still shows the
+    // proportion and the warning colour.
+    //
+    // Fixed costs per row: 12px of section padding, then 8 padding + 16 icon +
+    // 9 + 9 spacing + 8 padding = 50px of row chrome. The thresholds keep at
+    // least 64px for the drive's name, because a row that says how full a disk
+    // is but no longer says WHICH disk has traded away the wrong thing.
+    property <int> space-tier: root.panel-width >= 185px ? 2
+        : root.panel-width >= 170px ? 1
+        : 0;
+
+    // Below the narrowest tier the gauge is dropped entirely rather than shown
+    // bare. A capsule with no figures still costs 28px of a row that has none
+    // to spare, and it says only what the row could no longer name — the
+    // drive's own label matters more than how full it is.
+    property <bool> show-gauge: root.space-level >= 0 && root.space-tier > 0;
+    // An unmounted volume shows its size in place of a gauge it cannot have.
+    property <bool> show-size: (root.kind == 6 || root.kind == 7)
+        && root.space-text-short != ""
+        && root.space-tier > 0;
+
+    height: 30px;
+    border-radius: Tokens.radius-row;
+    opacity: root.dragging ? 0.45 : 1.0;
+    // Both areas count: the gauge's sits on top of the row's, so over the
+    // gauge only IT reports hover — without this the row would lose its
+    // highlight exactly where the pointer is.
+    background: (touch.has-hover || gauge-hover.has-hover)
+        ? Theme.alternate-background
+        : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 9px;
+        // Full-height icon slot → vertically centered image (otherwise the
+        // layout pins the 16px image to the top of the row).
+        Rectangle {
+            width: 16px;
+            height: parent.height;
+            Image {
+                width: 16px;
+                height: 16px;
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                colorize: (root.kind == 2 || root.kind == 4 || root.kind == 5)
+                    ? Theme.accent-background
+                // A volume that is not mounted keeps the drive shape and
+                // loses the accent: present, but not reachable yet.
+                : (root.kind == 6 || root.kind == 7)
+                    ? Theme.foreground.with-alpha(0.45)
+                : Theme.foreground.with-alpha(0.7);
+                source: root.kind == 1 ? @image-url("../../../assets/icons/home.svg")
+                    : root.kind == 2 ? @image-url("../../../assets/icons/drive.svg")
+                    : root.kind == 3 ? @image-url("../../../assets/icons/trash.svg")
+                    : root.kind == 4 ? @image-url("../../../assets/icons/network.svg")
+                    : root.kind == 5 ? @image-url("../../../assets/icons/phone.svg")
+                    : root.kind == 6 ? @image-url("../../../assets/icons/drive.svg")
+                // An encrypted volume shows what stands between the user
+                // and it, rather than a drive it cannot open.
+                : root.kind == 7 ? @image-url("../../../assets/icons/lock.svg")
+                : @image-url("../../../assets/icons/folder.svg");
+            }
+        }
+        Text {
+            text: root.label;
+            font-size: 12px;
+            color: (root.kind == 6 || root.kind == 7)
+                ? Theme.foreground.with-alpha(0.6)
+                : Theme.foreground;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        // Capacity gauge, local volumes only and only when the size could
+        // actually be read. Declared inside the SAME layout so it costs no
+        // extra height.
+        //
+        // ALWAYS instantiated, collapsed to nothing when there is no capacity
+        // to show, rather than wrapped in an `if`: a conditional element is
+        // out of scope for the row, which needs its position to tell whether
+        // the pointer is over it. Zero width and hidden is the same
+        // "instantiate and collapse" idiom the Favorites tree uses.
+        gauge-slot := Rectangle {
+            width: root.show-gauge ? gauge.width : 0px;
+            visible: root.show-gauge;
+            // Full-height slot → vertically centred gauge, same reason as the
+            // icon above: the layout would otherwise pin it to the top.
+            height: parent.height;
+            gauge := DriveGauge {
+                y: (parent.height - self.height) / 2;
+                used-ratio: root.space-used-ratio;
+                level: root.space-level;
+                avail-width: max(28px, root.panel-width - 126px);
+                label: root.space-tier == 2 ? root.space-text : root.space-text-short;
+            }
+        }
+        // Size of a volume that is not mounted. No gauge is possible — nothing
+        // has opened its filesystem to measure occupancy — but the figure still
+        // says which disk this is. Same instantiate-and-collapse idiom as the
+        // gauge above, and it hides on a narrow panel for the same reason.
+        size-slot := Rectangle {
+            width: root.show-size ? size-text.width + 12px : 0px;
+            visible: root.show-size;
+            height: parent.height;
+            size-text := Text {
+                x: 6px;
+                y: (parent.height - self.height) / 2;
+                text: root.space-text-short;
+                font-size: 11px;
+                color: Theme.foreground.with-alpha(0.5);
+            }
+        }
+    }
+    // Button handling for the row, shared by the two touch areas below so that
+    // clicking the gauge behaves exactly like clicking anywhere else on the
+    // row — one implementation, not a copy that can drift.
+    function dispatch-pointer(
+        ev: PointerEvent, abs-x: length, abs-y: length, inside: bool
+    ) {
+        // LEFT click on the sidebar closes menus; right-click (drive/
+        // trash menu) does not bump, so it can teleport the menu.
+        if (ev.button == PointerEventButton.left && ev.kind == PointerEventKind.down) {
+            Dismiss.serial += 1;
+            root.down-abs-x = abs-x;
+            root.down-abs-y = abs-y;
+            root.dragging = false;
+            root.suppress-click = false;
+        }
+        if (ev.button == PointerEventButton.left && ev.kind == PointerEventKind.up) {
+            if (root.dragging) {
+                root.drag-dropped(abs-x, abs-y);
+            } else if (inside && !root.suppress-click) {
+                root.clicked();
+            }
+            root.dragging = false;
+            root.suppress-click = false;
+        }
+        if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.right) {
+            root.right-clicked(abs-x, abs-y);
+        }
+        // Middle-click opens the target in a new tab, unchanged by the drag.
+        if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.middle) {
+            root.middle-clicked();
+        }
+    }
+    function dispatch-move(pressed: bool, abs-x: length, abs-y: length) {
+        if (!pressed || !root.draggable) { return; }
+        if (!root.dragging
+                && (abs(abs-x - root.down-abs-x) > 6px
+                    || abs(abs-y - root.down-abs-y) > 6px)) {
+            root.dragging = true;
+            root.suppress-click = true;
+            Tip.text = "";
+            root.drag-started(abs-x, abs-y);
+        }
+        if (root.dragging) {
+            root.drag-moved(abs-x, abs-y);
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.dragging ? grabbing : pointer;
+        pointer-event(ev) => {
+            root.dispatch-pointer(ev,
+                self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y,
+                self.mouse-x >= 0px && self.mouse-x <= self.width
+                    && self.mouse-y >= 0px && self.mouse-y <= self.height);
+        }
+        moved => {
+            root.dispatch-move(self.pressed,
+                self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y);
+        }
+    }
+
+    // Hover target for the gauge, and the gauge only.
+    //
+    // Declared AFTER `touch` so it sits ON TOP of it and is the one the
+    // pointer reaches — the same front-to-back rule the Favorites tree relies
+    // on. It hands every button straight back to the row, so nothing is lost
+    // by covering it.
+    //
+    // This replaces an earlier attempt that compared the row's `mouse-x`
+    // against the gauge's position. That looked cheaper but was unreliable:
+    // entering the gauge did not raise the hint, moving on to another row did,
+    // and leaving the gauge sideways left it up — the pointer coordinate is
+    // simply not dependable at the moment hovering begins. A real touch area
+    // has one honest state, `has-hover`, and Slint maintains it. Zero width
+    // when there is no gauge, so it cannot intercept anything.
+    gauge-hover := TouchArea {
+        x: gauge-slot.x;
+        y: 0;
+        width: root.show-gauge ? gauge-slot.width : 0px;
+        height: parent.height;
+        mouse-cursor: pointer;
+        // Names each figure, which the gauge alone cannot: "26.0 / 57.3 GB" does
+        // not say which number is which. `absolute-position` is read HERE, in
+        // an event handler where the layout has settled — reading it from a
+        // property derived from the geometry aborted the whole window with
+        // "Recursion detected", the row being inside a ScrollView.
+        changed has-hover => {
+            if (self.has-hover && root.space-hint != "") {
+                Tip.text = root.space-hint;
+                Tip.x = self.absolute-position.x;
+                Tip.y = self.absolute-position.y + self.height + 4px;
+            } else if (Tip.text == root.space-hint) {
+                Tip.text = "";
+            }
+        }
+        pointer-event(ev) => {
+            root.dispatch-pointer(ev,
+                self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y,
+                self.mouse-x >= 0px && self.mouse-x <= self.width
+                    && self.mouse-y >= 0px && self.mouse-y <= self.height);
+        }
+        moved => {
+            root.dispatch-move(self.pressed,
+                self.absolute-position.x + self.mouse-x,
+                self.absolute-position.y + self.mouse-y);
+        }
+    }
+}
