@@ -198,6 +198,12 @@ export component DragEdgeScroller inherits Rectangle {
 }
 
 
+// Full-window dim behind a modal card. It ALWAYS swallows the wheel: an
+// unhandled scroll would otherwise fall through to whatever sits behind the
+// modal (the settings panel, the file view underneath) and scroll or select
+// there while the modal is up. Clicks on the dim are absorbed; set
+// `dismiss-on-click` to also close the modal from a click in the dim.
+
 export component ModalBackdrop inherits Rectangle {
     in property <bool> dismiss-on-click: false;
     callback dismiss();

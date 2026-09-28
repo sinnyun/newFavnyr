@@ -661,11 +661,6 @@ export component FolderSwatchRow inherits Rectangle {
     }
 }
 
-// Full-window dim behind a modal card. It ALWAYS swallows the wheel: an
-// unhandled scroll would otherwise fall through to whatever sits behind the
-// modal (the settings panel, the file view underneath) and scroll or select
-// there while the modal is up. Clicks on the dim are absorbed; set
-// `dismiss-on-click` to also close the modal from a click in the dim.
 /// Checkbox for a destructive list: ticked means "this one goes".
 ///
 /// Not the toolkit's `CheckBox`, and deliberately. That one fills in the
