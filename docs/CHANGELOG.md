@@ -216,3 +216,41 @@ files touched, so a behaviour can be traced back to its source.
 - 验证：逐页**行级校验**（页面体去缩进后与原文逐行比对，唯一允许的改写是 12 处 `@image-url` 路径）+ 成员方向三查（声明 / 实例转发 / 页面内使用一致）+ `cargo check -p favnyr-gui` 每个提交后全绿；`cargo test -p favnyr-core -p favnyr-gui` 全绿（core 205 passed / 1 ignored、gui 138 passed、0 failed）。
 - 尚未人工点检：设置三页切换与各页交互（含快捷键捕获与冲突、Open with 子页）。
 - `panel.slint` 第二层的障碍记录在 `docs/split-plan.md` §16：面板级成员**反向读写**区块内部 id（`tabs-flick.viewport-x/width/viewport-width` 被面板的滚动函数与计时器写入；`sel-touch.*` / `rows-scroll.*` 被 `note-row`、`update-pointer-hover`、`report-rows-viewport` 等读出），这组双向耦合需先厘清归属再动。
+
+## 2026-09-28 — 面板第二层拆分：`panel.slint` 2 897 → 外壳 732 + `panel/` 6 个组件
+
+**Changed**
+
+仍是纯搬迁拆分：不改行为、不动契约。`PanelComponent` 对 `main_window.slint` 的成员面逐字未变，`MainWindow` 的 518 个成员与 `FileKind` 的 `#[repr(u8)]` 取值均未触碰。八次搬迁提交，每次一块：
+
+| 提交 | 新文件（行数） | 内容 |
+| --- | ---: | --- |
+| `6e1fe75` | `panel/tabs_bar.slint`（373，经 `8fe65dc` 去掉多余包装层） | `PanelTabsBar`：可滚动标签条 + "+" 按钮 + 左右 chevrons + 滚轮 + 标签重排时的边缘自动滚动 |
+| `4bdf52e` | `panel/nav_bar.slint`（563） | `PanelNavBar`：历史/视图按钮、路径栏（面包屑 ↔ 编辑框）、跨视图交换 grip、split / close |
+| `979fe53` | `panel/selection.slint`（751） | `PanelSelection`：列表区之上的指针层——hover、单击/Ctrl/Shift/右键/双击、橡皮筋 + 边缘自动滚动、中键自动滚动、延后重命名、文件拖拽的边缘滚动 |
+| `6ddc7c2` | `panel/list.slint`（761） | `PanelList`：列头 + 行区（列表 / 网格两视图）+ "文件夹不可用"横幅 + 两条滚动条的数据源 |
+| `cac4dd8` | （并入 `panel/list.slint`，761 → 846） | 左侧 gutter 条搬进 `PanelList`：它与选择层是**同一个橡皮筋手势**的两半（一个在裁剪区外、一个在内），必须同处一个文件才能共用 `rb-*` 状态 |
+| `6db7c0e` | `panel/overlays.slint`（123） | `PanelOverlays`：文件落点 veil、关闭/合并/交换预览、标签拖放落区——纯视觉，无 TouchArea |
+| `489ff74` | `panel/scrollbars.slint`（139） | `PanelScrollbars`：两条自绘滚动条（横向 = 列溢出，纵向 = 行溢出），只读写列表已有的两个偏移量——`cac4dd8` 让 `list.slint` 冲到 846 行，这一步把它拉回 761（同时回到 800 以内） |
+
+`panel.slint` **2 897 → 732 行**：只剩各子块实例的放置与转发（垂直标签条 ×2、标签条、导航条、筛选条、列表、页脚、覆盖层），加上面板级状态（工作区、列模型、拖放标志、几何常量）。
+
+**与方案的两点不同**（详见 `docs/split-plan.md` §16 偏差 21–23）：
+
+- 分块按**职责**（tabs_bar / nav_bar / selection / list / scrollbars / overlays），不是方案设想的 header / columns / rows / footer——列头与行区在源文件里本就共用几何与滚动状态，拆开只会把状态推到边界上。
+- 方案点名的障碍（面板级成员反向读写区块内部 id）用**状态下沉**解决，而不是用 `in-out` 别名把 Flickable 视口接回面板：`sel-touch.*` 随选择层沉进 `selection.slint`，`rows-scroll.viewport-*` 与橡皮筋状态沉进 `list.slint`（两个指针层同处一个文件，band 状态因此退回私有属性，5 个 `in-out` 转发消失），`tabs-flick` 完全私有、面板改发 `scroll-tabs-*` 回调。跨 `PanelList` 边界只剩 `in gutter-w` 与 `out area-abs-x` / `area-abs-y` / `drag-hover-row`。
+
+- 收尾修复（`99f3c8d`）：提取脚本在 `panel.slint` 的 nav bar 实例处留下一行重复的 `// ===== Nav bar + breadcrumb =====`，已删除（2 897 → 732 行）。
+
+另有三次**纯空白**提交（`9342964`、`1cebf6c`、`f0806dc`）：此前多轮提取把整棵子树留在了一级不足的缩进上（整块读起来像父元素的兄弟，`selection.slint` 里甚至有一句落在第 0 列）。三次改动的 `git diff -w` 均为空、行数不变，覆盖 `panel.slint`、`panel/{list,nav_bar,selection}.slint`、`main_window.slint`、`sidebar.slint`、`workspaces.slint`、`overlays/{custom_command,openwith}.slint`。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 阶段 5 状态改为"面板第二层已完成"，偏差补 21–23（实际分块形状、状态下沉、三类允许的改写与行级校验器），剩余项里 `panel.slint` 一条划掉。
+- `docs/code-map.md` — §1 概览（`ui/` 30 个 `.slint`、面板外壳 + 6 组件）、§2 结构树新增 `ui/panel/` 一行、§3.3 文件表补 6 行、§4.4 依赖链加入 `panel/*` 层并改写 `panel.slint` 条目、§6 从"仍超 800 行"表里移除 `panel.slint`。
+
+**Notes**
+
+- 验证：每块搬完都跑**行级校验**——脚本从 `git show HEAD:…` 取原始文件，把搬走的区块去缩进后与新区块逐行比对，只允许三类改写（标识符替换、跨边界几何改读 `root.*` / `parent.*`、注释列对齐），任何越界改写或孤儿 id 都会拒绝写盘；再核对组件声明成员与实例转发一一对应、大括号配平、单文件 ≤ 800 行。每个提交后 `cargo check -p favnyr-gui` 全绿（Slint codegen 确实重跑：`slint-build` 对每个被加载的 `.slint` 都发了 `rerun-if-changed`）。收尾：`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed；`cargo fmt --check`、`cargo clippy -p favnyr-gui --all-targets -- -D warnings` 干净。
+- 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突），**列表区选择（单击 / Ctrl / Shift / 右键 / 双击）**、**左侧 gutter 条拉出的橡皮筋与拖到上下边缘的自动滚动**、**列头的排序 / 重排 / 调整宽度**、**两条自绘滚动条的拖动**。
+- 本地 `main` 领先 `origin/main`（`6e1fe75`…`f0806dc` 共 11 个提交未推送），本轮未推送。
