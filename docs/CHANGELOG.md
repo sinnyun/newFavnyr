@@ -286,3 +286,36 @@ files touched, so a behaviour can be traced back to its source.
 - 收尾：`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed；`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo fmt --check` 干净。冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，日志到 `starting Slint event loop init_ms=123`（工作区恢复 panels=1），15 秒内无 panic、无 Slint 加载错误。
 - 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突）、列表区选择、gutter 条橡皮筋与边缘自动滚动、列头排序 / 重排 / 改宽、两条自绘滚动条，**Places 行的 hover / 拖拽 / 盘符容量条**、**收藏树的展开折叠与重排拖拽**、**activity rail 三个按钮（侧栏开关 / 工作区 / 设置）与 tooltip**、**节的拖拽重排**。
 - 上一轮记录"本地 `main` 领先 `origin/main`"已失效：面板轮的文档提交已推送（`6fd6853`），本轮的三个代码提交随文档一并推送。
+
+## 2026-09-28 — 行形状拆分：`widgets/rows.slint` 922 → 596 + `widgets/rows/` 2 个组件
+
+**Changed**
+
+仍是纯搬迁拆分：不改行为、不动契约。`FileRowView` / `SectionHeaderView` / `FileTileView` / `ColumnHeader` / `FolderSwatchRow` / `MarkBox` 的对外成员面逐字未变，`MainWindow` 的 518 个成员与 `FileKind` 的 `#[repr(u8)]` 取值均未触碰。四个提交：
+
+| 提交 | 变化 | 内容 |
+| --- | ---: | --- |
+| `619fae1` | `widgets/rows/header.slint`（223） | `ColumnHeader`：一格列头——排序点击、重排拖拽、右边缘改宽把手、右键上报绝对坐标 |
+| `b2caa9f` | 纯注释 | `ModalBackdrop` 的区块注释归位到声明它的 `widgets/tabs.slint`（上轮提取时漏在 `rows.slint`） |
+| `cbd8f8f` | `widgets/rows/marks.slint`（114） | `FolderSwatchRow`（"颜色与备注"飞出里的 8 色条）+ `MarkBox`（清理清单的红勾） |
+| `4e1a3bf` | 纯空白 | 去掉提取留下的文件末尾空行与注释和声明之间的空行（`rows.slint` −2、`tabs.slint` −1） |
+
+`widgets/rows.slint` **922 → 596 行**：只剩 `FileRowView` / `SectionHeaderView` / `FileTileView` 三个纯视觉形状。消费方只改 import：`panel/list.slint` 的一行拆成两行（761 → 762），`overlays/menus.slint` 与 `overlays/notes.slint` 各一行指向 `rows/marks.slint`（行数不变）。
+
+**与方案的两点不同**（详见 `docs/split-plan.md` §16 偏差 28–30）：
+
+- 分块判据取"形状是否自带指针"，而非名字里有没有 row：三个行形状的点击 / 拖拽 / hover 全由 `panel/selection.slint` 那个稳定的 `sel-touch` 统一路由（行能虚拟化的前提），且三者同读一份 `ColumnInfo` 列模型、行与瓦片还共用 `row-h` 与 `Tokens.row-*` 口径，留在同一文件；自带 TouchArea 的 `ColumnHeader` 与本就服务菜单的 `FolderSwatchRow` / `MarkBox` 各自搬出。
+- 依赖方向仍是 `widgets/rows.slint` ← `widgets/rows/{header,marks}.slint`，两个子文件只 import `theme`，是 `widgets/*` 的叶子，无环；`@image-url` 在子目录下沉一级共 4 句（caret-up / caret-down / check ×2）。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 阶段 5 补"行形状按组件拆分已完成"，偏差补 28–30（形状取舍、指针判据与依赖方向、消费方三行 import 与整体 round-trip），剩余项新增行形状一条并把 `widgets/rows.slint` 从"仍超 800 行"里移除；验证一句改为当前口径（fmt --all、clippy --workspace、core 205 + gui 138）。
+- `docs/code-map.md` — §1 概览（`ui/` 35 个 `.slint`、`.slint` 侧只剩 `main_window.slint` 超 800）、§2 结构树新增 `ui/widgets/rows/`、§3.3 文件表补 3 行并订正 `tabs.slint`(792) / `panel/list.slint`(762)、§4.4 依赖链与新增 `widgets/rows*` 条目、§6 从"仍超 800 行"表里移除 `ui/widgets/rows.slint`。
+
+**Notes**
+
+- 验证：与前几轮同一套写盘前断言（成员集合、子文件自包含、大括号平衡、无死 import、无重复空行、单文件 ≤ 800 行，`@image-url` 只允许多下沉一级），收尾**整体 round-trip**——三个文件按原声明顺序缝回、去掉空行 / import / 注释、`../../../../assets/` 还原为 `../../../assets/`，与 `6ead5e3` 的原文逐行比对：**682 行代码完全一致**。
+- 收尾门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed。冒烟：`cargo build --bin favnyr` 后冷启动 debug 可执行文件，日志到 `starting Slint event loop init_ms=241`（工作区恢复 panels=1），15 秒内无 panic、无 Slint 加载错误。
+- 至此 `.slint` 侧除 `main_window.slint`（契约面）之外没有文件超过 800 行；剩余候选回到 Rust 侧：`bridge/state.rs`（1 508）、`bridge/tests.rs`（2 346）。
+- 尚未人工点检（本轮新增项加粗）：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键、列表区选择、gutter 条橡皮筋与边缘自动滚动、两条自绘滚动条、Places 行、收藏树、activity rail、节重排，**列头的排序 / 拖拽改序 / 右缘改宽 / 右键菜单**、**列表行与分组头的渲染（缩略图、应用图标、链接徽标、age 药丸）**、**网格瓦片**、**"颜色与备注"飞出里的色条与清理清单的红勾**（后两组冷启动冒烟覆盖不到）。
+- 本轮的四个代码提交与文档提交均未推送，`main` 领先 `origin/main`。
