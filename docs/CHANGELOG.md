@@ -115,3 +115,32 @@ files touched, so a behaviour can be traced back to its source.
 - The GUI itself still needs a visual check: grid mode, the view menu, the
   subfolder-contents button and the category grouping were not exercised on a
   screen.
+
+## 2026-09-28 — 拆分 13 个超 800 行文件（bridge.rs、main_window.slint、core 七块）
+
+**Changed**
+
+纯搬迁拆分：不改行为、不改对外路径、不引入依赖。所有 `crate::bridge::…`、`favnyr_core::…` 调用路径与 Slint 名称面（`MainWindow` 的 518 个成员）逐字未变。
+
+- `crates/favnyr-gui/src/bridge.rs`（19 001 行）→ `bridge/` **47 个文件**，`mod.rs` 仅 151 行（模块声明 + `pub use` 重导出 + `defer`）。其中：
+  - `install()`（5 391 行、197 处回调安装）→ `bridge/install/mod.rs`（编排）+ `cb_*.rs` ×12（按特性簇：nav 15 / view 23 / rows 9 / open 16 / openwith 16 / files 23 / sidebar 14 / favorites 21 / clipboard 12 / dnd 7 / workspace 14 / prefs 27），闭包改为 `pub(super) fn install_*` 并显式传参，**调用顺序保持不变**（即初始化时序）。
+  - 其余按主题：`state.rs`（1 508）、`colinfo.rs`、`notices.rs`、`settings.rs`、`drives.rs`、`datafiles.rs`、`open_with/`（picker/shellmenu/recipes/launch）、`favpanel.rs`、`nav.rs`、`tabs.rs`、`naming.rs`、`paste.rs`、`progress.rs`、`listing.rs`、`geometry.rs`、`keys.rs`、`thumbs.rs`、`stats.rs`、`rows/`（mod/build/icons）、`selection.rs`、`language.rs`、`restore.rs`、`tabstrip.rs`、`watcher.rs`、`window.rs`、`workspaces.rs`、`tests.rs`。
+  - 子模块改名以避开 `bridge/mod.rs` 里已 `use` 的 crate 模块名（`open_with`/`workspaces`/`favpanel`/`progress`/`keys`/`colinfo`/`cb_prefs`）。
+- `crates/favnyr-gui/src/ui/main_window.slint`（15 897 行）→ `ui/` 11 个 `.slint`：`structs.slint`、`theme.slint`、`widgets/{rows,inputs,menus,tabs}.slint`、`panel.slint`、`sidebar.slint`、`workspaces.slint`、`progress.slint`；`main_window.slint` 7 483 行，保留 `MainWindow` 契约面与布局骨架。组件体逐字节未改（只加 `export component` 与 `import`）。`main_window.slint` 新增一行 `export { CtxNav } from "theme.slint";`——只有根文档的导出会被 `include_modules!()` 再导出，Rust 侧 `crate::CtxNav` 依赖它。**覆盖层（约 40 个区块）仍留在 `main_window.slint`，未提取**（见 Notes）。
+- `crates/favnyr-core`：`fs.rs` → `fs/{mod,typed_path,sort,format,stats,tests}.rs`；`fs/ops.rs` → `fs/ops/{mod,rename,name,copy,link,deletion,path_eq,tests}.rs`；`places.rs` → `places/{mod,windrives,linux,tests}.rs`；`thumbnail.rs` → `thumbnail/{mod,decode,psd,affinity,audio,video,pdf,tests}.rs`；`layout.rs` → `layout/{mod,tree,geom,tests}.rs`；`workspace.rs` → `workspace/{mod,state,named,tests}.rs`；`openers.rs` → `openers/{mod,tag,model,store,tests}.rs`。
+- `crates/favnyr-gui`：`i18n.rs` → `i18n/{mod,strings,labels,units,messages,tests}.rs`；`actions.rs` → `actions/{mod,opening,spawn,shell,properties,terminal,program,ffmpeg,timezone,tests}.rs`（按功能分，平台差异保持就地 `#[cfg]`）；`openwith.rs` → `openwith/{mod,windows,linux,tests}.rs`（`#[path] mod imp` 选平台）；`winddrag.rs` → `winddrag/{mod,target,paths,virtual_files,drag_out,formats,tests}.rs`。
+- 可见性只升不降：跨文件项为 `pub(super)`，孙模块为 `pub(in crate::bridge)`；无函数提升为 `pub`。
+- 相关注释/文档内的旧路径同步：`crates/favnyr-core/src/openers/mod.rs`（`actions.rs` → `actions/`）。
+
+**Docs**
+
+- `AGENTS.md` — 更新拆分后的路径（`i18n/`、`bridge/thumbs.rs` 的两个缩略图决策点、`core/src/thumbnail/`、`ui/*.slint`），并补一条"大文件已按模块拆分"的导航说明。
+- `docs/code-map.md` — 按拆分后的文件树重新生成（171 个自有文件 / 64 443 行；新增 §6 剩余项）。
+- `docs/split-plan.md` — 新增 §16：执行状态、与实际拆分相比的 12 处命名/组织偏差、以及有意保留的剩余项。
+
+**Notes**
+
+- 验证：`cargo fmt` 干净、`cargo clippy -p favnyr-gui --all-targets -- -D warnings` 无警告、`cargo test -p favnyr-gui` 138 全绿；GUI 冷启动冒烟通过（恢复工作区 → 进入 Slint 事件循环，无 panic）。
+- 尚未人工点检：GUI 行为不在单测覆盖内，导航 / 标签页撕离 / 拖放 / 粘贴进度 / 缩略图 / 设置面板 / 快捷键需要跑一次。
+- 有意保留（未做）：`ui/overlays/*`（覆盖层提取需把 `root.*` 改写为显式 `in`/`in-out property` + `callback` 转发，须一个 overlay 一次提交并人工点检）、`panel.slint` 的第二层分块、`bridge/tests.rs` 的再分。拆分后仍超 800 行的文件与理由见 `docs/code-map.md` §6。
+- `.slint` 文件统一为 CRLF（仓库 `autocrlf=true`）；Linux 侧编译由 CI 的 `check` 任务覆盖（本机仅 Windows）。

@@ -2,8 +2,9 @@
 
 How a listing is turned into rows: the three display modes, the grouping
 (including the coarse categories), and the one-level expansion of a folder's
-subfolders. Everything here is decided in `crates/favnyr-gui/src/bridge.rs`;
-the `.slint` side only draws the geometry it is handed.
+subfolders. Everything here is decided in `crates/favnyr-gui/src/bridge/` (row
+building in `bridge/rows/`, the view/zoom/sort callbacks in
+`bridge/install/cb_view.rs`); the `.slint` side only draws the geometry it is handed.
 
 ## Three display modes
 
@@ -13,7 +14,7 @@ the `.slint` side only draws the geometry it is handed.
 | Previews | `previews` | ≥ 1 (default 2) | one line, thumbnail in the icon slot |
 | Grid | `grid` | ≥ 1 | a tile: art above the name |
 
-`ViewMode` (`bridge.rs`) carries `code()` / `from_code()` for persistence and
+`ViewMode` (`bridge/state.rs`) carries `code()` / `from_code()` for persistence and
 `thumbnails()` / `is_grid()` for behavior. The three modes are chosen from the
 view button's menu (list / previews / grid) and cycled by the
 `toggle-view-mode` shortcut (Ctrl+P by default). Entry zoom (Ctrl+wheel) still
@@ -124,7 +125,7 @@ selects the entries its vertical extent covers, all columns included.
 
 ## New user-facing strings
 
-All of them go through `i18n.rs` (`i18n/*.toml`): `view_mode_list`,
+All of them go through `i18n/` (`i18n/*.toml`): `view_mode_list`,
 `view_mode_previews`, `view_mode_grid`, `show_subfolders_tooltip`,
 `group_category`, `category_folder` … `category_other`, and the shortcut names
 `cursor-left` / `cursor-right` / `extend-left` / `extend-right` (the last two

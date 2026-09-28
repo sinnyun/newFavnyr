@@ -7,12 +7,12 @@ function that decides it, so the behaviour stays in step with the README.
 
 A preview is **requested** for a row, then **produced**:
 
-- **Requested** — `thumbnail_kind_for_row` (`crates/favnyr-gui/src/bridge.rs`)
+- **Requested** — `thumbnail_kind_for_row` (`crates/favnyr-gui/src/bridge/thumbs.rs`)
   maps a row's `kind` code and extension to a request. On **Windows** it accepts
   every non-folder entry, letting the system decide; on other platforms it keeps
   a whitelist of the types Favnyr can actually render (image, video, MP3/FLAC,
   PDF). Its answer also drives `preview_capable`, and therefore the row geometry.
-- **Produced** — `generate_thumb` (`crates/favnyr-gui/src/bridge.rs`) picks the
+- **Produced** — `generate_thumb` (`crates/favnyr-gui/src/bridge/thumbs.rs`) picks the
   source. On **Windows** the system shell thumbnail API is the single source of
   truth; Favnyr's own decoders are only a fallback.
 
@@ -35,7 +35,7 @@ decoders below (and to WinRT for PDFs).
 
 ## Linux (and the Windows fallback): Favnyr renders
 
-`crates/favnyr-core/src/thumbnail.rs` (pure Rust, `path → pixels`, no disk
+`crates/favnyr-core/src/thumbnail/` (pure Rust, `path → pixels`, no disk
 cache):
 
 - images via the `image` crate; PSD embedded JPEG; Affinity embedded PNG;

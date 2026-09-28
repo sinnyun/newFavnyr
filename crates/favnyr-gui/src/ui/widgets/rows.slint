@@ -1,0 +1,922 @@
+// Row and column widgets of a file view: column headers and the three row
+// shapes (list row, section header, tile).
+
+import { ColumnInfo, Strings } from "../structs.slint";
+import { Dismiss, Theme, Tokens } from "../theme.slint";
+
+export component ColumnHeader inherits Rectangle {
+    callback clicked();
+    /// Resize in progress: new width (the parent applies it to the right
+    /// property via `set-col-width` → no two-way binding, `for`-compatible).
+    callback resized(length);
+    /// End of resize (to persist it).
+    callback resize-finished();
+    /// Right-click on the header (absolute position) → column menu.
+    callback right-clicked(length, length);
+    /// Column reordering. The delta is computed in the event
+    /// handlers, where `absolute-position` can be read without a reactive dependency.
+    /// The drop target uses the offsets provided by the bridge so as not to
+    /// create a cycle between layout and component properties.
+    callback reorder-start(length /*center of the dragged column, px*/);
+    callback reorder-move(length /*delta px*/);
+    callback reorder-end(length /*delta px*/);
+    callback report-drop-target(int);
+    /// Current width (read-only — provided by the parent: `width-of(id)`).
+    in property <length> column-width: 100px;
+    in property <string> label;
+    in property <string> column-id;
+    in property <bool> active: false;
+    in property <bool> asc: true;
+    in property <length> min-col-width: 60px;
+    in property <int> index;               // visible index (column 0 = anchor)
+    in property <int> count;               // number of visible columns
+    in property <length> offset;           // cumulative left offset (px), plain
+    in property <bool> col-drag-active: false;
+    in property <length> col-drag-new-center: 0px;  // dragged center + delta (plain)
+    in property <int> col-drop-idx: -1;    // current target gap (from the parent)
+
+    width: root.column-width;
+
+    property <length> drag-start-x;        // resize grip
+    property <length> drag-start-w;        // resize grip
+    property <length> press-x;             // reorder drag
+    property <bool> dragging: false;       // THIS header is being dragged
+    // The reorder can be cut from outside — a menu opening takes the pointer
+    // and the release never comes back. Same guard as the sidebar's
+    // reorderable sections.
+    changed col-drag-active => {
+        if (!root.col-drag-active) { root.dragging = false; }
+    }
+    // Gap claimed if the targeted center falls within THIS header (left half →
+    // before it = `index`; right half → after = `index+1`). ≥ 1 (anchor `name`).
+    // All in PLAIN (offset/width/new-center) → no layout cycle.
+    property <int> my-drop-target:
+        (!root.col-drag-active
+            || root.col-drag-new-center < root.offset
+            // Claimed zone = column + its right-hand gap → continuous tiling
+            // (no dead zone between columns).
+            || root.col-drag-new-center >= root.offset + root.column-width + Tokens.col-gap)
+        ? -1
+        : max(1, root.col-drag-new-center < root.offset + root.column-width / 2
+            ? root.index
+            : root.index + 1);
+    changed my-drop-target => {
+        if (root.my-drop-target >= 0) { root.report-drop-target(root.my-drop-target); }
+    }
+
+    opacity: root.dragging ? 0.4 : 1.0;
+
+    background: root.dragging
+        ? Theme.accent-background.with-alpha(0.18)
+        : (touch.has-hover && !grip.has-hover
+            ? Theme.alternate-background.with-alpha(0.6)
+            : transparent);
+    border-radius: 5px;
+
+    // Live insertion line: to the left of the header at the target gap, and to the right of
+    // the last header if the gap is "at the end".
+    if root.col-drag-active && root.col-drop-idx == root.index && root.index >= 1 : Rectangle {
+        // Aligned on the column separator (= right edge of the previous
+        // column, where the resize grip line sits), so that the
+        // preview coincides with the visible separation. The left edge of THIS
+        // header is at `-col-gap` from the previous separator.
+        x: -(Tokens.col-gap) - 1px;
+        width: 2px;
+        height: parent.height;
+        background: Theme.accent-background;
+    }
+    if root.col-drag-active && root.index == root.count - 1 && root.col-drop-idx == root.count : Rectangle {
+        // Drop at the end: on the right edge (separator) of the last header.
+        x: parent.width - 1px;
+        width: 2px;
+        height: parent.height;
+        background: Theme.accent-background;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.dragging ? grabbing : default;
+        pointer-event(ev) => {
+            // LEFT click on a header closes context menus; right-click
+            // (column menu) does not bump → it can teleport the menu.
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) { Dismiss.serial += 1; }
+            if (ev.button == PointerEventButton.left) {
+                if (ev.kind == PointerEventKind.down) {
+                    root.press-x = self.absolute-position.x + self.mouse-x;
+                    root.dragging = false;
+                }
+                if (ev.kind == PointerEventKind.up) {
+                    if (root.dragging) {
+                        root.reorder-end(self.absolute-position.x + self.mouse-x - root.press-x);
+                        root.dragging = false;
+                    } else {
+                        root.clicked();   // simple click = sort
+                    }
+                }
+            }
+            if (ev.kind == PointerEventKind.down
+                    && ev.button == PointerEventButton.right) {
+                root.right-clicked(
+                    self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                // Drag starts past a threshold; `name` (index 0) is frozen.
+                if (!root.dragging && root.index > 0
+                        && abs(self.absolute-position.x + self.mouse-x - root.press-x) > 5px) {
+                    root.dragging = true;
+                    root.reorder-start(root.offset + root.column-width / 2);
+                }
+                if (root.dragging) {
+                    root.reorder-move(self.absolute-position.x + self.mouse-x - root.press-x);
+                }
+            }
+        }
+    }
+
+    // This wrapper clips the label and caret to the column frame, even
+    // when it is narrow. The reordering lines and the resize
+    // grip stay outside this clip.
+    Rectangle {
+        clip: true;
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 14px; // room for the grip on the right
+            spacing: 4px;
+            alignment: start;
+            Text {
+                text: root.label;
+                font-size: 11px;
+                font-weight: root.active ? 700 : 600;
+                letter-spacing: 0.4px;
+                color: root.active
+                    ? Theme.foreground
+                    : Theme.foreground.with-alpha(0.55);
+                vertical-alignment: center;
+            }
+            // Full-height slot (the Rectangle fills the row height
+            // within the HorizontalLayout) with the caret explicitly centered — an
+            // `Image` placed directly in a layout snaps to the TOP, hence this
+            // wrapper + manual centering.
+            if root.active : Rectangle {
+                width: 14px;
+                Image {
+                    source: root.asc
+                        ? @image-url("../../../assets/icons/caret-up.svg")
+                        : @image-url("../../../assets/icons/caret-down.svg");
+                    width: 12px;
+                    height: 12px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    colorize: Theme.accent-background;
+                }
+            }
+        }
+    }
+
+    // Resize grip on the right edge. It stays instantiated for
+    // all columns, since the header background references the `grip` element.
+    Rectangle {
+        visible: true;
+        x: parent.width - self.width / 2;
+        y: 3px;
+        width: 8px;
+        height: parent.height - 6px;
+        background: grip.has-hover || grip.pressed
+            ? Theme.foreground.with-alpha(0.25)
+            : transparent;
+        // 1px line, always visible.
+        Rectangle {
+            x: parent.width / 2 - 0.5px;
+            width: 1px;
+            height: parent.height;
+            background: Theme.border;
+        }
+        grip := TouchArea {
+            mouse-cursor: ew-resize;
+            pointer-event(ev) => {
+                if (ev.kind == PointerEventKind.down
+                        && ev.button == PointerEventButton.left) {
+                    Dismiss.serial += 1;
+                    root.drag-start-x = self.absolute-position.x + self.mouse-x;
+                    root.drag-start-w = root.column-width;
+                }
+                if (ev.kind == PointerEventKind.up
+                        && ev.button == PointerEventButton.left) {
+                    root.resize-finished();
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    root.resized(max(root.min-col-width,
+                        root.drag-start-w
+                        + (self.absolute-position.x + self.mouse-x - root.drag-start-x)));
+                }
+            }
+        }
+    }
+}
+
+
+// File row — PURELY visual (no per-row interactivity:
+// clicks/drag/hover are handled by a single stable TouchArea above the
+// viewport, see `sel-touch`, to survive row virtualization).
+export component FileRowView inherits Rectangle {
+    in property <string> name;
+    in property <string> name-base;
+    in property <string> name-ext;
+    in property <string> path;
+    in property <string> size;
+    in property <string> modified;
+    in property <bool> is-dir;
+    in property <bool> is-symlink;        // symbolic link / junction
+    in property <int> folder-slot;        // assigned folder colour, 0 = default
+    in property <string> comment;         // note attached to the entry, "" = none
+    in property <int> kind;
+    in property <bool> selected;
+    in property <bool> cut;
+    in property <bool> hovered;
+    in property <bool> hidden;            // hidden (dotfile / HIDDEN attribute)
+    in property <string> age;             // formatted age ("age" column)
+    in property <int> age-bucket;         // 0 recent (hot) … 6 old; -1 unknown
+    in property <string> resolution;      // "1920x1080" (optional column)
+    in property <string> depth;           // "32-bit +A" (optional column)
+    in property <string> ext;             // extension without the dot (optional column)
+    in property <bool> preview-mode;     // preview mode (thumbnails)
+    in property <length> row-h: 28px;    // EFFECTIVE height of this row
+    in property <image> thumbnail;       // empty if not generated / no preview
+    in property <image> app-icon;        // OS app icon by extension — empty = fall back to SVG
+    in property <bool> link-folder;      // .lnk shortcut → folder: folder icon + arrow
+
+    // Sizes derived from zoom. In list mode, the icon grows gently
+    // with height; in thumbnail mode, the thumbnail/icon fills almost
+    // the entire row height (no empty bands top/bottom).
+    property <bool> enlarged-row: Tokens.row-enlarged(root.preview-mode, root.row-h);
+    property <length> icon-size: Tokens.row-icon-size(root.preview-mode, root.row-h);
+    property <length> icon-slot:
+        Tokens.row-icon-slot(root.preview-mode, root.row-h, root.col-name-width);
+    // Badge marking a symbolic link. The two modes annotate very different
+    // things and need their own law: a list row marks a 16px icon, where only
+    // the floor ever applies, while an enlarged row marks a picture, where the
+    // badge must stay a corner mark rather than an object competing with it.
+    property <length> emblem-size: root.enlarged-row
+        ? clamp(root.icon-size * 0.22, 12px, 20px)
+        : clamp(root.icon-size * 0.45, 9px, 22px);
+    // A list row centres a 16px icon inside a slot that is wider and much
+    // taller than it, leaving a free margin all around. The badge is pushed
+    // into that margin so it clips the icon's corner instead of sitting on it.
+    // The vertical push stops 3px short of the slot edge to stay inside the
+    // selection pill, which is inset by 2px top and bottom. Enlarged rows have
+    // no spare margin and keep the badge tucked against the icon corner.
+    property <length> emblem-dx: root.enlarged-row
+        ? 0px
+        : (root.icon-slot - root.icon-size) / 2;
+    property <length> emblem-dy: root.enlarged-row
+        ? 0px
+        : max(0px, (root.row-h - root.icon-size) / 2 - 3px);
+    in property <length> col-name-width;
+    in property <length> col-path-width;
+    in property <length> col-size-width;
+    in property <length> col-modified-width;
+    in property <length> col-ext-width;   // resizable width, "ext"
+    in property <length> col-resolution-width;  // resizable width
+    in property <length> col-depth-width;        // resizable width
+    in property <length> col-age-width;          // resizable width, "age"
+    in property <length> content-width;   // total width of visible columns
+    in property <[ColumnInfo]> columns;   // visible columns, in order
+
+    // Resizable width of a column, resolved from its identifier.
+    function width-of(id: string) -> length {
+        id == "path" ? root.col-path-width
+            : id == "size" ? root.col-size-width
+            : id == "modified" ? root.col-modified-width
+            : id == "ext" ? root.col-ext-width
+            : id == "resolution" ? root.col-resolution-width
+            : id == "depth" ? root.col-depth-width
+            : id == "age" ? root.col-age-width
+            : root.col-name-width;
+    }
+    // Text content of a cell based on the column id.
+    function cell-text(id: string) -> string {
+        id == "path" ? root.path
+            : id == "size" ? root.size
+            : id == "modified" ? root.modified
+            : id == "ext" ? root.ext
+            : id == "resolution" ? root.resolution
+            : id == "depth" ? root.depth
+            : root.name;
+    }
+
+    // Real thumbnail available (preview mode + decoded image)?
+    property <bool> show-thumb: root.preview-mode && root.thumbnail.width > 0;
+    // OS app icon available: non-folder file, non-empty extracted icon,
+    // and NO real thumbnail to display. So true in list mode AND in
+    // preview mode when the file has no content thumbnail (doc, archive…).
+    // In preview mode, the icon is extracted at 256px → crisp even when enlarged.
+    property <bool> show-app-icon: !root.show-thumb && root.kind != 0 && root.app-icon.width > 0;
+
+    // Dim hidden entries at the primitive level. Applying opacity to the whole
+    // row would make Slint render its multi-child subtree into an offscreen
+    // layer; compositing that texture at a fractional UI scale softens text.
+    // Per-primitive alpha keeps glyphs rasterized at the effective DPI and is
+    // cheaper than allocating one intermediate layer per visible hidden row.
+    property <float> hidden-content-alpha: (!root.cut && root.hidden
+        && !root.selected && !root.hovered) ? Theme.hidden-opacity : 1.0;
+
+    height: root.row-h;
+    // A cut row remains globally faded to preserve the existing semantics.
+    // Hidden fading is handled per primitive above and never stacks with it.
+    opacity: root.cut ? 0.45 : 1.0;
+
+    // Highlight (selection / hover) as a rounded PILL, inset from
+    // the gutter on the left (which stays blank) and a small margin on the right
+    // → modern "selected row" look that doesn't touch the edges.
+    Rectangle {
+        x: Tokens.gutter;
+        y: 2px;
+        // Bounded to the right edge of the columns to reserve the empty area for the
+        // selection rectangle. If the columns fill the view, it takes up
+        // the whole available width.
+        // Columns: from `gutter-content` to `gutter-content + content-width`; the
+        // pill starts at `gutter` → max width = content-width + (gutter-content
+        // - gutter).
+        width: min(
+            parent.width - Tokens.gutter - 8px,
+            root.content-width + (Tokens.gutter-content - Tokens.gutter));
+        height: parent.height - 4px;
+        border-radius: Tokens.radius-row;
+        background: root.selected
+            ? Theme.accent-background.with-alpha(0.20)
+            : (root.hovered
+                // Hover: theme's alternate background → present but subtle, and clearly
+                // distinct from selection (which is tinted accent + outline).
+                ? Theme.alternate-background
+                : transparent);
+        // Subtle accent outline on the selected row (reinforces without shouting).
+        border-width: root.selected ? 1px : 0px;
+        border-color: Theme.accent-background.with-alpha(0.45);
+    }
+
+    // Cells rendered DYNAMICALLY from the column model: order
+    // + visibility driven by `columns`. The "name" cell carries the icon/
+    // thumbnail + the name; the others are a plain Text aligned according to the id.
+    HorizontalLayout {
+        // Content indent = `Tokens.gutter-content` (gutter + icon inset).
+        // Must match the column header AND the click threshold in `sel-touch`.
+        padding-left: Tokens.gutter-content;
+        padding-right: 8px;
+        spacing: Tokens.col-gap;
+
+        for col[ci] in root.columns : Rectangle {
+            width: root.width-of(col.id);
+
+            // -- Name cell: icon/thumbnail + text --
+            if col.id == "name" : HorizontalLayout {
+                padding-left: 0px;
+                padding-right: 0px;
+                spacing: 8px;
+                alignment: start;
+                Rectangle {
+                    width: root.icon-slot;
+                    height: parent.height;
+                    // Thumbnail: fills the row height (minus a thin margin)
+                    // → no empty area above/below; `contain` preserves
+                    // the ratio, the slot width lets landscape images breathe.
+                    if root.show-thumb : Image {
+                        source: root.thumbnail;
+                        image-fit: contain;
+                        opacity: root.hidden-content-alpha;
+                        width: parent.width - 4px;
+                        height: parent.height - 4px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    // Real OS application icon for the extension —
+                    // in color (no colorize), list mode only.
+                    if root.show-app-icon : Image {
+                        source: root.app-icon;
+                        image-fit: contain;
+                        opacity: root.hidden-content-alpha;
+                        width: root.icon-size;
+                        height: root.icon-size;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    // Body wash under the folder outline, drawn only once a
+                    // colour has been assigned. The folder glyph is a 2-unit
+                    // stroke in a 24 viewBox, so at list size only a couple of
+                    // dozen of its pixels carry the colour at full strength —
+                    // hue alone is a thin signal there. Filling the body
+                    // roughly halves that shortfall while the outline stays
+                    // several times stronger than the wash, so the icon still
+                    // reads as an outline rather than a block. A default folder
+                    // gets no wash at all: assigning a colour changes the
+                    // weight as well as the hue, and that is what sets a marked
+                    // folder apart from the file-type icons beside it.
+                    if (root.link-folder || root.kind == 0) && root.folder-slot > 0
+                            && !root.show-thumb && !root.show-app-icon : Image {
+                        source: @image-url("../../../assets/icons/folder-fill.svg");
+                        colorize: Tokens.folder-color(root.folder-slot).with-alpha(0.35);
+                        opacity: root.hidden-content-alpha;
+                        width: root.icon-size;
+                        height: root.icon-size;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    if !root.show-thumb && !root.show-app-icon : Image {
+                        opacity: root.hidden-content-alpha;
+                        width: root.icon-size;
+                        height: root.icon-size;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        source: root.link-folder ? @image-url("../../../assets/icons/folder-symlink.svg")
+                            : root.kind == 0 && root.is-symlink ? @image-url("../../../assets/icons/folder-symlink.svg")
+                            : root.kind == 0 ? @image-url("../../../assets/icons/folder.svg")
+                            : root.kind == 2 ? @image-url("../../../assets/icons/application.svg")
+                            : root.kind == 3 ? @image-url("../../../assets/icons/archive.svg")
+                            : root.kind == 4 ? @image-url("../../../assets/icons/audio.svg")
+                            : root.kind == 5 ? @image-url("../../../assets/icons/document.svg")
+                            : root.kind == 6 ? @image-url("../../../assets/icons/image.svg")
+                            : root.kind == 7 ? @image-url("../../../assets/icons/video.svg")
+                            : root.kind == 8 ? @image-url("../../../assets/icons/reg.svg")
+                            : @image-url("../../../assets/icons/file.svg");
+                        // Folders use a deepened Nord gold (#d9a441),
+                        // contrasted enough on light cards. The other types
+                        // keep their dedicated hues.
+                        colorize: (root.link-folder || root.kind == 0)
+                                ? Tokens.folder-color(root.folder-slot)
+                            : root.kind == 2 ? #a3be8c
+                            : root.kind == 3 ? #d08770
+                            : root.kind == 4 ? #b48ead
+                            : root.kind == 5 ? #81a1c1
+                            : root.kind == 6 ? #bf616a
+                            : root.kind == 7 ? #8fbcbb
+                            : root.kind == 8 ? #8b95a7
+                            : Theme.foreground.with-alpha(0.55);
+                    }
+                    // Note badge, top-right, mirroring the link badge's law on
+                    // the opposite corner: same size and same push into the
+                    // free margin, so a row carrying both marks reads as one
+                    // system. Like the link badge it carries its own colours,
+                    // but inverted — a light disc with a dark ring where the
+                    // link is a dark disc with a light ring. At the smallest
+                    // list size the ring is under a pixel and the inner glyph
+                    // cannot be resolved, so polarity is the only attribute
+                    // left that tells the two marks apart.
+                    //
+                    // Folders are NOT excluded here, unlike the link badge: a
+                    // folder carrying a note has to be marked too.
+                    if root.comment != "" : Image {
+                        source: @image-url("../../../assets/icons/note-emblem.svg");
+                        image-fit: contain;
+                        opacity: root.hidden-content-alpha;
+                        width: root.emblem-size;
+                        height: self.width;
+                        x: (root.show-thumb ? parent.width
+                            : (parent.width + root.icon-size) / 2 + root.emblem-dx) - self.width;
+                        y: root.show-thumb ? 0px
+                            : (parent.height - root.icon-size) / 2 - root.emblem-dy;
+                    }
+                    // Link badge, declared last so it paints over whichever
+                    // visual the row picked: thumbnail, application icon or
+                    // type icon. Folders are excluded — they already swap to
+                    // a dedicated icon, and stacking both would say it twice.
+                    // The badge carries its own colours instead of being
+                    // colorized, so it stays legible on any thumbnail.
+                    if root.is-symlink && root.kind != 0 : Image {
+                        source: @image-url("../../../assets/icons/link-emblem.svg");
+                        image-fit: contain;
+                        opacity: root.hidden-content-alpha;
+                        width: root.emblem-size;
+                        height: self.width;
+                        // Anchored to the bottom-right of the drawn area: a
+                        // thumbnail spans the whole slot, while an icon only
+                        // covers `icon-size` at its centre.
+                        x: (root.show-thumb ? parent.width
+                            : (parent.width + root.icon-size) / 2 + root.emblem-dx) - self.width;
+                        y: (root.show-thumb ? parent.height
+                            : (parent.height + root.icon-size) / 2 + root.emblem-dy) - self.height;
+                    }
+                }
+                // Name = stem + colored extension, JOINED (spacing 0, no
+                // gap) → natural "file.ext" rendering. The stem is bounded to
+                // (available width − extension width) and elides if too long;
+                // the extension therefore always stays visible and attached to the stem.
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 0px;
+                    alignment: start;
+                    Text {
+                        text: root.name-base;
+                        font-size: 13px;
+                        color: Theme.foreground.with-alpha(root.hidden-content-alpha);
+                        vertical-alignment: center;
+                        overflow: elide;
+                        // Width bounded to the available space of the "name" cell
+                        // (col-name-width − icon slot − spacing − extension).
+                        // We reference the COLUMN width (explicit, driven
+                        // by the bridge) and not `parent.width` (= this layout) →
+                        // no binding loop; the stem elides, the extension
+                        // stays visible and attached.
+                        width: min(
+                            self.preferred-width,
+                            root.col-name-width - root.icon-slot - 8px - ext-txt.preferred-width);
+                    }
+                    ext-txt := Text {
+                        text: root.name-ext;
+                        font-size: 13px;
+                        color: Tokens.ext.with-alpha(root.hidden-content-alpha);
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // -- Other cells: text (size/modified right-aligned) --
+            if col.id != "name" && col.id != "age" : Text {
+                text: root.cell-text(col.id);
+                font-size: 12px;
+                // "ext": same blue hue as the colored extension in the "name"
+                // column (Tokens.ext). "path" dimmed; the rest neutral.
+                color: col.id == "path"
+                    ? Theme.foreground.with-alpha(0.55 * root.hidden-content-alpha)
+                    : col.id == "ext"
+                    ? Tokens.ext.with-alpha(root.hidden-content-alpha)
+                    : Theme.foreground.with-alpha(0.75 * root.hidden-content-alpha);
+                vertical-alignment: center;
+                horizontal-alignment: (col.id == "size" || col.id == "modified") ? right : left;
+                overflow: elide;
+                width: parent.width;
+            }
+
+            // "age" cell: hot→cold colored pill. The background
+            // reuses the bucket color at low alpha, the text takes it at
+            // full → freshness spotted at a glance. bucket < 0 →
+            // unknown mtime: neutral dimmed text, no pill.
+            if col.id == "age" : Rectangle {
+                Rectangle {
+                    width: age-cell-txt.preferred-width + 14px;
+                    height: 18px;
+                    x: (parent.width - self.width) / 2;
+                    border-radius: 6px;
+                    background: root.age-bucket < 0
+                        ? transparent
+                        : Tokens.age-color(root.age-bucket).with-alpha(
+                            (Theme.dark ? 0.20 : 0.16) * root.hidden-content-alpha);
+                    age-cell-txt := Text {
+                        text: root.age;
+                        font-size: 11.5px;
+                        font-weight: 600;
+                        color: root.age-bucket < 0
+                            ? Theme.foreground.with-alpha(0.4 * root.hidden-content-alpha)
+                            : Tokens.age-color(root.age-bucket).with-alpha(root.hidden-content-alpha);
+                        x: (parent.width - self.width) / 2;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+                }
+            }
+        }
+    }
+
+}
+
+
+// Section header of a grouped view (subfolder contents, category grouping).
+// PURELY visual like FileRowView: hover/click are handled by the shared
+// `sel-touch`, which routes a click on a header to `toggle-section`.
+export component SectionHeaderView inherits Rectangle {
+    in property <Strings> strings;
+    in property <string> label;
+    in property <string> count-text;   // localized "12 items"; "" = none
+    in property <bool> pending;        // scan still running → spinner-ish "…"
+    in property <bool> collapsed;
+    in property <bool> is-folder;      // subfolder section (vs category)
+    in property <bool> hovered;
+    in property <length> indent;       // left inset (nesting under the header)
+    /// Icon of the section: folder (subfolder sections) or category glyph.
+    in property <image> icon;
+    in property <color> icon-color;
+
+    height: 26px;
+    // The whole band is the click target; only a light wash marks hover —
+    // a header must never compete with the selected entry pills below it.
+    background: root.hovered
+        ? Theme.alternate-background.with-alpha(0.6)
+        : transparent;
+
+    HorizontalLayout {
+        padding-left: root.indent + Tokens.gutter-content;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: start;
+
+        // Fold caret: points right when collapsed, down when expanded.
+        Image {
+            source: root.collapsed
+                ? @image-url("../../../assets/icons/chevron-right.svg")
+                : @image-url("../../../assets/icons/chevron-down.svg");
+            width: 12px;
+            height: 12px;
+            colorize: Theme.foreground.with-alpha(0.6);
+            vertical-alignment: center;
+        }
+        Image {
+            source: root.icon;
+            width: 14px;
+            height: 14px;
+            colorize: root.icon-color;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            color: Theme.foreground.with-alpha(0.85);
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.count-text;
+            font-size: 11px;
+            color: Theme.foreground.with-alpha(0.5);
+            vertical-alignment: center;
+        }
+    }
+    // Thin hairline under the band, keeping the section boundary readable
+    // even when two sections' entries sit next to each other.
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Tokens.hairline;
+    }
+}
+
+
+// Grid tile — PURELY visual, like FileRowView: a thumbnail/icon over the
+// name, sized by the geometry the bridge computed (`visual-w`/`visual-h`).
+export component FileTileView inherits Rectangle {
+    in property <string> name-base;
+    in property <string> name-ext;
+    in property <bool> is-dir;
+    in property <bool> is-symlink;
+    in property <int> folder-slot;
+    in property <int> kind;
+    in property <bool> selected;
+    in property <bool> cut;
+    in property <bool> hovered;
+    in property <bool> hidden;
+    in property <string> comment;
+    in property <image> thumbnail;
+    in property <image> app-icon;
+    in property <bool> link-folder;
+    in property <bool> preview-mode;   // thumbnails on (always true in grid)
+    in property <length> row-h;
+
+    property <float> hidden-content-alpha: (!root.cut && root.hidden
+        && !root.selected && !root.hovered) ? Theme.hidden-opacity : 1.0;
+    // Picture area: whatever the tile gets minus the name band below it.
+    property <length> art-size: max(16px, root.row-h - 34px);
+    property <bool> show-thumb: root.thumbnail.width > 0;
+    property <bool> show-app-icon: !root.show-thumb && root.kind != 0
+        && root.app-icon.width > 0;
+
+    height: root.row-h;
+    opacity: root.cut ? 0.45 : 1.0;
+
+    // Card: the tile's own hit area is the shared `sel-touch` above, so this
+    // is just the surface. Selection = accent tint + outline, hover = plain.
+    Rectangle {
+        x: 0;
+        y: 2px;
+        width: parent.width;
+        height: parent.height - 4px;
+        border-radius: Tokens.radius-row;
+        background: root.selected
+            ? Theme.accent-background.with-alpha(0.20)
+            : (root.hovered ? Theme.alternate-background : transparent);
+        border-width: root.selected ? 1px : 0px;
+        border-color: Theme.accent-background.with-alpha(0.45);
+
+        VerticalLayout {
+            padding-top: 6px;
+            padding-bottom: 4px;
+            spacing: 2px;
+
+            Rectangle {   // art slot
+                vertical-stretch: 1;
+                horizontal-stretch: 1;
+                if root.show-thumb : Image {
+                    source: root.thumbnail;
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size);
+                    height: min(parent.height - 6px, root.art-size);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if root.show-app-icon : Image {
+                    source: root.app-icon;
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size * 0.75);
+                    height: min(parent.height - 6px, root.art-size * 0.75);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if (root.link-folder || root.kind == 0) && root.folder-slot > 0
+                        && !root.show-thumb && !root.show-app-icon : Image {
+                    source: @image-url("../../../assets/icons/folder-fill.svg");
+                    colorize: Tokens.folder-color(root.folder-slot).with-alpha(0.35);
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size * 0.78);
+                    height: min(parent.height - 6px, root.art-size * 0.78);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if !root.show-thumb && !root.show-app-icon : Image {
+                    opacity: root.hidden-content-alpha;
+                    width: min(parent.width - 6px, root.art-size * 0.78);
+                    height: min(parent.height - 6px, root.art-size * 0.78);
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    source: root.link-folder ? @image-url("../../../assets/icons/folder-symlink.svg")
+                        : root.kind == 0 && root.is-symlink ? @image-url("../../../assets/icons/folder-symlink.svg")
+                        : root.kind == 0 ? @image-url("../../../assets/icons/folder.svg")
+                        : root.kind == 2 ? @image-url("../../../assets/icons/application.svg")
+                        : root.kind == 3 ? @image-url("../../../assets/icons/archive.svg")
+                        : root.kind == 4 ? @image-url("../../../assets/icons/audio.svg")
+                        : root.kind == 5 ? @image-url("../../../assets/icons/document.svg")
+                        : root.kind == 6 ? @image-url("../../../assets/icons/image.svg")
+                        : root.kind == 7 ? @image-url("../../../assets/icons/video.svg")
+                        : root.kind == 8 ? @image-url("../../../assets/icons/reg.svg")
+                        : @image-url("../../../assets/icons/file.svg");
+                    colorize: (root.link-folder || root.kind == 0)
+                            ? Tokens.folder-color(root.folder-slot)
+                        : root.kind == 2 ? #a3be8c
+                        : root.kind == 3 ? #d08770
+                        : root.kind == 4 ? #b48ead
+                        : root.kind == 5 ? #81a1c1
+                        : root.kind == 6 ? #bf616a
+                        : root.kind == 7 ? #8fbcbb
+                        : root.kind == 8 ? #8b95a7
+                        : Theme.foreground.with-alpha(0.55);
+                }
+                // Note badge, top-right of the art slot (same polarity as the list).
+                if root.comment != "" : Image {
+                    source: @image-url("../../../assets/icons/note-emblem.svg");
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: 14px;
+                    height: 14px;
+                    x: parent.width - self.width;
+                    y: 0px;
+                }
+                // Link badge, bottom-right, declared last so it paints on top.
+                if root.is-symlink && root.kind != 0 : Image {
+                    source: @image-url("../../../assets/icons/link-emblem.svg");
+                    image-fit: contain;
+                    opacity: root.hidden-content-alpha;
+                    width: 14px;
+                    height: 14px;
+                    x: parent.width - self.width;
+                    y: parent.height - self.height;
+                }
+            }
+            // Name = stem + colored extension, joined like the list rows.
+            HorizontalLayout {
+                height: 16px;
+                spacing: 0px;
+                alignment: center;
+                Text {
+                    text: root.name-base;
+                    font-size: 12px;
+                    color: Theme.foreground.with-alpha(root.hidden-content-alpha);
+                    overflow: elide;
+                    horizontal-alignment: right;
+                    width: min(self.preferred-width,
+                        max(0px, parent.width - tile-ext.preferred-width));
+                }
+                tile-ext := Text {
+                    text: root.name-ext;
+                    font-size: 12px;
+                    color: Tokens.ext.with-alpha(root.hidden-content-alpha);
+                }
+            }
+        }
+    }
+}
+
+
+// Row of assignable folder colours, laid inside a menu flyout.
+//
+// The geometry is derived from the menu rather than chosen: a 240px panel less
+// its 4px padding leaves 232px, less the 12px MenuItem uses on each side leaves
+// 208px, and 208 / 8 is 26px — the same 26px a MenuItem is tall. So the strip
+// costs exactly one entry of height, its swatches line up under the labels
+// above them, and the cells tile with no dead strip between two targets.
+//
+// The first cell is drawn hollow: it restores the default rather than assigning
+// a ninth colour, and it keeps the default hue in its ring so the user sees
+// what reverting gives back. That is why there is no "remove colour" entry.
+export component FolderSwatchRow inherits Rectangle {
+    callback picked(int);
+    // Slot already applied to the target, so the strip can point at it.
+    in property <int> current: 0;
+    height: 26px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 0px;
+        for slot in [0, 1, 2, 3, 4, 5, 6, 7] : Rectangle {
+            width: 26px;
+            Rectangle {
+                x: 3px;
+                y: 3px;
+                width: 20px;
+                height: 20px;
+                border-radius: 4px;
+                background: slot == 0 ? transparent : Tokens.folder-color(slot);
+                border-width: slot == 0 ? 2px : 0px;
+                border-color: Tokens.folder-color(0);
+                // The applied slot carries the same check the column list uses.
+                // On a filled swatch the ink takes the theme's opposite end; on
+                // the hollow one it falls back to the ordinary text colour,
+                // which sits on the menu rather than on a swatch.
+                if root.current == slot : Image {
+                    source: @image-url("../../../assets/icons/check.svg");
+                    width: 12px;
+                    height: 12px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    colorize: slot == 0
+                        ? Theme.foreground
+                        : (Theme.dark ? Theme.background : #ffffff);
+                }
+            }
+            // Hover ring drawn OUTSIDE the swatch, so the colour it points at
+            // is never covered. Ring means "pointing at", check means
+            // "applied" — separating them by kind lets both show at once.
+            if cell-ta.has-hover : Rectangle {
+                x: 1px;
+                y: 1px;
+                width: 24px;
+                height: 24px;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Theme.foreground.with-alpha(0.45);
+            }
+            cell-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.picked(slot); }
+            }
+        }
+    }
+}
+
+// Full-window dim behind a modal card. It ALWAYS swallows the wheel: an
+// unhandled scroll would otherwise fall through to whatever sits behind the
+// modal (the settings panel, the file view underneath) and scroll or select
+// there while the modal is up. Clicks on the dim are absorbed; set
+// `dismiss-on-click` to also close the modal from a click in the dim.
+/// Checkbox for a destructive list: ticked means "this one goes".
+///
+/// Not the toolkit's `CheckBox`, and deliberately. That one fills in the
+/// toolkit's accent, which in this application means identity, active, drop
+/// target — the opposite of condemned. Green was out of the question too: it
+/// already means "copy" here, and a green tick reads as assent where this one
+/// means removal. A red tick cannot be misread.
+///
+/// Square rather than round: in Favnyr a disc is a state the user does not set
+/// (the modified-workspace dot, a count badge), a rounded square is a target
+/// one clicks — the eight colour swatches are squares.
+export component MarkBox inherits Rectangle {
+    in property <bool> checked;
+    callback toggled(bool);
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: root.checked ? Tokens.danger : transparent;
+    border-width: root.checked ? 0px : 1.5px;
+    border-color: mark-touch.has-hover
+        ? Tokens.danger.with-alpha(0.55)
+        : Theme.foreground.with-alpha(0.35);
+    animate background, border-color { duration: 110ms; easing: ease-out; }
+    if root.checked : Image {
+        source: @image-url("../../../assets/icons/check.svg");
+        width: 10px;
+        height: 10px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        // Ink takes the opposite end of the theme from the fill, the same law
+        // the colour swatches use.
+        colorize: Theme.dark ? Theme.background : #ffffff;
+    }
+    mark-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.checked); }
+    }
+}

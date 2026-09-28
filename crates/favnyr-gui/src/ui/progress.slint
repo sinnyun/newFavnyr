@@ -1,0 +1,343 @@
+// Progress toasts, drive gauges and the ffmpeg command row.
+
+import { Theme, Tokens } from "theme.slint";
+
+// Progress toast.
+// Non-blocking floating card (no backdrop) anchored bottom-right.
+// 6px bar, progress measured in bytes or items, animation in
+// indeterminate mode, and a Cancel or Close button depending on the state.
+export component ProgressToast inherits Rectangle {
+    in property <int> op-state;          // 1 running,2 scan,3 success,4 error,5 cancelled
+    in property <float> progress;        // 0..1
+    in property <bool> indeterminate;
+    in property <string> title;
+    in property <string> detail;
+    in property <string> percent;
+    in property <string> cancel-label;
+    callback cancel();
+    callback dismiss();
+
+    width: 360px;
+    height: 88px;
+    background: Theme.background;
+    border-radius: Tokens.radius-overlay;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #000000.with-alpha(0.35);
+    drop-shadow-offset-y: 6px;
+
+    property <bool> terminal: root.op-state == 3 || root.op-state == 4 || root.op-state == 5;
+    property <color> fill-color: root.op-state == 4
+        ? Tokens.danger
+        : (root.op-state == 5 ? Theme.foreground.with-alpha(0.35) : Theme.accent-background);
+    property <bool> sweep: false;
+
+    // Absorbs clicks on the card (but NOT elsewhere → non-blocking).
+    TouchArea { }
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        // Line 1: title + percentage + "x" (terminal state).
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.title;
+                font-size: 13px;
+                font-weight: 600;
+                color: root.op-state == 4 ? Tokens.danger : Theme.foreground;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Text {
+                text: root.percent;
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.foreground.with-alpha(0.7);
+                vertical-alignment: center;
+            }
+            if root.terminal : Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                background: dismiss-touch.has-hover ? Theme.alternate-background : transparent;
+                Image {
+                    source: @image-url("../../assets/icons/close.svg");
+                    width: 11px;
+                    height: 11px;
+                    colorize: Theme.foreground.with-alpha(0.6);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                dismiss-touch := TouchArea {
+                    clicked => { root.dismiss(); }
+                }
+            }
+        }
+
+        // Line 2: track + fill.
+        Rectangle {
+            height: 6px;
+            border-radius: 3px;
+            background: Theme.foreground.with-alpha(0.12);
+            clip: true;
+            if !root.indeterminate : Rectangle {
+                x: 0;
+                width: parent.width * clamp(root.progress, 0, 1);
+                height: parent.height;
+                border-radius: 3px;
+                background: root.fill-color;
+                animate width { duration: 120ms; easing: ease-out; }
+            }
+            if root.indeterminate : Rectangle {
+                width: parent.width * 0.3;
+                height: parent.height;
+                border-radius: 3px;
+                background: Theme.accent-background;
+                x: root.sweep ? parent.width - self.width : 0px;
+                animate x { duration: 1100ms; easing: ease-in-out; }
+            }
+        }
+
+        // Line 3: detail + Cancel (non-terminal states).
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.detail;
+                font-size: 11px;
+                color: Theme.foreground.with-alpha(0.6);
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            if !root.terminal : Rectangle {
+                width: 78px;
+                height: 24px;
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: cancel-touch.has-hover ? Theme.alternate-background : transparent;
+                Text {
+                    text: root.cancel-label;
+                    font-size: 12px;
+                    color: Theme.foreground.with-alpha(0.85);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                cancel-touch := TouchArea {
+                    clicked => { root.cancel(); }
+                }
+            }
+        }
+    }
+
+    // Indeterminate animation: ping-pong of the glowing block.
+    Timer {
+        interval: 1100ms;
+        running: root.indeterminate && root.op-state == 2;
+        triggered => { root.sweep = !root.sweep; }
+    }
+
+    // Auto-dismiss: success after 1.5s, cancelled after 1.2s. Held by the card
+    // itself so that each toast in the stack times out on its own.
+    //
+    // An error never times out. A long copy can end while nobody is at the
+    // machine, and a countdown would erase the only trace of the failure
+    // before anyone read it — the two states that do expire merely confirm
+    // what was just asked, and losing them costs nothing. The "x" closes an
+    // error card, as it closes the others.
+    Timer {
+        interval: root.op-state == 5 ? 1200ms : 1500ms;
+        running: root.op-state == 3 || root.op-state == 5;
+        triggered => { root.dismiss(); }
+    }
+}
+
+// "Places" sidebar ----------
+
+
+// Capacity gauge shown at the right end of a drive row.
+//
+// Fill and figures both measure what is USED, so they say one thing: the bar
+// grows, the number grows, the volume is filling. Showing free space here was
+// tried and read as a contradiction — a bar advancing while its own caption
+// counted down. Free space is what the reader usually wants, so it leads the
+// hover hint, where there is room to name it.
+//
+// The label straddles the seam between fill and empty track — a two-tone
+// ground no single text colour survives once the fill is coloured. It is
+// therefore drawn TWICE at the very same position, the second pass clipped to
+// the fill. Each half is then read against one flat colour, and the glyph
+// crossing the seam splits exactly where the bar ends. When the fill is
+// colourless both passes use the same ink, so nothing shows.
+//
+// No animation: a value that moves by a fraction of a percent per minute has
+// nothing to animate, and a sliding bar here would read as a copy in progress.
+export component DriveGauge inherits Rectangle {
+    in property <float> used-ratio;
+    in property <int> level;
+    in property <string> label;     // "" renders the bare gauge
+    in property <length> avail-width;
+
+    // Floored so a nearly empty volume still shows a sliver rather than an
+    // apparently broken gauge, and capped short of the full width so the
+    // remaining track stays visible on a nearly full one — the two ends are
+    // where the reading matters most.
+    property <length> fill-w: root.used-ratio <= 0
+        ? 0px
+        : min(root.width, max(8px, root.width * clamp(root.used-ratio, 0, 1)));
+
+    height: 18px;
+    // A true capsule. `Tokens.radius-row` is already the radius of the row
+    // highlight sitting behind it; repeating it would read as a misalignment.
+    border-radius: self.height / 2;
+    // Measured text plus air, never wider than the row can spare, never so
+    // narrow the capsule stops reading as a gauge.
+    width: clamp(txt.preferred-width + 16px, 28px, root.avail-width);
+    background: Tokens.track;
+    clip: true;
+
+    Rectangle {
+        x: 0;
+        width: root.fill-w;
+        height: parent.height;
+        background: Tokens.disk-fill(root.level);
+    }
+
+    // Pass 1 — the whole label, over the empty track.
+    txt := Text {
+        x: (parent.width - self.width) / 2;
+        height: parent.height;
+        text: root.label;
+        font-size: 10.5px;
+        font-weight: 400;
+        color: Theme.foreground;
+        vertical-alignment: center;
+    }
+
+    // Pass 2 — same label, same box, clipped to the fill. Centring on the
+    // GAUGE and not on this clip rectangle is what keeps the two passes in
+    // register to the pixel; any drift would show as a doubled edge.
+    Rectangle {
+        x: 0;
+        width: root.fill-w;
+        height: parent.height;
+        clip: true;
+        Text {
+            x: (root.width - self.width) / 2;
+            height: parent.height;
+            text: root.label;
+            font-size: 10.5px;
+            font-weight: 400;
+            color: Tokens.disk-ink(root.level);
+            vertical-alignment: center;
+        }
+    }
+}
+
+
+// An "install command" row of the ffmpeg panel: distro badge,
+// monospace command, copy button (icon → checkmark ~1.3s after copying). The
+// DETECTED row is promoted (left accent bar + "Detected" chip).
+export component FfmpegCmdRow inherits Rectangle {
+    in property <string> distro;
+    in property <string> command;
+    in property <bool> promoted;
+    in property <string> detected-label;
+    callback copy(string);
+    property <bool> copied: false;
+
+    height: 34px;
+    border-radius: 5px;
+    background: root.promoted
+        ? Theme.accent-background.with-alpha(0.07)
+        : (row-touch.has-hover ? Theme.alternate-background : transparent);
+
+    // Left accent bar: marker for the detected distro (like the active tab).
+    if root.promoted : Rectangle {
+        x: 0;
+        y: 4px;
+        width: 2px;
+        height: parent.height - 8px;
+        border-radius: 1px;
+        background: Theme.accent-background.with-alpha(0.85);
+    }
+    // Row hover (below the content → doesn't intercept the copy button).
+    row-touch := TouchArea { }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 4px;
+        spacing: 8px;
+        // Distro badge (label, not decoration).
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            height: 18px;
+            border-radius: 4px;
+            background: Theme.foreground.with-alpha(0.07);
+            HorizontalLayout {
+                padding-left: 7px;
+                padding-right: 7px;
+                Text {
+                    text: root.distro;
+                    font-size: 11px;
+                    font-weight: 500;
+                    color: Theme.foreground.with-alpha(0.75);
+                    vertical-alignment: center;
+                }
+            }
+        }
+        if root.promoted : Text {
+            text: root.detected-label;
+            font-size: 10px;
+            font-weight: 600;
+            color: Theme.accent-background;
+            vertical-alignment: center;
+        }
+        // Command to paste in the terminal.
+        Text {
+            text: root.command;
+            horizontal-stretch: 1;
+            font-family: "monospace";
+            font-size: 12px;
+            color: Theme.foreground.with-alpha(0.92);
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // Copy button (feedback: green "checkmark" icon for ~1.3s).
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: 28px;
+            height: 28px;
+            border-radius: 5px;
+            background: copy-touch.has-hover ? Theme.alternate-background : transparent;
+            border-width: copy-touch.has-hover ? 1px : 0px;
+            border-color: Theme.accent-background;
+            Image {
+                width: 14px;
+                height: 14px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: root.copied
+                    ? @image-url("../../assets/icons/check.svg")
+                    : @image-url("../../assets/icons/duplicate.svg");
+                colorize: root.copied ? Tokens.success : Theme.foreground.with-alpha(0.6);
+            }
+            copy-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.copy(root.command);
+                    root.copied = true;
+                    copied-timer.restart();
+                }
+            }
+        }
+    }
+    copied-timer := Timer {
+        interval: 1300ms;
+        running: root.copied;
+        triggered => { root.copied = false; }
+    }
+}

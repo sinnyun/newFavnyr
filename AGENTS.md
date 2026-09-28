@@ -8,7 +8,8 @@ Favnyr 是一个便携式文件浏览器（Windows / Linux），Rust + Slint 编
 
 - `crates/favnyr-core` — 与 UI 无关的核心逻辑（文件系统、缩略图、配置、打开方式、工作区、i18n…）。
 - `crates/favnyr-gui` — Slint 界面与平台集成（`winthumb.rs`、`shellmenu.rs`、`winutil.rs` 等）。
-- `crates/favnyr-gui/src/ui/main_window.slint` — 界面与数据模型定义。
+- `crates/favnyr-gui/src/ui/*.slint` — 界面与数据模型：`main_window.slint` 是编译入口（`MainWindow` + 布局骨架），其余（`structs`/`theme`/`widgets/`/`panel`/`sidebar`/`workspaces`/`progress`）为导出组件。
+- 大文件已按模块拆分（`fs/`、`bridge/`、`bridge/install/`、`ui/widgets/` 等）；文件级地图见 `docs/code-map.md`，拆分约定见 `docs/split-plan.md`。
 
 ## 构建与测试
 
@@ -20,20 +21,20 @@ Favnyr 是一个便携式文件浏览器（Windows / Linux），Rust + Slint 编
 ## 代码规范
 
 - **注释与文档字符串用英文**，与现有代码保持一致（`favnyr-core`/`favnyr-gui` 现有注释全为英文）。如需改用中文注释，先与维护者确认。
-- 面向用户的文案必须走 i18n（`i18n.rs`），不要硬编码字符串。
+- 面向用户的文案必须走 i18n（`favnyr-gui/src/i18n/`），不要硬编码字符串。
 - 平台差异用 `#[cfg(windows)]` / `#[cfg(not(windows))]` 就地处理，保证两个平台都能编译。
-- Windows 专属代码放在 `favnyr-gui/src/win*.rs`；新增 Windows API 依赖时，在 `crates/favnyr-gui/Cargo.toml` 的 `[target.'cfg(windows)'.dependencies]` 下按需精确开启 feature。
+- Windows 专属代码放在 `favnyr-gui/src/win*.rs`；已按平台分文件的模块沿用同一约定（如 `actions/opening.rs`、`openwith/windows.rs`、`places/windrives.rs`）。新增 Windows API 依赖时，在 `crates/favnyr-gui/Cargo.toml` 的 `[target.'cfg(windows)'.dependencies]` 下按需精确开启 feature。
 - 优先使用官方 / 系统提供的实现，避免自造（例如缩略图直接调用系统 shell API）。
 - 修改 `FileKind` 这类 `#[repr(u8)]` 取值是**破坏性**的：`.slint` 侧按数值引用，禁止重排序。需要“数值 → 枚举”时用 `FileKind::from_code`。
 
 ## 缩略图（预览）
 
-两个决策点都在 `crates/favnyr-gui/src/bridge.rs`：
+两个决策点都在 `crates/favnyr-gui/src/bridge/thumbs.rs`：
 
 - `thumbnail_kind_for_row` — 决定**哪些行请求**预览。Windows：所有非文件夹文件（由系统决定有无缩略图）；其它平台：image / video / MP3-FLAC / PDF 白名单。其结果同时驱动 `preview_capable` 与行高。
 - `generate_thumb` — 决定**来源**。Windows：先系统 shell 缩略图，系统给不出时才回退自研解码（PDF 以 WinRT 兜底）；Linux：一律自研解码。
 
-Windows 路径见 `crates/favnyr-gui/src/winthumb.rs`（`IShellItemImageFactory`，即系统缩略图缓存）；自研解码见 `crates/favnyr-core/src/thumbnail.rs`。完整说明见 `docs/thumbnails.md`。
+Windows 路径见 `crates/favnyr-gui/src/winthumb.rs`（`IShellItemImageFactory`，即系统缩略图缓存）；自研解码见 `crates/favnyr-core/src/thumbnail/`。完整说明见 `docs/thumbnails.md`。
 
 ## 文档与记录
 

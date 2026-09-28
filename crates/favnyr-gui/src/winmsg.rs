@@ -1,6 +1,6 @@
 //! Cross-instance IPC for Favnyr (Windows) — **tab transfer via
 //! drag-and-drop between two Favnyr windows**. No dependency added:
-//! raw FFI to `user32` / `comctl32` (system DLLs), like `places.rs`.
+//! raw FFI to `user32` / `comctl32` (system DLLs), like `places/windrives.rs`.
 //!
 //! Principle: each instance MARKS its window (`SetPropW`) and SUBCLASSES it
 //! (`SetWindowSubclass`) to intercept `WM_COPYDATA`. On drop, the SOURCE

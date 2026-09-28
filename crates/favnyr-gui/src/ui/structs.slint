@@ -1,0 +1,742 @@
+// Data shared between the Rust bridge and the Slint UI.
+// Everything here is an `export struct`: no logic, no dependency on the UI.
+
+
+// ---------- Structs shared between Rust and Slint ----------
+
+// Represents a tab in a panel's tab bar.
+// `width` and `offset` are computed by the bridge from the title, with a
+// width clamped to 90-180 px. Rendering and drop logic thus share
+// a geometry independent of the reactive layout.
+export struct TabInfo {
+    title: string,
+    width: length,
+    offset: length,
+    // Full path shown in the tooltip on hover.
+    path: string,
+}
+
+// A breadcrumb segment. `label` is the displayed name,
+// `path` the absolute path to navigate to on click.
+export struct Crumb {
+    label: string,
+    path: string,
+}
+
+// A named workspace in the "Workspaces" overlay list.
+export struct WorkspaceEntry {
+    id: string,      // stable identifier (file name)
+    name: string,    // displayed name, editable
+    panels: int,     // number of panels (metadata)
+    tabs: int,       // total number of tabs (metadata)
+    is-current: bool, // currently loaded workspace (accent rail + semibold name)
+    is-dirty: bool,   // current + unsaved changes (dot + amber pill)
+}
+
+// A location in the "Places" sidebar. `kind`: 0=folder,
+// 1=home, 2=drive, 3=trash (drives the icon + the i18n label).
+// Models are split by section on the bridge side: ordering belongs to the
+// workspace and is therefore never encoded in each row.
+export struct SidebarPlace {
+    label: string,
+    path: string,
+    kind: int,
+    // Removable device → offers to release it.
+    removable: bool,
+    // Can the cable be pulled? Decides the wording, not the availability.
+    hotplug: bool,
+    // Eject/disconnect target (Linux device `/dev/…` or drive letter `X:`).
+    device: string,
+    // Remaining-space level of a drive: -1 unmeasurable (no badge at all),
+    // 0 roomy, 1 low, 2 critical. Anything that is not a local volume — a
+    // share, the trash, a shortcut — stays at -1.
+    space-level: int,
+    // Share of the volume in USE, 0..1. The gauge grows with it, in step with
+    // the figures beside it.
+    space-used-ratio: float,
+    // "26.0 / 57.3 GB", already localized, and the used figure alone for a
+    // narrow sidebar.
+    space-text: string,
+    space-text-short: string,
+    // One-line breakdown for the hover hint, where each figure is named.
+    space-hint: string,
+}
+
+// A FLATTENED node of the favorites tree. `is-container` distinguishes a
+// container (favorites folder) from a favorite (leaf pointing to `path`). The
+// bridge only emits VISIBLE nodes (collapsed container = descendants hidden).
+// An "opener" (Open with) on the GUI side: id + label + availability
+// (program not found → greyed out). `default-exts` shown in settings.
+export struct OpenerItem {
+    id: string,
+    label: string,
+    available: bool,
+    icon: image,        // icon extracted from the exe (empty if unavailable)
+    // 0 = none, 1 = 7-Zip, 2 = archive/tar, 3 = email, 4 = device transfer.
+    icon-kind: int,
+}
+
+// Entry in the WINDOWS CONTEXT MENU (hosted shell extensions).
+// `has-sub` = cascade (PeaZip…) → dedicated flyout; `sub` = sub-menu index
+// on the bridge side (model pushed on hover); `icon` = menu bitmap (empty = fallback).
+export struct ShellCtxEntry {
+    id: int,            // command offset (InvokeCommand, leaves)
+    label: string,
+    icon: image,
+    // Monochrome system glyph (e.g. "Share") → re-tinted to the theme
+    // foreground (unreadable as-is on a dark menu). Coloured app icons = false.
+    monochrome: bool,
+    has-sub: bool,
+    sub: int,
+}
+
+// Row in the settings panel "Detected Windows entries".
+/// One annotation whose item is gone, as the cleanup list shows it.
+///
+/// `key` is the store's own key and is never rebuilt on this side: toggling
+/// sends it back untouched, so the bridge alone decides what an entry is.
+export struct OrphanRow {
+    key: string,
+    parent: string,        // folder that still exists, shown dimmed
+    name: string,          // last segment, the part one recognises
+    note: string,          // "" when the annotation is only a colour
+    slot: int,             // 1..7; 0 = no colour, only a note
+    checked: bool,
+}
+
+export struct ShellExtRow {
+    label: string,
+    enabled: bool,
+}
+
+export struct FavNode {
+    id: string,
+    label: string,
+    path: string,          // "" for a container
+    is-container: bool,
+    depth: int,            // indentation depth (root = 0)
+    expanded: bool,        // container expanded?
+    has-children: bool,    // container: has at least one child (chevron)
+    available: bool,       // favorite: path exists? (false = greyed out)
+    is-dir: bool,          // favorite: existing target is a directory
+}
+
+// A list column. `id` = code ("name"/"path"/"size"/"modified"…),
+// `label` = i18n label, `visible` (used by the check/uncheck menu).
+// The width is NOT here: it lives in the col-*-width properties of the
+// PanelComponent (live resize) and is resolved by id via `width-of`.
+export struct ColumnInfo {
+    id: string,
+    label: string,
+    visible: bool,
+    // Cumulative left offset (px) among the VISIBLE columns — provided by the
+    // bridge. Used to compute the drag target WITHOUT reading `absolute-position`
+    // (which, in a layout context, triggers a "Recursion detected" cycle).
+    offset: length,
+}
+
+// Shortcut labels shown in the CONTEXT MENUS. Pushed by
+// the bridge from the EFFECTIVE map (defaults + overrides) → dynamic: if
+// the user rebinds an action, the menu shows the new shortcut. Empty
+// "" = unassigned action (the MenuItem then hides the shortcut).
+export struct MenuShortcuts {
+    open: string,
+    terminal: string,
+    copy: string,
+    cut: string,
+    paste: string,
+    rename: string,
+    delete: string,
+    properties: string,
+    new-folder: string,
+    new-file: string,
+    split-side: string,
+    split-stack: string,
+    equalize: string,
+    tab-reopen-closed: string,
+    open-settings: string,
+    open-workspaces: string,
+}
+
+// Keyboard shortcuts. A "cap" = a displayed key: `kind` 0 = text
+// (`label`), 1/2/3/4 = up/down/left/right arrow (SVG icon).
+export struct ShortcutCap {
+    label: string,
+    kind: int,
+}
+// A configurable action: localized name, keys of its combination, and states.
+export struct ShortcutRow {
+    action-id: string,
+    name: string,
+    caps: [ShortcutCap],
+    assigned: bool,     // false → "unassigned"
+    overridden: bool,   // true → customized (shows the reset button)
+}
+// A group of actions (header + rows).
+export struct ShortcutGroup {
+    name: string,
+    rows: [ShortcutRow],
+}
+
+// Represents a file row. `selected` / `cut` mutate as used.
+export struct FileRow {
+    name: string,
+    // Name split for display: `name-base` (stem) + `name-ext`
+    // (extension WITH the dot, e.g. ".jpg"; empty if none). Allows
+    // coloring the extension in the list without changing anything in the operations
+    // (which use the full `name`).
+    name-base: string,
+    name-ext: string,
+    ext: string,        // extension without the dot ("Extension" column); empty for a folder
+    path: string,
+    size: string,
+    modified: string,
+    is-dir: bool,
+    drop-runnable: bool,
+    is-symlink: bool,   // symbolic link / junction → marked ("folder + arrow" icon)
+    // Colour slot assigned to a folder, 0 = the default gold.
+    folder-slot: int,
+    // Note attached to this entry, empty when none.
+    comment: string,
+    kind: int,
+    selected: bool,
+    cut: bool,
+    hidden: bool,
+    age: string,        // formatted age ("2h 50m", "25d")
+    age-bucket: int,    // 0 recent (hot) … 6 old (cold); -1 = unknown
+    // Image metadata (optional columns) — empty until
+    // computed / if the file is not a readable image.
+    resolution: string, // e.g. "1920x1080"
+    depth: string,      // e.g. "24-bit + alpha"
+    // Preview thumbnail — empty (width 0) until it is generated
+    // or if the type has no preview → falls back to the type icon.
+    thumbnail: image,
+    // OS default application icon for this extension on
+    // Windows. Empty (width 0) if unavailable → falls back to the SVG type icon.
+    app-icon: image,
+    // `.lnk` shortcut pointing to a FOLDER → "folder + arrow" icon
+    // (folder-symlink.svg), like a folder symbolic link.
+    link-folder: bool,
+    // The type can produce a real content thumbnail (image/video/PDF,
+    // SVG included). Stable even before the worker finishes: the height doesn't
+    // jump when the texture arrives.
+    preview-capable: bool,
+    // Vertical geometry precomputed by the bridge. It is the shared
+    // source for rendering, hit-testing, keyboard scrolling, and rubber-band selection.
+    // Horizontal geometry is precomputed too: a grid tile carries its own
+    // x/width (the whole line is laid out by the bridge), a list row spans
+    // the view.
+    visual-x: length,
+    visual-w: length,
+    visual-y: length,
+    visual-h: length,
+    // Index in the full logical model. `rendered` only drives the
+    // virtualized window: neither one participates in operations.
+    model-index: int,
+    rendered: bool,
+    // Row role: 0 = entry (an operation target) · 1 = section header
+    // (click folds/unfolds its section, never selected).
+    role: int,
+    // Section the row belongs to: header and its entries share the key
+    // ("cat:image", "sub:C:\dir"); empty outside a grouped view.
+    // `section-label` is non-empty on a header — that is what it displays.
+    section: string,
+    section-label: string,
+    // Localized item count of the section ("12 items", "12 个项目"),
+    // formatted by the bridge. Empty = no count chip.
+    section-count-text: string,
+    section-pending: bool,      // scan of the section still running → "…"
+}
+
+// Complete view of a panel for Slint rendering.
+// All per-panel state flows through this struct; the Rust bridge
+// pushes a `[PanelView]` on every structural change.
+// Where a view sits, as fractions [0,1] of the container (the flattened
+// layout tree); the GUI multiplies by the container size.
+//
+// Held in a model PARALLEL to `panels` rather than inside `PanelView`, for the
+// same reason as the footers: dragging a separator rewrites this on every
+// frame, and rewriting a `PanelView` invalidates every binding that reads it —
+// `rendered-rows` included, which is the row repeater's own model. Kept apart,
+// a resize moves the tiles and touches nothing else.
+export struct PanelBox {
+    fx: float,
+    fy: float,
+    fw: float,
+    fh: float,
+}
+
+export struct PanelView {
+    rows: [FileRow],
+    // Dynamic sub-model of only the rows near the viewport. The rendering
+    // iterates over it without losing the full logical model used by operations.
+    rendered-rows: [FileRow],
+    // Incremented only when row order or geometry changes.
+    rows-revision: int,
+    // Incremented on a folder/tab change: a new context
+    // always starts at the top, regardless of its content's height.
+    viewport-reset-gen: int,
+    tabs: [TabInfo],
+    current-path: string,
+    total-count: int,
+    can-go-back: bool,
+    can-go-forward: bool,
+    sort-column: string,
+    sort-asc: bool,
+    active-tab-idx: int,
+    title: string,                  // e.g.: "Panel 1 · Documents"
+    crumbs: [Crumb],                // clickable breadcrumb trail
+    // Column widths SPECIFIC to this panel (each view is independent).
+    col-name-w: length,
+    col-path-w: length,
+    col-size-w: length,
+    col-modified-w: length,
+    col-ext-w: length,          // resizable width of the "ext" column
+    col-resolution-w: length,   // resizable width "resolution"
+    col-depth-w: length,        // resizable width "depth"
+    col-age-w: length,          // resizable width "age"
+    // Columns: `columns` = visible ones in order (header + rows);
+    // `columns-menu` = ALL of them (for the check/uncheck menu).
+    columns: [ColumnInfo],
+    columns-menu: [ColumnInfo],
+    // Display mode: false = list (icons), true = previews OR grid — both show
+    // thumbnails. Drives the row visuals; the layout itself comes from the
+    // bridge (`visual-y`/`visual-h`, and `grid-mode` for tiles).
+    preview-mode: bool,
+    // Display mode as a code: "list" / "previews" / "grid".
+    view-mode: string,
+    // Grid display: rows are tiles packed left to right, each carrying its
+    // own x/width. Click routing depends on it (a tile owns its x range).
+    grid-mode: bool,
+    // Columns of the grid (0 outside grid mode) — up/down move by one line.
+    grid-cols: int,
+    // "Show subfolder contents": the listing carries a section per direct
+    // subfolder. Drives the button's lit state.
+    show-subfolders: bool,
+    // Total width of VISIBLE columns (px) — computed by the bridge
+    // (accurate, unlike a hardcoded sum) → drives horizontal scrolling.
+    content-width: length,
+    // Hidden file display: true = dotfiles/HIDDEN shown.
+    show-hidden: bool,
+    // Grouping by type: code "folders" / "files" / "mixed".
+    group-mode: string,
+    // Keyboard navigation: cursor row to make visible; `scroll-gen`
+    // is a counter bumped on every keyboard move → triggers
+    // scroll-into-view (without redoing it on other refreshes).
+    cursor-row: int,
+    scroll-gen: int,
+    // UNREACHABLE folder (network drive not started, mount missing) → banner
+    // "not found" instead of the list; auto re-check.
+    unavailable: bool,
+    // Extension filter: `ext-filter-on` = bar shown (enabled from
+    // the columns menu); `ext-filter` = free-text entered ("jpg, png").
+    ext-filter-on: bool,
+    ext-filter: string,
+    // Tab bar position for the view: 0 = horizontal at the
+    // top · 1 = vertical on the left · 2 = vertical on the right.
+    tab-bar-mode: int,
+    // USER-set width of the vertical bar (0 = automatic).
+    vbar-user-w: length,
+}
+
+// Splitter (resize handle) flattened from the tree. `idx` identifies
+// the Split node on the Rust side (to adjust its ratio). Geometry in fractions.
+export struct SplitterView {
+    idx: int,
+    vertical: bool,                 // true = vertical bar (side-by-side split)
+    pos: float,                     // seam position on the perpendicular axis
+    cross-start: float,             // start of the bar on the parallel axis
+    cross-len: float,               // length of the bar
+    // Rectangle this separator governs, in the same fractions: exactly what a
+    // double-click on it would even out.
+    area-x: float,
+    area-y: float,
+    area-w: float,
+    area-h: float,
+    // How many views it governs. A pair needs no outline to be understood.
+    governs: int,
+}
+
+// A ready-made command offered in the settings. `index` designates it in the
+// bridge's table, which the displayed list no longer matches once recipes
+// whose tool is missing have been filtered out.
+export struct OwRecipe {
+    label: string,
+    index: int,
+    icon-kind: int,
+}
+
+// One long operation's progress, as shown by its toast. Several can run at
+// once, so each row carries the id that identifies its operation.
+export struct OpProgress {
+    id: int,
+    state: int,                     // 1 running · 2 scanning · 3 success · 4 error · 5 cancelled
+    progress: float,                // 0..1
+    indeterminate: bool,
+    title: string,                  // e.g. "Copying…"
+    detail: string,                 // e.g. "12.3 MB / 80.0 MB"
+    percent: string,                // e.g. "42 %" (empty while indeterminate)
+}
+
+// All translatable UI strings.
+export struct Strings {
+    app-title: string,
+
+    settings-language: string,
+    settings-theme: string,
+    settings-ui-scale: string,        // "Interface zoom"
+    // "Video thumbnails (ffmpeg)" section — Linux only.
+    settings-ffmpeg-title: string,
+    settings-ffmpeg-hint-ok: string,
+    settings-ffmpeg-hint-missing: string,
+    settings-ffmpeg-missing-badge: string,
+    settings-ffmpeg-recheck: string,
+    settings-ffmpeg-detected: string,
+    settings-ffmpeg-flatpak: string,
+    settings-tabbar-default: string,  // default tab bar position
+    settings-clock-label: string,     // label for the timezone setting of the Modified column
+    settings-clock-local: string,     // "Local time" option of the timezone dropdown
+    settings-tab-tooltip-label: string,  // tab path tooltip option
+    settings-tab-tooltip-hint: string,
+    settings-ws-warn-label: string,   // safeguard option before loading a workspace
+    settings-ws-warn-hint: string,
+    settings-compact-preview-label: string,
+    settings-compact-preview-hint: string,
+    // "Colors and notes" cleanup section.
+    settings-annotations-title: string,
+    settings-annotations-hint: string,
+    settings-annotations-clean: string,
+    annotations-cleanup-title: string,      // heading of the cleanup list
+    annotations-cleanup-all: string,        // "Select all"
+    annotations-cleanup-none: string,       // "Deselect all"
+    annotations-cleanup-empty: string,      // nothing left to sweep
+    settings-annotations-cleaned: string,   // toast: how many entries went
+    theme-auto: string,
+    theme-light: string,
+    theme-dark: string,
+
+    col-name: string,
+    col-path: string,
+    col-size: string,
+    col-modified: string,
+    col-age: string,
+    col-ext: string,            // "Extension" column
+    ext-filter-label: string,   // columns menu: "Filter by extension"
+    ext-filter-placeholder: string,   // greyed hint of the extension filter bar
+    col-resolution: string,
+    col-depth: string,
+    // Favorites
+    fav-title: string,
+    fav-new-container: string,
+    fav-collapse-all: string,
+    fav-expand-all: string,
+    fav-empty: string,
+    fav-container-empty: string,
+    fav-open: string,
+    fav-open-all: string,
+    fav-new-subcontainer: string,
+    fav-rename: string,
+    fav-delete: string,
+    fav-delete-confirm: string,
+    fav-copy-path: string,
+    fav-save-tab: string,
+    fav-save-all-tabs: string,
+    fav-add: string,
+    fav-popup-title: string,
+    fav-popup-alias: string,
+    fav-popup-container: string,
+    fav-popup-parent: string,
+    fav-popup-new: string,
+    fav-popup-root: string,
+    fav-save: string,
+    fav-toast-added: string,
+    fav-toast-missing: string,
+    fav-toast-exists: string,          // warning: duplicate favorite
+
+    footer-items-singular: string,
+    footer-items-plural: string,
+    footer-empty: string,
+    footer-selected-singular: string,
+    footer-selected-plural: string,
+
+    nav-prev: string,
+    nav-next: string,
+    nav-parent: string,
+    nav-refresh: string,
+    view-mode-tooltip: string,
+    view-mode-list: string,        // view mode menu option: list
+    view-mode-previews: string,    // … previews (thumbnails)
+    view-mode-grid: string,        // … grid (tiles)
+    show-hidden-tooltip: string,
+    show-subfolders-tooltip: string,   // "show subfolder contents" button
+    group-section: string,
+    group-folders-first: string,
+    group-files-first: string,
+    group-mixed: string,
+    group-category: string,        // grouping by file category
+    category-folder: string,       // section headers of the category grouping
+    category-image: string,
+    category-video: string,
+    category-audio: string,
+    category-document: string,
+    category-other: string,
+
+    tab-new-tooltip: string,
+    tab-scroll-left: string,   // left-scroll chevron tooltip
+    tab-scroll-right: string,
+    tabbar-menu-tooltip: string,   // "tab bar position" button
+    tabbar-top: string,            // … horizontal bar at top option
+    tabbar-left: string,           // … vertical bar on the left option
+    tabbar-right: string,          // … vertical bar on the right option
+    tab-unavailable: string,       // folder-not-found banner
+    tab-unavailable-hint: string,
+    tab-duplicate: string,         // tab context menu: duplicate
+    tab-reopen-closed: string,     // dead-zone menu: last closed tab
+    tab-close-tooltip: string,
+
+    panel-prefix: string,
+    panel-new-tooltip: string,
+    panel-close-tooltip: string,
+    panel-move-tooltip: string,     // grip: drag this view onto another
+    panel-split-view: string,
+    split-side-by-side: string,
+    split-stacked: string,
+    equalize-all: string,           // menu row: even out every view
+    equalize-restore: string,       // same row while a way back is held
+
+    ctx-open: string,
+    ctx-open-new-tab: string,
+    ctx-open-admin: string,           // "Open as administrator" (file, Windows)
+    ctx-open-with: string,
+    ctx-open-parent: string,
+    ctx-open-terminal: string,
+    ctx-new: string,                  // unified parent entry "New" (flyout)
+    ctx-new-folder: string,
+    ctx-new-file: string,
+    ctx-new-shortcut: string,         // "New shortcut" (.lnk, Windows)
+    create-shortcut-target: string,   // label of the "Target" field (shortcut popup)
+    create-browse: string,            // "Browse…" button for the target
+    ctx-create-link: string,          // entry + shortcut tab "Create a shortcut"
+    ctx-mark: string,                 // parent entry of the "Colour & note" flyout
+    ctx-comment: string,              // flyout entry opening the note editor
+    comment-title: string,
+    comment-placeholder: string,
+    comment-clear: string,            // link clearing the field in the editor
+    create-symlink-tab: string,       // "Create a symlink" tab
+    create-confirm: string,
+    create-placeholder: string,
+    ctx-copy: string,
+    ctx-cut: string,
+    ctx-paste: string,
+    ctx-duplicate: string,
+    ctx-copy-path: string,
+    ctx-copy-name: string,
+    ctx-rename: string,
+    ctx-delete: string,
+    ctx-properties: string,
+
+    // "Folder" / "File" labels. Historically from the internal
+    // Properties panel (removed: properties now go through the OS's NATIVE
+    // dialog); they are still used by the tabs of the "New
+    // shortcut" popup — hence the `prop-` prefix kept so as not to break the
+    // existing translation catalogs.
+    prop-kind-folder: string,
+    prop-kind-file: string,
+
+    // Settings menu.
+    settings-tooltip: string,
+    settings-title: string,
+    settings-tab-general: string,       // "General" tab label
+    settings-columns-section: string,   // "Default columns"
+    // MORE EXPLICIT labels in the checkbox for the columns reserved for
+    // images (the column header itself stays short).
+    settings-col-resolution: string,
+    settings-col-depth: string,
+    settings-rmtime-section: string,    // "Folder modification date"
+    settings-rmtime-label: string,
+    settings-rmtime-hint: string,
+    settings-fsize-label: string,      // "Folder size"
+    settings-fsize-hint: string,
+    settings-paths-section: string,
+    settings-config-path: string,
+    settings-data-path: string,
+    settings-cache-path: string,
+    settings-open: string,
+
+    // Keyboard shortcuts
+    settings-shortcuts-section: string,
+    shortcut-search-placeholder: string,
+    shortcut-reset-all: string,
+    shortcut-reset-all-confirm: string,
+    shortcut-reset-tooltip: string,
+    shortcut-listening: string,
+    shortcut-capture-cancel: string,
+    shortcut-unassigned: string,
+    shortcut-unassign: string,       // context menu: remove the shortcut
+    shortcut-no-results: string,
+    shortcut-conflict-reassign: string,
+    shortcut-conflict-keep: string,
+
+    // Rename popup.
+    rename-title: string,
+    rename-current-prefix: string,    // e.g.: "Current name: "
+    rename-new-placeholder: string,
+    rename-confirm: string,           // label of the "Rename" button
+    rename-force-replace: string,     // explicit replacement of a file with the same name
+    rename-select-name: string,       // selects the name without its extension
+    btn-cancel: string,
+
+    // Name conflict on paste
+    paste-conflict-title: string,
+    paste-conflict-hint: string,
+    paste-conflict-taken: string,
+    paste-conflict-skip: string,
+    paste-conflict-confirm: string,
+    paste-conflict-replace: string,       // "Replace"
+    paste-conflict-replace-all: string,   // "Replace all"
+    paste-conflict-skip-all: string,      // "Skip all"
+
+    // File-drag feedback.
+    drag-open-with: string,               // "Open with this program"
+
+    // Progress bar for long operations.
+    op-copying: string,
+    op-moving: string,
+    op-deleting: string,
+    op-deleting-permanently: string,
+    op-duplicating: string,
+    op-scanning: string,
+    op-done: string,
+    op-cancelled: string,
+    op-errors: string,           // e.g.: "Finished with errors"
+    op-items: string,            // e.g.: "items" (trash counter)
+
+    // Named workspaces
+    ws-tooltip: string,               // top bar button tooltip
+    ws-title: string,                 // overlay title
+    ws-save-section: string,          // "Save current workspace"
+    ws-name-placeholder: string,      // name field placeholder
+    ws-name-taken: string,            // name already used (live validation)
+    ws-save-btn: string,              // "Save"
+    ws-saved-section: string,         // "My workspaces" (no counter, appended in Slint)
+    ws-empty: string,                 // "No saved workspace"
+    ws-empty-hint: string,            // empty-state subtext
+    ws-load: string,                  // "Load"
+    ws-update: string,                // "Update" (⟳ tooltip)
+    ws-rename: string,                // pencil tooltip
+    ws-delete: string,                // trash tooltip + red confirm button
+    ws-delete-confirm: string,        // "Delete this workspace?"
+    ws-overwrite-confirm: string,     // "Overwrite this workspace?"
+    ws-panels-short: string,          // "pnl." (metadata)
+    ws-tabs-short: string,            // "tabs." (metadata)
+    ws-toast-saved: string,
+    ws-toast-updated: string,
+    ws-toast-renamed: string,
+    ws-toast-deleted: string,
+    ws-notice-saved: string,            // global toast with {name} (Ctrl+S)
+    ws-notice-save-failed: string,       // global error with {name}
+    // "Unsaved changes" safeguard when loading.
+    ws-dirty-title: string,           // dialog title (with {name})
+    ws-dirty-body: string,            // body (with {name})
+    ws-dirty-discard: string,         // "Load without saving" (red ghost)
+    ws-dirty-save-load: string,       // "Save and load" (primary)
+    ws-dirty-tooltip: string,         // amber dot tooltip: "Unsaved changes"
+    ws-dirty-save-action: string,     // amber ⟳ hover tooltip: "Save changes"
+    // "Places" sidebar
+    sidebar-tooltip: string,          // toggle button tooltip
+    sidebar-shortcuts: string,        // shortcuts section header
+    sidebar-drives: string,           // drives section header
+    sidebar-network: string,          // network section header
+    net-ejected: string,              // toast: device removed
+    net-disconnected: string,         // toast: network drive disconnected
+    net-eject-failed: string,         // toast: removal failed (prefix)
+    net-eject: string,                // drive menu, unpluggable device
+    net-release: string,              // drive menu, device wired in place
+    net-released: string,             // toast: released, nothing to unplug
+    net-disconnect: string,           // drive menu: "Disconnect"
+    sidebar-home: string,             // "Home folder" label
+    sidebar-trash: string,            // "Trash" label
+    sidebar-root: string,             // root drive "/" label when unnamed
+    sidebar-empty-trash: string,      // context menu: "Empty trash"
+    sidebar-empty-trash-confirm: string, // 2nd click: confirmation
+    net-delete-title: string,         // network "permanent deletion" popup
+    net-delete-body: string,          // … body: no trash, irreversible
+    permanent-delete-body: string,    // … generic body for Shift+Delete
+    net-delete-confirm: string,       // … action button: "Delete permanently"
+    open-many-title: string,          // guard before opening a whole selection
+    open-many-confirm: string,        // … action button: "Open all"
+    // Cross-view drag'n'drop: drop menu
+    drop-move: string,                // "Move here"
+    drop-copy: string,                // "Copy here"
+    drop-link: string,                // "Link here"
+    drop-favorite: string,            // "Add to favorites" (drag over the favorites)
+    drop-swap: string,                // "Swap" (a view carried onto another)
+    drop-detach: string,              // "Detach" (a view carried out of the window)
+
+    ws-reset: string,                 // "Start a new workspace" button
+    ws-new-name: string,              // "new workspace" target name in the dialog
+    ws-toast-reset: string,           // toast after reset
+    ws-sort-newest: string,           // "newest first" sort label
+    ws-sort-oldest: string,           // "oldest first" sort label
+    ws-sort-tooltip: string,          // sort-direction toggle button tooltip
+    // Open with
+    ow-choose: string,
+    ow-pick-browse: string,
+    ow-custom: string,
+    ow-use-as-app: string,
+    ow-manage: string,
+    ow-title: string,
+    ow-name: string,
+    ow-program: string,
+    ow-store-program: string,       // label of the frozen Program field (OS/Store app)
+    ow-args: string,
+    ow-tags: string,
+    // Tooltips explaining what each insertable tag stands for.
+    ow-tag-file: string,
+    ow-tag-dir: string,
+    ow-tag-dirname: string,
+    ow-tag-setname: string,
+    ow-tag-name: string,
+    ow-tag-stem: string,
+    ow-tag-ext: string,
+    ow-tag-uri: string,
+    ow-tag-files: string,
+    ow-preview: string,
+    ow-add-suggested: string,
+    ow-recipes-label: string,   // section title, also its accessible label
+    ow-recipes-hint: string,    // what the recipes are and why some are absent
+    ow-launch: string,
+    ow-default-ext: string,
+    ow-set-default: string,     // "Set as default" checkbox of the app picker
+    ow-display-other-apps: string, // Linux picker: include launchers without MimeType
+    ow-used-ext: string,        // "Suggested in Open with for these extensions"
+    ow-default-ext-placeholder: string,
+    ow-used-ext-placeholder: string,
+    ow-run-as-admin: string,    // "Run as administrator" checkbox (Windows)
+    ow-default-ext-hint: string, // tooltip for the "default app" label
+    ow-show-in-section: string,  // title of the "Where to show this command" panel
+    ow-ctx-menu: string,        // "Show in the context menu:" label
+    ow-ctx-files: string,       // "Files" checkbox
+    ow-ctx-dirs: string,        // "Folders" checkbox
+    ow-ctx-background: string,  // "View background" checkbox
+    ow-ctx-ext: string,         // extension filter of the Files entry
+    ow-ctx-ext-hint: string,    // what "*" means, and that it only affects Files
+    ow-used-ext-hint: string,   // what the "suggested for" list does
+    settings-shellmenu-label: string, // settings card: Windows context menu
+    settings-shellmenu-hint: string,
+    settings-shellext-list-label: string, // sub-tab: detected Windows entries
+    settings-shellext-list-hint: string,
+    settings-shellext-empty: string,      // no entry detected
+    ow-move-up: string,         // tooltips for the Open-with list buttons
+    ow-move-down: string,
+    ow-duplicate-tip: string,
+    ow-edit-tip: string,
+    ow-delete-tip: string,
+    settings-openers-section: string,
+    ow-add: string,
+    ow-empty: string,
+    ow-search-placeholder: string,
+    ow-no-results: string,
+    ow-promote: string,
+    ow-promote-add: string,
+}

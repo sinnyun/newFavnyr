@@ -1,0 +1,432 @@
+// Custom application palette and the small globals the UI reads from it.
+// `Theme` derives `dark` from the luminance of the background resolved by
+// Fluent (`StyleMetrics.window-background`), so "auto" mode follows the system.
+
+import { Palette } from "std-widgets.slint";
+
+// ===== Custom application palette =====
+// Slint does NOT allow overriding `Palette`'s colors (`out` properties
+// locked by the Fluent style: light background #FAFAFA "too white", accent
+// #005FB8 "flashy"). So we define OUR OWN palette and use it everywhere
+// (the remaining `std-widgets` — settings combobox, scrollbars — stay
+// styled by Fluent, which is marginal).
+//
+// `dark` is derived from the LUMINANCE of the background resolved by Fluent
+// (`StyleMetrics.window-background`), which reflects the EFFECTIVE scheme, including
+// "auto" mode (follows the system) — `apply-theme()` always drives
+// `Palette.color-scheme`, Fluent resolves it, and we read the result here.
+//
+// Direction: cool "slate" ramp with DEPTH (stacked surfaces).
+//   - Dark: "heightened" Polar Night, with moderate blue saturation and
+//       contrast. Channel
+//       #1b2230 < toolbar #222a39 < card #2a3242 < hover #3a455c <
+//       border #46536e; brighter Frost cyan accent #7CCBE1. Bright snow text.
+//   - Light: "muted slate" Nord, with a moderate luminance ceiling for visual
+//       comfort. The soft surfaces and contrasted edges mirror the
+//       dark theme's hierarchy, inverted. Polar Night text and the Frost
+//       accent ensure crisp reading on large light surfaces.
+export global Theme {
+    out property <bool> dark: Palette.background.to-hsv().value < 0.5;
+    // Opacity of an untargeted HIDDEN entry (dotfile / HIDDEN): "pale" but
+    // readable. Light theme one notch more opaque (dark text quickly loses its
+    // contrast on a light background). Stays > 0.45 (= "cut off") to distinguish them.
+    out property <float> hidden-opacity: root.dark ? 0.55 : 0.58;
+
+    // "Channel" background (window + groove) — the MOST recessed level.
+    // In light theme, a slightly cool grey sets the white cards apart from
+    // the groove without weighing down the whole.
+    out property <color> background: root.dark ? #1b2230 : #e3e9f1;
+    // Card surface (panels) = VIEW BACKGROUND. Light: near-white,
+    // very slightly cool (#f8fafc). The borders and chrome, a bit more
+    // grey, outline the large file area without darkening its surface.
+    out property <color> surface:    root.dark ? #2a3242 : #f8fafc;
+    // Light "chrome": activity rail + sidebar + view's top toolbar
+    // (tabs + navigation). Deliberately a real step below the card rather
+    // than a near-identical shade — at 1.07:1 the two read as one surface and
+    // the layout had no edges of its own. Now 1.28:1, with roughly three
+    // times the blue chroma so the chrome is coloured and the reading area
+    // stays neutral.
+    out property <color> toolbar:    root.dark ? #222a39 : #E9EEF5;
+    // Alternate background (hovers, bullets, headers). Kept BELOW the chrome
+    // it sits on: a hover lighter than the sidebar would brighten there while
+    // darkening on the file rows, the same gesture reading two ways. Visible
+    // on both (1.22:1 over the chrome, 1.56:1 over the card).
+    out property <color> alternate-background: root.dark ? #3a455c : #d9e2f0;
+    // Text — bright snow (dark) / deep slate (light) = strong contrast.
+    out property <color> foreground: root.dark ? #eceff4 : #202733;
+    // Borders / hairlines — define the edges (the crisp relief gives the light theme its
+    // clear readability, all the more necessary with light surfaces).
+    out property <color> border: root.dark ? #46536e : #ccd6e4;
+    // Accent and its associated text. Deepened along with the chrome: it
+    // carries the drive icons INSIDE the sidebar, and the previous azure was
+    // already under the 4.5:1 floor there (4.16:1) before the chrome moved.
+    // Now 5.84:1 on the chrome and 4.79:1 on a hovered row.
+    out property <color> accent-background: root.dark ? #7ccbe1 : #1f5292;
+    out property <color> accent-foreground: root.dark ? #1b2230 : #ffffff;
+}
+
+// Shared design tokens, adapted to the active theme.
+export global Tokens {
+    // "Danger" red = Nord Aurora (BF616A), softened/lightened depending on the theme.
+    out property <color> danger: Theme.dark ? #c4757c : #bf616a;
+    // "Success" green = Nord Aurora (A3BE8C), same theme-adaptation logic.
+    out property <color> success: Theme.dark ? #a3be8c : #7a9a5e;
+    // "Pending / unsaved" amber: signals a workspace that has been modified
+    // but not saved. Distinct from danger (red = loss) and from the accent
+    // (blue = identity/active).
+    out property <color> warning: Theme.dark ? #eab464 : #d08019;
+    out property <length> radius-overlay: 8px;
+    // Left gutter of the lists: blank strip (not a row click zone)
+    // so a right-click "paste into folder" still works even with a full
+    // list. ONE single source of truth: strip width + content
+    // inset (= gutter + small inset to give the icon room in the highlight).
+    out property <length> gutter: 30px;
+    out property <length> gutter-content: root.gutter + 6px;
+    // Horizontal spacing between columns (header AND rows). MUST stay
+    // in sync with `COL_GAP` on the bridge side (column offset computation).
+    out property <length> col-gap: 8px;
+
+    // ----- Card-style view design -----
+    // Panel radius (soft, modern card look).
+    out property <length> radius-panel: 9px;
+    // Row highlight radius (selection / hover pill).
+    out property <length> radius-row: 6px;
+    // Half-gutter between panels: applied as an inset on all 4 sides of
+    // each panel → 2x between two panels, 1x against the container edge.
+    out property <length> panel-gap: 4px;
+    // Padding of a panel's root row. Also referenced by `sel-touch`,
+    // which extends over it so the ENTIRE visual gutter is draggable.
+    out property <length> panel-pad: 7px;
+    // Thin hairline (under the column header, subtle separators).
+    out property <color> hairline: Theme.border.with-alpha(0.6);
+    // Color of the "groove" (channel) between panels: the theme's "channel"
+    // background (more recessed than the card surface → detached tiles).
+    out property <color> trough: Theme.background;
+    // Color of the file extension in the list (blue): light on a dark
+    // background; saturated blue on a light background (accent family) to
+    // clearly stand out on the near-white cards.
+    out property <color> ext: Theme.dark ? #8ec7e6 : #3168c4;
+
+    // All columns, including "age", "resolution", and "depth",
+    // use a resizable width in `ColumnSpec.width`.
+    // Text color for the age, based on the hot→cold bucket (0 = recent
+    // … 6 = old). Hues stable across both themes; the pill background reuses
+    // this color with a low alpha to keep the age scale unobtrusive.
+    // Empty part of a gauge. Alpha-based so it tracks whatever surface it sits
+    // on, and light enough that the filled part reads as the figure.
+    out property <color> track: Theme.dark
+        ? Theme.foreground.with-alpha(0.12)
+        : #C0C8CD;
+
+    // Fill of a drive's capacity gauge, by remaining-space level
+    // (0 roomy · 1 low · 2 critical).
+    //
+    // Level 0 is deliberately colourless. A sidebar of five drives would
+    // otherwise carry five saturated bars competing for attention with the
+    // file list, and the one drive that IS running out would no longer stand
+    // out among them. Colour is spent only where it means something.
+    //
+    // The warning hues are lifted straight from `warning`/`danger`, and the
+    // light theme takes them much softer: these sit UNDER text, the reverse of
+    // their usual role, and on a pale surface the same alpha that reads as
+    // discreet on a dark one comes out heavy. A gauge is ambient information —
+    // it should be legible at a glance and invisible the rest of the time.
+    //
+    // Alphas over the light toolbar (#eef2f7), against a 0.12 track:
+    //   level 0  0.22 → #c0c5cc, twenty-odd levels below the track: present,
+    //                   not a slab
+    //   warning  0.42 → #e1c29a wash
+    //   danger   0.42 → #dab5bc wash
+    // The dark theme is unchanged; it was not the one at fault.
+    public pure function disk-fill(level: int) -> color {
+        level >= 2 ? (Theme.dark ? #d08d92 : root.danger.with-alpha(0.42))
+            : level == 1 ? (Theme.dark ? root.warning : root.warning.with-alpha(0.42))
+            : (Theme.dark ? Theme.foreground.with-alpha(0.30) : #A3ADB5);
+    }
+
+    // Ink for the part of the label that crosses the fill. On a colourless
+    // fill it stays the ordinary text colour, so no seam shows; on a warning
+    // fill in the dark theme the band is bright and takes dark ink instead.
+    public pure function disk-ink(level: int) -> color {
+        Theme.dark
+            ? (level <= 0 ? Theme.foreground : Theme.background)
+            : Theme.foreground;
+    }
+
+    public pure function age-color(bucket: int) -> color {
+        bucket <= 0 ? (Theme.dark ? #f0786a : #c0392b)   // < 1h warm red
+            : bucket == 1 ? (Theme.dark ? #ef9a4f : #b06317) // < 6h orange
+            : bucket == 2 ? (Theme.dark ? #e3bd4e : #8a6d12) // < 1d amber
+            : bucket == 3 ? (Theme.dark ? #9fc06a : #54802f) // < 7d yellow-green
+            : bucket == 4 ? (Theme.dark ? #5fb39a : #2a7a66) // < 30d teal-green
+            : bucket == 5 ? (Theme.dark ? #6ba0c4 : #3a6797) // < 1y blue
+            : (Theme.dark ? #8b95a7 : #586780);              // ≥ 1y cool grey
+    }
+
+    // Colour a user may assign to a folder. A folder stores the SLOT, never a
+    // literal colour, so each theme serves its own value — a single hex cannot
+    // do both: a mark light enough to hold contrast on a dark row is washed out
+    // on a pale one. Same shape as `age-color` above, and the same reason.
+    //
+    // Within a theme the seven assignable hues share one lightness and chroma,
+    // anchored on the gold they sit beside: only the hue moves, so none of them
+    // reads heavier or lighter than the rest of the list. Measured against the
+    // row card, all seven clear 4.3:1 in both themes.
+    //
+    // Slot 0 is the untouched default and deliberately keeps the existing gold
+    // in BOTH themes: changing it would restyle every folder in the app, which
+    // is not what assigning a colour to one folder should do. It measures
+    // 2.15:1 on a light card — below the 3:1 floor — but so do the seven
+    // file-type colours beside it, and that is a separate matter.
+    //
+    // Slot 7 is achromatic on purpose: it is the one entry that means "less
+    // important" rather than "another category", so it must not compete.
+    // How a row sizes its icon, from the zoom alone. The row draws it; the
+    // view needs the same answer to tell a hover ON the icon from a hover
+    // anywhere else on the line. One law rather than two that could drift.
+    public pure function row-enlarged(preview: bool, row-h: length) -> bool {
+        preview && row-h > 34px
+    }
+    public pure function row-icon-size(preview: bool, row-h: length) -> length {
+        Tokens.row-enlarged(preview, row-h)
+            ? row-h - 4px
+            : clamp(row-h - 12px, 16px, 26px)
+    }
+    // Slot reserving room for the icon in the name column. Wider than tall in
+    // thumbnail mode so landscape pictures fill the height; bounded by the
+    // name column so it never spills into the next one.
+    public pure function row-icon-slot(preview: bool, row-h: length,
+            col-name-w: length) -> length {
+        Tokens.row-enlarged(preview, row-h)
+            ? max(40px, min(row-h * 1.5, col-name-w - 40px))
+            : Tokens.row-icon-size(preview, row-h) + 4px
+    }
+
+    public pure function folder-color(slot: int) -> color {
+        slot == 1 ? (Theme.dark ? #e9948c : #a85853)   // red
+            : slot == 2 ? (Theme.dark ? #79c289 : #3c854f) // green
+            : slot == 3 ? (Theme.dark ? #53c2c5 : #028387) // teal
+            : slot == 4 ? (Theme.dark ? #81b2ed : #4775ac) // blue
+            : slot == 5 ? (Theme.dark ? #b6a1e6 : #7a65a6) // violet
+            : slot == 6 ? (Theme.dark ? #dc94bd : #9c5a80) // pink
+            : slot == 7 ? (Theme.dark ? #a8afba : #6d737e) // slate, no hue
+            : #d9a441;                                     // 0 = default gold
+    }
+}
+
+// GLOBAL note bubble — the comment attached to one entry, rendered at window
+// level like `Tip` below so no panel drawn afterward can clip it.
+//
+// It does NOT reuse `Tip`. A tooltip is one short label and can afford a fixed
+// dark chip in both themes; a sentence cannot — white on near-black is a slab
+// inside a light theme. The bubble therefore takes the theme's own surface, the
+// same one the menus use, so an overlay carrying prose and an overlay carrying
+// commands read as one family. `Tip` also has twelve callers, and widening it
+// would touch all of them.
+//
+// `pending` is what the pointer is over right now; `text` is what is actually
+// shown. A timer promotes one to the other only once it has held still for a
+// whole tick, so crossing a list on the way somewhere else never flashes a
+// bubble. `owner` is a ticket, bumped by whichever view sets `pending`, so a
+// view only clears what it put there itself.
+export global Note {
+    in-out property <string> text: "";
+    in-out property <length> x;
+    in-out property <string> pending: "";
+    in-out property <length> pending-x;
+    // Top and bottom edges of the hovered row, in window coordinates. Both are
+    // kept so the bubble can sit under the row, or above it when the window
+    // ends too soon — rather than being clamped ONTO the row it describes.
+    // `row-*` is what the pointer is over now; `shown-*` is what the displayed
+    // bubble belongs to, frozen when the dwell promoted it.
+    in-out property <length> row-top;
+    in-out property <length> row-bottom;
+    in-out property <length> shown-top;
+    in-out property <length> shown-bottom;
+    // Ticket of the last view to set `pending`; see the note above.
+    in-out property <int> owner: -1;
+    in-out property <string> last-seen: "";
+}
+
+// GLOBAL tooltip: set by any button on hover, rendered at the
+// window level (above everything) → never hidden/clipped by a
+// panel drawn afterward. `text == ""` = hidden.
+export global Tip {
+    in-out property <string> text: "";
+    in-out property <length> x;
+    in-out property <length> y;
+}
+
+// "Click elsewhere" closing of the context menu. This menu
+// deliberately has NO backdrop (see its declaration: clicks on the CONTENT
+// close it IN PASSING — selection + close in a single click, right-click =
+// repositioning). The "chrome" (rail, sidebar, favorites, tabs, headers,
+// nav buttons, splitters, empty areas) increments `serial` on every
+// interaction; MainWindow observes it (`dismiss-watch`) and closes the menu.
+// Surfaces that OPEN the menu (row right-click / empty list area)
+// do NOT bump the counter. Same global-window principle as `Tip`.
+// Keyboard navigation of the view's context menu.
+//
+// The list of entries a menu shows exists nowhere as data: it is implied by a
+// tree of conditions. So the highlighted entry is named by its POSITION in the
+// menu rather than by a number in a list. The entries are a mix of plain rows,
+// `if` blocks and `for` loops, and the last two are only built when the menu is
+// laid out, well after the plain rows; numbering them as they come into
+// existence would put the keyboard in an order that has nothing to do with the
+// order on screen. Their `y` inside the menu IS that order, always.
+//
+// Moving is a poll: `step` names a direction, every entry of the level being
+// navigated answers with its own position, and the nearest one on that side
+// wins. Entries answer in creation order, which does not matter here — keeping
+// the smallest distance gives the same winner whatever the order.
+//
+// `registering` says which level a newborn entry joins, and is set just before
+// the menu it belongs to is opened. Two levels are enough: the menu, and the
+// one submenu that can be open at a time.
+export global CtxNav {
+    /// 0 = nothing navigable, 1 = the menu, 2 = its open submenu.
+    in-out property <int> level: 0;
+    /// Level a newly created entry joins. Zero means "do not register",
+    /// which is what keeps every other menu of the window out of this.
+    in-out property <int> registering: 0;
+    /// Position of the highlighted entry at each level. Negative = none, a
+    /// value no row can take.
+    in-out property <length> menu-y: -1px;
+    in-out property <length> sub-y: -1px;
+    /// Bumped to fire the highlighted entry: all of them hear it, only the one
+    /// at the highlighted position acts.
+    in-out property <int> activate: 0;
+    /// Same broadcast for opening the submenu of the highlighted entry.
+    in-out property <int> expand: 0;
+    /// The poll in progress: its direction, the position it starts from, and
+    /// the best answer so far (smaller = nearer).
+    in-out property <int> poll: 0;
+    in-out property <int> dir: 1;
+    in-out property <length> from-y: -1px;
+    in-out property <float> best: 0;
+    /// A submenu was opened from the keyboard and its first entry is to be
+    /// highlighted as soon as it exists. See `enter-submenu`.
+    in-out property <bool> want-first: false;
+    /// The keyboard is driving the open submenu. A flyout normally closes on
+    /// its own once the pointer has left it, which would take away a submenu
+    /// opened with the right arrow the moment it appeared: at the keyboard the
+    /// pointer is nowhere near it. The pointer takes the flyout back as soon
+    /// as it touches an entry (see `point`).
+    in-out property <bool> keyboard-holds: false;
+    /// Counts the entries that have registered. The window watches it to know
+    /// when a submenu's entries have come into existence.
+    in-out property <int> born: 0;
+    /// Entries on the wrong side of the cursor are pushed behind this, so that
+    /// wrapping around the ends falls out of the same comparison instead of
+    /// needing a second pass. In pixels, and larger than any menu.
+    property <float> wrap-penalty: 1000000;
+
+    /// Level a newborn entry joins, and a nudge telling the window it exists.
+    public function register() -> int {
+        self.born += 1;
+        return self.registering;
+    }
+
+    /// Asks every entry of the level being navigated for its position, and
+    /// highlights the nearest one in direction `d` (+1 down, -1 up).
+    public function step(d: int) {
+        if (self.level == 2) { self.keyboard-holds = true; }
+        self.dir = d;
+        self.from-y = self.level == 2 ? self.sub-y : self.menu-y;
+        self.best = 2 * self.wrap-penalty;
+        self.poll += 1;
+    }
+
+    /// The pointer moved onto an entry: the keyboard follows it, so that only
+    /// one entry ever looks highlighted and Enter acts where the eye is.
+    public function point(entry-level: int, y: length) {
+        self.keyboard-holds = false;
+        // Recorded for the entry's OWN level, even when navigation is currently
+        // a level deeper. Hovering a row that opens a flyout takes the level to
+        // 2; moving on to a neighbour of the parent menu must still move the
+        // mark, because the flyout closes a moment later and hands the level
+        // back — and the mark would then point at the row that opened it, which
+        // would light up again behind the pointer and stay lit, no further
+        // hover being due to correct it.
+        //
+        // Unlike `offer`, which answers a poll and must only be answered by the
+        // level being navigated, the pointer is authoritative: wherever it is
+        // is where that level's mark belongs.
+        if (entry-level == 2) { self.sub-y = y; }
+        if (entry-level == 1) { self.menu-y = y; }
+    }
+
+    /// An entry's answer to `step`.
+    public function offer(entry-level: int, y: length) {
+        if (entry-level > 0 && entry-level == self.level) {
+            // Downwards the positions are compared as they are, upwards they
+            // are compared mirrored, so that "nearest" is the smaller number
+            // in both directions.
+            let ahead: bool = self.dir > 0 ? y > self.from-y : y < self.from-y;
+            let distance: float = (self.dir > 0 ? y / 1px : (0px - y) / 1px)
+                + (ahead ? 0 : self.wrap-penalty);
+            if (distance < self.best) {
+                self.best = distance;
+                if (entry-level == 2) { self.sub-y = y; } else { self.menu-y = y; }
+            }
+        }
+    }
+
+    /// Hands the next level to the entries about to be created. `fresh` is
+    /// false when the submenu is already on screen: its entries then keep the
+    /// level they were born with and the highlight stays where it is.
+    ///
+    /// `select-first` cannot be honoured on the spot: the entries of a submenu
+    /// are only built when it is laid out, a moment after the key was pressed,
+    /// and an entry that does not exist yet cannot answer a poll. So the wish
+    /// is recorded, and the window turns it into an ordinary move once those
+    /// entries have announced themselves through `register`.
+    public function enter-submenu(fresh: bool, select-first: bool) {
+        if (fresh) {
+            self.registering = 2;
+            self.sub-y = -1px;
+        }
+        self.level = 2;
+        if (select-first) {
+            self.keyboard-holds = true;
+            if (self.sub-y < 0px) { self.want-first = true; }
+        }
+    }
+
+    /// Puts the keyboard back on the row that opened the submenu.
+    public function leave-submenu() {
+        self.registering = 1;
+        self.level = 1;
+        self.sub-y = -1px;
+        self.want-first = false;
+        self.keyboard-holds = false;
+    }
+
+    /// Nothing is navigable any more, and no entry created from now on should
+    /// register. Called on every route out of the menu.
+    public function disarm() {
+        self.level = 0;
+        self.registering = 0;
+        self.menu-y = -1px;
+        self.sub-y = -1px;
+        self.want-first = false;
+        self.keyboard-holds = false;
+    }
+
+    /// Is this entry the highlighted one?
+    public pure function on(entry-level: int, y: length) -> bool {
+        return entry-level > 0 && self.level == entry-level
+            && y == (entry-level == 1 ? self.menu-y : self.sub-y);
+    }
+}
+
+export global Dismiss {
+    in-out property <int> serial: 0;
+}
+
+/// Favnyr came back to the foreground. Bumped on every activation, so a gesture
+/// can tell the click that brought the window forward from one made while it
+/// was already there.
+export global WindowFocus {
+    in-out property <int> activations: 0;
+}
