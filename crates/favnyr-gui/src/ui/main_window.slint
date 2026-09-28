@@ -29,6 +29,7 @@ import { PanelComponent } from "panel.slint";
 import { WorkspaceRow, WsButton } from "workspaces.slint";
 import { FfmpegCmdRow, ProgressToast } from "progress.slint";
 import { OverlayToasts } from "overlays/toasts.slint";
+import { OverlayDialogs } from "overlays/dialogs.slint";
 import { ActivityRail, FavPanel, Sidebar, SidebarHeaderAction } from "sidebar.slint";
 import { ComboBox, VerticalBox, HorizontalBox, ScrollView, LineEdit, Button, SpinBox, CheckBox, Palette } from "std-widgets.slint";
 
@@ -6388,323 +6389,41 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ===== "Permanent deletion" popup =====
-        // Shared between network-without-trash and Shift+Delete. Delete button is
-        // secondary (not primary): the action is irreversible, Cancel comes first.
-        if root.delete-warning-open : ModalBackdrop { }
-        // ===== "Open all these files?" =====
-        // Enter on a selection of files opens every one of them. Past a
-        // threshold each launch is an application, so the count is put in front
-        // of the user first: a selection made with Ctrl+A and an Enter pressed
-        // out of habit would otherwise start a few hundred at once. The body
-        // carries the count, interpolated by the bridge.
-        if root.open-many-open : ModalBackdrop { }
-        if root.open-many-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 460px;
-            height: 196px;
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-
-                Text {
-                    text: root.strings.open-many-title;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: Theme.foreground;
-                }
-                Text {
-                    text: root.open-many-body;
-                    wrap: word-wrap;
-                    color: Theme.foreground;
-                }
-                Rectangle { vertical-stretch: 1; }
-                HorizontalBox {
-                    padding: 0px;
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.btn-cancel;
-                        clicked => { root.open-many-open = false; }
-                    }
-                    Button {
-                        text: root.strings.open-many-confirm;
-                        primary: true;
-                        clicked => {
-                            root.open-many-confirmed();
-                            root.open-many-open = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.delete-warning-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 460px;
-            height: 196px;
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-
-                Text {
-                    text: root.strings.net-delete-title;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: Theme.foreground;
-                }
-                Text {
-                    text: root.delete-warning-permanent
-                        ? root.strings.permanent-delete-body
-                        : root.strings.net-delete-body;
-                    wrap: word-wrap;
-                    color: Theme.foreground;
-                }
-                Rectangle { vertical-stretch: 1; }
-                HorizontalBox {
-                    padding: 0px;
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.btn-cancel;
-                        clicked => { root.delete-warning-open = false; }
-                    }
-                    Button {
-                        // "Delete permanently" (NOT "trash": on
-                        // a network volume the deletion is irreversible).
-                        text: root.strings.net-delete-confirm;
-                        clicked => {
-                            root.delete-warning-confirmed();
-                            root.delete-warning-open = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        // ===== "Unsaved changes" dialog (safety guard) =====
-        // Opens when asked to load ANOTHER workspace while
-        // the current one has unsaved changes. Rendered at the
-        // window level (after the Workspaces overlay, which stays open behind it)
-        // to layer cleanly on top. Three outcomes: load without saving
-        // (red, destructive, on the left), Cancel (neutral / cross), save
-        // and load (primary = default). Title & body are interpolated by the bridge.
-        // Dim absorbs clicks WITHOUT closing (default): this warning needs an
-        // explicit choice from its own buttons.
-        if root.ws-dirty-warn-open : ModalBackdrop { }
-        if root.ws-dirty-warn-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 500px;
-            height: 240px;
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-
-            // Close cross (= Cancel) in the top-right corner.
-            close-x := TouchArea {
-                x: parent.width - 34px;
-                y: 10px;
-                width: 24px;
-                height: 24px;
-                mouse-cursor: pointer;
-                clicked => { root.ws-dirty-warn-open = false; }
-                Image {
-                    width: 14px;
-                    height: 14px;
-                    source: @image-url("../../assets/icons/close.svg");
-                    colorize: close-x.has-hover ? Theme.foreground : Theme.foreground.with-alpha(0.5);
-                }
-            }
-
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-
-                HorizontalLayout {
-                    spacing: 10px;
-                    Image {
-                        width: 22px;
-                        height: 22px;
-                        source: @image-url("../../assets/icons/alert-triangle.svg");
-                        colorize: Tokens.warning;
-                    }
-                    Text {
-                        text: root.ws-dirty-title-text;
-                        font-size: 16px;
-                        font-weight: 700;
-                        color: Theme.foreground;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { width: 20px; } // reserves space for the cross
-                }
-                Text {
-                    text: root.ws-dirty-body-text;
-                    wrap: word-wrap;
-                    color: Theme.foreground.with-alpha(0.8);
-                }
-                Rectangle { vertical-stretch: 1; }
-                HorizontalLayout {
-                    spacing: 8px;
-                    // Destructive on the left (red ghost): executes the pending
-                    // action WITHOUT saving — loads the target, or starts
-                    // fresh if the pending action is a "new workspace".
-                    WsButton {
-                        label: root.strings.ws-dirty-discard;
-                        danger: true;
-                        clicked => {
-                            if (root.ws-dirty-reset) { root.ws-reset(); }
-                            else { root.ws-load(root.ws-dirty-target-id); }
-                            root.ws-dirty-warn-open = false;
-                            root.workspaces-open = false;
-                        }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    // Neutral: Cancel.
-                    WsButton {
-                        label: root.strings.btn-cancel;
-                        clicked => { root.ws-dirty-warn-open = false; }
-                    }
-                    // Primary (default): save the current one THEN load the target.
-                    WsButton {
-                        label: root.strings.ws-dirty-save-load;
-                        primary: true;
-                        clicked => { root.ws-save-and-load(); }
-                    }
-                }
-            }
-        }
-
-        // ===== Paste conflict popup =====
-        // Opens when a pasted item has a name that already exists in the
-        // folder. The user confirms the proposed name (`… - Copy01`) or
-        // types another one (protected against collisions). Opening/closing
-        // is driven by the bridge (chaining multiple conflicts).
-        if root.paste-conflict-open : ModalBackdrop { }
-        if root.paste-conflict-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 520px;
-            height: 300px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-
-            DeferredLineEditFocus {
-                armed <=> root.paste-conflict-focus-armed;
-                apply-focus => {
-                    pc-edit.focus();
-                    let offset = root.filename-caret-offset(
-                        root.paste-conflict-name, root.paste-conflict-is-dir);
-                    pc-edit.set-selection-offsets(offset, offset);
-                }
-            }
-
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-
-                Text {
-                    text: root.strings.paste-conflict-title;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: Theme.foreground;
-                }
-                Text {
-                    text: root.paste-conflict-original;
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: Theme.foreground.with-alpha(0.8);
-                    overflow: elide;
-                }
-                Text {
-                    text: root.strings.paste-conflict-hint;
-                    font-size: 12px;
-                    color: Theme.foreground.with-alpha(0.55);
-                    wrap: word-wrap;
-                }
-                pc-edit := EditLineEdit {
-                    text <=> root.paste-conflict-name;
-                    edited(t) => { root.paste-conflict-check(t); }
-                    accepted(t) => {
-                        if (!root.paste-conflict-name-taken && t != "") {
-                            root.paste-conflict-confirm(t);
-                        }
-                    }
-                }
-                Text {
-                    text: root.paste-conflict-name-taken ? root.strings.paste-conflict-taken : " ";
-                    font-size: 11px;
-                    color: Tokens.danger;
-                }
-                Rectangle { vertical-stretch: 1; }
-                // Row 1 — replace (this item / all) · skip. HIDDEN for
-                // a copy within the same folder (rename only).
-                if !root.paste-conflict-rename-only : HorizontalBox {
-                    padding: 0px;
-                    Button {
-                        text: root.strings.paste-conflict-replace;
-                        clicked => { root.paste-conflict-replace(); }
-                    }
-                    Button {
-                        text: root.strings.paste-conflict-replace-all;
-                        clicked => { root.paste-conflict-replace-all(); }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.paste-conflict-skip;
-                        clicked => { root.paste-conflict-skip(); }
-                    }
-                    Button {
-                        text: root.strings.paste-conflict-skip-all;
-                        clicked => { root.paste-conflict-skip-all(); }
-                    }
-                }
-                // Row 2 — cancel / rename.
-                HorizontalBox {
-                    padding: 0px;
-                    Button {
-                        text: root.strings.btn-cancel;
-                        clicked => {
-                            root.paste-conflict-open = false;
-                            root.paste-conflict-cancel();
-                        }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.paste-conflict-confirm;
-                        primary: true;
-                        enabled: !root.paste-conflict-name-taken && root.paste-conflict-name != "";
-                        clicked => { root.paste-conflict-confirm(root.paste-conflict-name); }
-                    }
-                }
-            }
+        // ===== Modal dialogs =====
+        // Extracted to overlays/dialogs.slint; the forwards below are the whole
+        // contract with it (state in, decisions back out).
+        OverlayDialogs {
+            strings: root.strings;
+            delete-warning-open <=> root.delete-warning-open;
+            delete-warning-permanent: root.delete-warning-permanent;
+            delete-warning-confirmed() => { root.delete-warning-confirmed(); }
+            open-many-open <=> root.open-many-open;
+            open-many-body: root.open-many-body;
+            open-many-confirmed() => { root.open-many-confirmed(); }
+            ws-dirty-warn-open <=> root.ws-dirty-warn-open;
+            ws-dirty-title-text: root.ws-dirty-title-text;
+            ws-dirty-body-text: root.ws-dirty-body-text;
+            ws-dirty-target-id: root.ws-dirty-target-id;
+            ws-dirty-reset: root.ws-dirty-reset;
+            workspaces-open <=> root.workspaces-open;
+            ws-reset() => { root.ws-reset(); }
+            ws-load(id) => { root.ws-load(id); }
+            ws-save-and-load() => { root.ws-save-and-load(); }
+            paste-conflict-open <=> root.paste-conflict-open;
+            paste-conflict-name <=> root.paste-conflict-name;
+            paste-conflict-original: root.paste-conflict-original;
+            paste-conflict-is-dir: root.paste-conflict-is-dir;
+            paste-conflict-name-taken: root.paste-conflict-name-taken;
+            paste-conflict-rename-only: root.paste-conflict-rename-only;
+            paste-conflict-focus-armed <=> root.paste-conflict-focus-armed;
+            filename-caret-offset(name, folder) => { return root.filename-caret-offset(name, folder); }
+            paste-conflict-check(t) => { root.paste-conflict-check(t); }
+            paste-conflict-confirm(t) => { root.paste-conflict-confirm(t); }
+            paste-conflict-skip() => { root.paste-conflict-skip(); }
+            paste-conflict-replace() => { root.paste-conflict-replace(); }
+            paste-conflict-replace-all() => { root.paste-conflict-replace-all(); }
+            paste-conflict-skip-all() => { root.paste-conflict-skip-all(); }
+            paste-conflict-cancel() => { root.paste-conflict-cancel(); }
         }
 
         // ===== Progress toasts, drag pills and the global notice =====
