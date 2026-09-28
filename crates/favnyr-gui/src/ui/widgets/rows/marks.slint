@@ -1,0 +1,114 @@
+// The two marker widgets the menus and dialogs share: the folder-colour strip
+// inside the "colours and notes" flyout, and the red tick of the cleanup list.
+//
+// Extracted from rows.slint. Neither is a row of the file view — they only lived
+// in the same file. Both own a TouchArea, unlike the PURELY visual row shapes
+// that stay behind.
+
+import { Theme, Tokens } from "../../theme.slint";
+
+// Row of assignable folder colours, laid inside a menu flyout.
+//
+// The geometry is derived from the menu rather than chosen: a 240px panel less
+// its 4px padding leaves 232px, less the 12px MenuItem uses on each side leaves
+// 208px, and 208 / 8 is 26px — the same 26px a MenuItem is tall. So the strip
+// costs exactly one entry of height, its swatches line up under the labels
+// above them, and the cells tile with no dead strip between two targets.
+//
+// The first cell is drawn hollow: it restores the default rather than assigning
+// a ninth colour, and it keeps the default hue in its ring so the user sees
+// what reverting gives back. That is why there is no "remove colour" entry.
+export component FolderSwatchRow inherits Rectangle {
+    callback picked(int);
+    // Slot already applied to the target, so the strip can point at it.
+    in property <int> current: 0;
+    height: 26px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 0px;
+        for slot in [0, 1, 2, 3, 4, 5, 6, 7] : Rectangle {
+            width: 26px;
+            Rectangle {
+                x: 3px;
+                y: 3px;
+                width: 20px;
+                height: 20px;
+                border-radius: 4px;
+                background: slot == 0 ? transparent : Tokens.folder-color(slot);
+                border-width: slot == 0 ? 2px : 0px;
+                border-color: Tokens.folder-color(0);
+                // The applied slot carries the same check the column list uses.
+                // On a filled swatch the ink takes the theme's opposite end; on
+                // the hollow one it falls back to the ordinary text colour,
+                // which sits on the menu rather than on a swatch.
+                if root.current == slot : Image {
+                    source: @image-url("../../../../assets/icons/check.svg");
+                    width: 12px;
+                    height: 12px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    colorize: slot == 0
+                        ? Theme.foreground
+                        : (Theme.dark ? Theme.background : #ffffff);
+                }
+            }
+            // Hover ring drawn OUTSIDE the swatch, so the colour it points at
+            // is never covered. Ring means "pointing at", check means
+            // "applied" — separating them by kind lets both show at once.
+            if cell-ta.has-hover : Rectangle {
+                x: 1px;
+                y: 1px;
+                width: 24px;
+                height: 24px;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Theme.foreground.with-alpha(0.45);
+            }
+            cell-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.picked(slot); }
+            }
+        }
+    }
+}
+
+/// Checkbox for a destructive list: ticked means "this one goes".
+///
+/// Not the toolkit's `CheckBox`, and deliberately. That one fills in the
+/// toolkit's accent, which in this application means identity, active, drop
+/// target — the opposite of condemned. Green was out of the question too: it
+/// already means "copy" here, and a green tick reads as assent where this one
+/// means removal. A red tick cannot be misread.
+///
+/// Square rather than round: in Favnyr a disc is a state the user does not set
+/// (the modified-workspace dot, a count badge), a rounded square is a target
+/// one clicks — the eight colour swatches are squares.
+export component MarkBox inherits Rectangle {
+    in property <bool> checked;
+    callback toggled(bool);
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: root.checked ? Tokens.danger : transparent;
+    border-width: root.checked ? 0px : 1.5px;
+    border-color: mark-touch.has-hover
+        ? Tokens.danger.with-alpha(0.55)
+        : Theme.foreground.with-alpha(0.35);
+    animate background, border-color { duration: 110ms; easing: ease-out; }
+    if root.checked : Image {
+        source: @image-url("../../../../assets/icons/check.svg");
+        width: 10px;
+        height: 10px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        // Ink takes the opposite end of the theme from the fill, the same law
+        // the colour swatches use.
+        colorize: Theme.dark ? Theme.background : #ffffff;
+    }
+    mark-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.checked); }
+    }
+}
