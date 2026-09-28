@@ -44,7 +44,7 @@ pub(super) fn spawn_eject(
         };
         let _ = slint::invoke_from_event_loop(move || {
             let Some(w) = weak.upgrade() else { return };
-            let s = w.get_strings();
+            let s = w.global::<crate::ApplicationApi>().get_strings();
             match res {
                 Ok(()) => {
                     show_notice_ok(
@@ -60,14 +60,14 @@ pub(super) fn spawn_eject(
                     // cannot carry one. The window's own refresh entry point
                     // is invoked instead — one implementation of the re-scan,
                     // not a second one that could drift.
-                    w.invoke_sidebar_refresh(); // the drive is gone
+                    w.global::<crate::SidebarApi>().invoke_sidebar_refresh(); // the drive is gone
                 }
                 Err(err) => {
                     let reason = i18n::eject_error_message(lang, &err);
                     show_notice(&w, format!("{}: {reason}", s.net_eject_failed));
                 }
             }
-            w.invoke_refresh(); // re-lists the active panel + re-arms the watcher
+            w.global::<crate::PanelsApi>().invoke_refresh(); // re-lists the active panel + re-arms the watcher
         });
     });
 }
@@ -281,10 +281,18 @@ pub(super) fn refresh_sidebar(window: &MainWindow, state: &AppState) {
 
     // The four models remain semantic and stable; only their Slint rank
     // varies with the global preference. Trash stays outside this ordering.
-    window.set_sidebar_places_drives(ModelRc::new(VecModel::from(drives)));
-    window.set_sidebar_places_shortcuts(ModelRc::new(VecModel::from(shortcuts)));
-    window.set_sidebar_places_network(ModelRc::new(VecModel::from(network)));
-    window.set_sidebar_places_trash(ModelRc::new(VecModel::from(trash)));
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_places_drives(ModelRc::new(VecModel::from(drives)));
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_places_shortcuts(ModelRc::new(VecModel::from(shortcuts)));
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_places_network(ModelRc::new(VecModel::from(network)));
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_places_trash(ModelRc::new(VecModel::from(trash)));
 }
 
 /// Pushes the workspace-specific collapse state and the global config order to Slint.
@@ -292,18 +300,28 @@ pub(super) fn refresh_sidebar(window: &MainWindow, state: &AppState) {
 /// parallel visual logic decides default values.
 pub(super) fn push_sidebar_sections_ui(window: &MainWindow, state: &AppState) {
     let sections = state.sidebar_sections.get();
-    window.set_sidebar_shortcuts_collapsed(sections.shortcuts_collapsed);
-    window.set_fav_section_collapsed(sections.favorites_collapsed);
-    window.set_sidebar_drives_collapsed(sections.drives_collapsed);
-    window.set_sidebar_network_collapsed(sections.network_collapsed);
-    window.set_sidebar_section_order(ModelRc::new(VecModel::from(
-        state
-            .snapshot_config()
-            .sidebar_section_order
-            .into_iter()
-            .map(|section| section.index() as i32)
-            .collect::<Vec<_>>(),
-    )));
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_shortcuts_collapsed(sections.shortcuts_collapsed);
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_section_collapsed(sections.favorites_collapsed);
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_drives_collapsed(sections.drives_collapsed);
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_network_collapsed(sections.network_collapsed);
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_section_order(ModelRc::new(VecModel::from(
+            state
+                .snapshot_config()
+                .sidebar_section_order
+                .into_iter()
+                .map(|section| section.index() as i32)
+                .collect::<Vec<_>>(),
+        )));
 }
 
 /// Portable devices (phones, cameras) listed next to the drives. They carry no

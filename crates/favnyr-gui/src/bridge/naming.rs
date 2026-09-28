@@ -128,14 +128,20 @@ pub(super) fn push_create_name_status(
     name: &str,
     availability: EntryNameAvailability,
 ) {
-    window.set_create_name_valid(availability != EntryNameAvailability::Invalid);
-    window.set_create_conflict(matches!(
-        availability,
-        EntryNameAvailability::ExistingNonDirectory
-            | EntryNameAvailability::ExistingDirectory
-            | EntryNameAvailability::Reserved
-    ));
-    window.set_create_name_error(name_error_text(lang, name, availability).into());
+    window
+        .global::<crate::OperationsApi>()
+        .set_create_name_valid(availability != EntryNameAvailability::Invalid);
+    window
+        .global::<crate::OperationsApi>()
+        .set_create_conflict(matches!(
+            availability,
+            EntryNameAvailability::ExistingNonDirectory
+                | EntryNameAvailability::ExistingDirectory
+                | EntryNameAvailability::Reserved
+        ));
+    window
+        .global::<crate::OperationsApi>()
+        .set_create_name_error(name_error_text(lang, name, availability).into());
 }
 
 /// Translated explanation of why a name cannot be used, or `""` when it can.

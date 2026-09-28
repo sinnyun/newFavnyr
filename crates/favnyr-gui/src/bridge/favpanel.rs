@@ -4,9 +4,13 @@ use super::*;
 pub(super) fn push_favorites_ui(window: &MainWindow, state: &AppState) {
     let fav = favorites_now(state);
     let rows: Vec<FavNode> = fav.flatten().iter().map(flat_to_favnode).collect();
-    window.set_fav_nodes(ModelRc::new(VecModel::from(rows)));
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_nodes(ModelRc::new(VecModel::from(rows)));
     // Toggles "Collapse all" (if ≥1 container is expanded) / "Expand all".
-    window.set_fav_can_collapse(fav.any_expanded());
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_can_collapse(fav.any_expanded());
 
     // Popup dropdown: "Root" + all indented containers.
     let s = i18n::strings_for(state.config.borrow().language);
@@ -17,7 +21,9 @@ pub(super) fn push_favorites_ui(window: &MainWindow, state: &AppState) {
         labels.push(format!("{indent}{name}").into());
         ids.push(id);
     }
-    window.set_fav_container_labels(ModelRc::new(VecModel::from(labels)));
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_container_labels(ModelRc::new(VecModel::from(labels)));
     *state.fav_container_ids.borrow_mut() = ids;
 }
 
@@ -197,12 +203,22 @@ pub(super) fn open_fav_save_popup(window: &MainWindow, state: &AppState, paths: 
     };
     *state.fav_save_pending.borrow_mut() = paths;
     push_favorites_ui(window, state); // refreshes the container dropdown
-    window.set_fav_save_multi(multi);
-    window.set_fav_save_target(target.into());
-    window.set_fav_save_alias(alias.into());
-    window.set_fav_container_index(0);
-    window.set_fav_save_open(true);
-    window.set_fav_save_focus_armed(true);
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_save_multi(multi);
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_save_target(target.into());
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_save_alias(alias.into());
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_container_index(0);
+    window.global::<crate::SidebarApi>().set_fav_save_open(true);
+    window
+        .global::<crate::SidebarApi>()
+        .set_fav_save_focus_armed(true);
 }
 
 /// Height of a favorites tree row (30px) + spacing (1px) = the vertical

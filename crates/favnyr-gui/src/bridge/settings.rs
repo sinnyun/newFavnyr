@@ -70,8 +70,9 @@ pub(super) fn apply_ui_scale(window: &MainWindow, state: &AppState, factor: f32)
 /// "Recheck". Effectively a no-op on Windows (section hidden, `ffmpeg` unused).
 pub(super) fn apply_ffmpeg_info(window: &MainWindow) {
     let info = actions::ffmpeg_info();
-    window.set_ffmpeg_found(info.available);
-    window.set_ffmpeg_version(info.version.into());
-    window.set_ffmpeg_flatpak(info.flatpak);
-    window.set_ffmpeg_detected_index(info.detected_distro);
+    let api = window.global::<crate::ApplicationApi>();
+    api.set_ffmpeg_found(info.available);
+    api.set_ffmpeg_version(info.version.into());
+    api.set_ffmpeg_flatpak(info.flatpak);
+    api.set_ffmpeg_detected_index(info.detected_distro);
 }

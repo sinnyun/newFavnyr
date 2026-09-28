@@ -45,12 +45,14 @@ pub(super) fn initial_populate_async(window: &MainWindow, state: &AppState) {
         let st = state.clone();
         let weak = window.as_weak();
         let rx = Rc::new(RefCell::new(rx));
-        window.on_initial_listing_drain(move || {
-            let Some(w) = weak.upgrade() else { return };
-            while let Ok((idx, path, res)) = rx.borrow().try_recv() {
-                apply_initial_listing(&w, &st, idx, &path, res);
-            }
-        });
+        window
+            .global::<crate::PanelsApi>()
+            .on_initial_listing_drain(move || {
+                let Some(w) = weak.upgrade() else { return };
+                while let Ok((idx, path, res)) = rx.borrow().try_recv() {
+                    apply_initial_listing(&w, &st, idx, &path, res);
+                }
+            });
     }
     let weak = window.as_weak();
     std::thread::spawn(move || {
@@ -76,7 +78,8 @@ pub(super) fn initial_populate_async(window: &MainWindow, state: &AppState) {
             let weak = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    w.invoke_initial_listing_drain();
+                    w.global::<crate::PanelsApi>()
+                        .invoke_initial_listing_drain();
                 }
             });
         }
@@ -409,11 +412,11 @@ pub(super) fn install_nav_callback(window: &MainWindow, state: &AppState, action
         }
     };
     match action {
-        NavAction::Back => window.on_go_back(cb),
-        NavAction::Forward => window.on_go_forward(cb),
-        NavAction::Parent => window.on_go_parent(cb),
-        NavAction::Home => window.on_go_home(cb),
-        NavAction::Refresh => window.on_refresh(cb),
+        NavAction::Back => window.global::<crate::PanelsApi>().on_go_back(cb),
+        NavAction::Forward => window.global::<crate::PanelsApi>().on_go_forward(cb),
+        NavAction::Parent => window.global::<crate::PanelsApi>().on_go_parent(cb),
+        NavAction::Home => window.global::<crate::PanelsApi>().on_go_home(cb),
+        NavAction::Refresh => window.global::<crate::PanelsApi>().on_refresh(cb),
     }
 }
 
@@ -427,7 +430,9 @@ pub(super) fn load_directory(
 ) {
     // Any navigation resets the active view's "type-ahead" filter.
     state.filter.borrow_mut().clear();
-    window.set_active_filter(SharedString::new());
+    window
+        .global::<crate::PanelsApi>()
+        .set_active_filter(SharedString::new());
     // The exact Flickable isn't recreated on every listing: we therefore explicitly
     // request scrolling back to top for any new navigation context,
     // including two distinct tabs pointing to the same folder.

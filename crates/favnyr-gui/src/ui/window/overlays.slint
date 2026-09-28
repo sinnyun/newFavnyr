@@ -1,0 +1,648 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, WorkspaceEntry } from "../structs.slint";
+import { ApplicationApi } from "../api/application.slint";
+import { PanelsApi } from "../api/panels.slint";
+import { DragDropApi } from "../api/drag_drop.slint";
+import { SidebarApi } from "../api/sidebar.slint";
+import { WorkspacesApi } from "../api/workspaces.slint";
+import { MenuApi } from "../api/menus.slint";
+import { SettingsApi } from "../api/settings.slint";
+import { OperationsApi } from "../api/operations.slint";
+import { CtxNav, Dismiss, Theme, Tip, Tokens, WindowFocus } from "../theme.slint";
+import { FlyoutCloseTimer, PanelSplitterAbs } from "../widgets/tabs.slint";
+import { PanelComponent } from "../panel.slint";
+import { OverlayToasts } from "../overlays/toasts.slint";
+import { OverlayDialogs } from "../overlays/dialogs.slint";
+import { OverlayWorkspaces } from "../overlays/workspaces.slint";
+import { OverlayCustomCommand } from "../overlays/custom_command.slint";
+import { OverlayNoteBubble, OverlayNotes } from "../overlays/notes.slint";
+import { OverlayFavorites } from "../overlays/favorites.slint";
+import { OverlayOpenWith } from "../overlays/openwith.slint";
+import { OverlayPanelMenus } from "../overlays/panel_menus.slint";
+import { OverlayMenus } from "../overlays/menus.slint";
+import { OverlaySettings } from "../overlays/settings.slint";
+import { SidebarColumn } from "../sidebar/column.slint";
+import { ActivityRail } from "../sidebar/rail.slint";
+import { VerticalBox, Palette } from "std-widgets.slint";
+
+export component WindowOverlays inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in property <bool> file-drop-will-cancel;
+    in property <bool> sidebar-item-drop-will-cancel;
+    in property <bool> favorite-reorder-drop-will-cancel;
+    in property <bool> view-drag-outside;
+    in property <string> fav-hover-container;
+    in property <bool> fav-hover-panel;
+    in property <length> fav-reorder-drag-abs-x;
+    in property <length> fav-reorder-drag-abs-y;
+    in property <bool> fav-hover-collapsed-section;
+    in property <string> fav-ext-collapsed;
+    property <string> fav-drag-hover-container-watch: DragDropApi.fav-drag-hover-container;
+    changed fav-drag-hover-container-watch => { fav-autoexp-timer.restart(); }
+    property <string> fav-ext-collapsed-watch: root.fav-ext-collapsed;
+    changed fav-ext-collapsed-watch => { fav-autoexp-ext-timer.restart(); }
+    in-out property <bool> rename-focus-armed;
+    in-out property <bool> comment-focus-armed;
+    in-out property <bool> create-focus-armed;
+    in property <bool> create-can-confirm;
+    in-out property <bool> paste-conflict-focus-armed;
+    callback return-focus();
+    callback open-fav-name(bool, string, string);
+    callback open-shortcut-menu(string, length, length);
+
+// ===== File & panel context menus (ctx, split, view, tab-bar, URL, trash, drive) =====
+// Extracted to overlays/menus.slint; the forwards below are the whole
+// contract with it (state in, actions back out).
+OverlayMenus {
+    action-copy() => { OperationsApi.action-copy(); }
+    action-copy-name() => { OperationsApi.action-copy-name(); }
+    action-copy-path() => { OperationsApi.action-copy-path(); }
+    action-create-link() => { OperationsApi.action-create-link(); }
+    action-cut() => { OperationsApi.action-cut(); }
+    action-delete() => { OperationsApi.action-delete(); }
+    action-duplicate() => { OperationsApi.action-duplicate(); }
+    action-open() => { OperationsApi.action-open(); }
+    action-open-admin() => { OperationsApi.action-open-admin(); }
+    action-open-new-tab() => { OperationsApi.action-open-new-tab(); }
+    action-open-parent() => { OperationsApi.action-open-parent(); }
+    action-open-terminal() => { OperationsApi.action-open-terminal(); }
+    action-paste() => { OperationsApi.action-paste(); }
+    action-properties() => { OperationsApi.action-properties(); }
+    action-rename() => { OperationsApi.action-rename(); }
+    ctx-close() => { MenuApi.ctx-close(); }
+    ctx-custom-entries: MenuApi.ctx-custom-entries;
+    ctx-custom-run(id) => { MenuApi.ctx-custom-run(id); }
+    ctx-menu-open: MenuApi.ctx-menu-open;
+    ctx-menu-x: MenuApi.ctx-menu-x;
+    ctx-menu-y: MenuApi.ctx-menu-y;
+    ctx-on-empty: MenuApi.ctx-on-empty;
+    ctx-selection-has-dir: MenuApi.ctx-selection-has-dir;
+    ctx-selection-is-dir: MenuApi.ctx-selection-is-dir;
+    ctx-selection-is-file: MenuApi.ctx-selection-is-file;
+    ctx-selection-single: MenuApi.ctx-selection-single;
+    ctx-shell-entries: MenuApi.ctx-shell-entries;
+    ctx-shell-run(command) => { MenuApi.ctx-shell-run(command); }
+    ctx-shell-sub-for <=> MenuApi.ctx-shell-sub-for;
+    ctx-shell-sub-hover(sub) => { MenuApi.ctx-shell-sub-hover(sub); }
+    ctx-shell-sub-open <=> MenuApi.ctx-shell-sub-open;
+    ctx-shell-sub-parent-hover <=> MenuApi.ctx-shell-sub-parent-hover;
+    ctx-shell-sub-x <=> MenuApi.ctx-shell-sub-x;
+    ctx-shell-sub-y <=> MenuApi.ctx-shell-sub-y;
+    fav-add-selection() => { SidebarApi.fav-add-selection(); }
+    mark-menu-open <=> MenuApi.mark-menu-open;
+    mark-menu-x <=> MenuApi.mark-menu-x;
+    mark-menu-y <=> MenuApi.mark-menu-y;
+    mark-parent-hover <=> PanelsApi.mark-parent-hover;
+    menu-shortcuts: PanelsApi.menu-shortcuts;
+    new-menu-open <=> MenuApi.new-menu-open;
+    new-menu-x <=> MenuApi.new-menu-x;
+    new-menu-y <=> MenuApi.new-menu-y;
+    new-parent-hover <=> PanelsApi.new-parent-hover;
+    ow-menu-open <=> MenuApi.ow-menu-open;
+    ow-menu-x <=> MenuApi.ow-menu-x;
+    ow-menu-y <=> MenuApi.ow-menu-y;
+    ow-parent-hover <=> SettingsApi.ow-parent-hover;
+    platform-windows: SettingsApi.platform-windows;
+    strings: ApplicationApi.strings;
+    equalize-available: PanelsApi.equalize-available;
+    equalize-undone: PanelsApi.equalize-undone;
+    equalize-views(p1) => { PanelsApi.equalize-views(p1); }
+    panel-split(p1) => { PanelsApi.panel-split(p1); }
+    split-menu-open <=> MenuApi.split-menu-open;
+    split-menu-x: MenuApi.split-menu-x;
+    split-menu-y: MenuApi.split-menu-y;
+    set-tab-bar-mode(panel, mode) => { PanelsApi.set-tab-bar-mode(panel, mode); }
+    tabbar-menu-mode: MenuApi.tabbar-menu-mode;
+    tabbar-menu-open <=> MenuApi.tabbar-menu-open;
+    tabbar-menu-panel: MenuApi.tabbar-menu-panel;
+    tabbar-menu-x: MenuApi.tabbar-menu-x;
+    tabbar-menu-y: MenuApi.tabbar-menu-y;
+    set-view-mode(idx, mode) => { PanelsApi.set-view-mode(idx, mode); }
+    view-menu-mode: MenuApi.view-menu-mode;
+    view-menu-open <=> MenuApi.view-menu-open;
+    view-menu-panel: MenuApi.view-menu-panel;
+    view-menu-x: MenuApi.view-menu-x;
+    view-menu-y: MenuApi.view-menu-y;
+    url-copy-serial: PanelsApi.url-copy-serial;
+    url-menu-open <=> MenuApi.url-menu-open;
+    url-menu-x: MenuApi.url-menu-x;
+    url-menu-y: MenuApi.url-menu-y;
+    url-paste-serial: PanelsApi.url-paste-serial;
+    empty-trash() => { SidebarApi.empty-trash(); }
+    trash-menu-confirm <=> SidebarApi.trash-menu-confirm;
+    trash-menu-open <=> SidebarApi.trash-menu-open;
+    trash-menu-x: SidebarApi.trash-menu-x;
+    trash-menu-y: SidebarApi.trash-menu-y;
+    drive-disconnect(p1) => { SidebarApi.drive-disconnect(p1); }
+    drive-eject(p1, p2) => { SidebarApi.drive-eject(p1, p2); }
+    drive-menu-device: SidebarApi.drive-menu-device;
+    drive-menu-hotplug: SidebarApi.drive-menu-hotplug;
+    drive-menu-kind: SidebarApi.drive-menu-kind;
+    drive-menu-open <=> SidebarApi.drive-menu-open;
+    drive-menu-path: SidebarApi.drive-menu-path;
+    drive-menu-removable: SidebarApi.drive-menu-removable;
+    drive-menu-x: SidebarApi.drive-menu-x;
+    drive-menu-y: SidebarApi.drive-menu-y;
+    place-copy-path(p1) => { SidebarApi.place-copy-path(p1); }
+    place-open-new-tab(p1, p2) => { SidebarApi.place-open-new-tab(p1, p2); }
+    folder-color-picked(p1) => { MenuApi.folder-color-picked(p1); }
+    mark-current-color: PanelsApi.mark-current-color;
+    mark-flyout-hover <=> PanelsApi.mark-flyout-hover;
+    open-comment-editor() => { MenuApi.open-comment-editor(); }
+}
+
+OverlayOpenWith {
+    strings: ApplicationApi.strings;
+    openers-suggested: SettingsApi.openers-suggested;
+    selection-is-executable: OperationsApi.selection-is-executable;
+    ow-menu-open <=> MenuApi.ow-menu-open;
+    ow-menu-x <=> MenuApi.ow-menu-x;
+    ow-menu-y <=> MenuApi.ow-menu-y;
+    ow-flyout-hover <=> SettingsApi.ow-flyout-hover;
+    run-opener(id) => { OperationsApi.run-opener(id); }
+    ow-use-as-app() => { SettingsApi.ow-use-as-app(); }
+    ow-add() => { SettingsApi.ow-add(); }
+    ow-open-picker() => { SettingsApi.ow-open-picker(); }
+    ow-picker-open <=> SettingsApi.ow-picker-open;
+    ow-picker-handlers: SettingsApi.ow-picker-handlers;
+    ow-picker-search-text <=> SettingsApi.ow-picker-search-text;
+    ow-picker-set-default <=> SettingsApi.ow-picker-set-default;
+    ow-picker-show-other-apps <=> SettingsApi.ow-picker-show-other-apps;
+    ow-picker-search(q) => { SettingsApi.ow-picker-search(q); }
+    ow-picker-show-other-apps-changed(on) => { SettingsApi.ow-picker-show-other-apps-changed(on); }
+    ow-pick(id) => { SettingsApi.ow-pick(id); }
+    ow-pick-browse() => { SettingsApi.ow-pick-browse(); }
+    ow-promote-visible <=> SettingsApi.ow-promote-visible;
+    ow-promote-accept() => { SettingsApi.ow-promote-accept(); }
+    new-menu-open <=> MenuApi.new-menu-open;
+    new-menu-x <=> MenuApi.new-menu-x;
+    new-menu-y <=> MenuApi.new-menu-y;
+    new-flyout-hover <=> PanelsApi.new-flyout-hover;
+    create-popup-open <=> OperationsApi.create-popup-open;
+    create-kind <=> OperationsApi.create-kind;
+    create-name <=> OperationsApi.create-name;
+    create-target <=> OperationsApi.create-target;
+    create-shortcut-folder <=> OperationsApi.create-shortcut-folder;
+    ctx-shell-sub-entries: MenuApi.ctx-shell-sub-entries;
+    ctx-shell-sub-open <=> MenuApi.ctx-shell-sub-open;
+    ctx-shell-sub-x <=> MenuApi.ctx-shell-sub-x;
+    ctx-shell-sub-y <=> MenuApi.ctx-shell-sub-y;
+    ctx-shell-sub-flyout-hover <=> MenuApi.ctx-shell-sub-flyout-hover;
+    ctx-shell-run(id) => { MenuApi.ctx-shell-run(id); }
+    platform-windows: SettingsApi.platform-windows;
+    platform-linux: SettingsApi.platform-linux;
+    settings-open <=> SettingsApi.settings-open;
+    settings-tab <=> SettingsApi.settings-tab;
+    ow-subtab <=> SettingsApi.ow-subtab;
+    ctx-close() => { MenuApi.ctx-close(); }
+}
+
+// The New folder, Expand all, and Collapse all actions live
+// in the Favorites section's header.
+
+// ===== Tab bar, Columns and drop menus =====
+// Extracted to overlays/panel_menus.slint; the forwards below are the
+// whole contract with it (state in, actions back out).
+OverlayPanelMenus {
+    closed-tabs-available: PanelsApi.closed-tabs-available;
+    fav-save-all-tabs(p1) => { SidebarApi.fav-save-all-tabs(p1); }
+    menu-shortcuts: PanelsApi.menu-shortcuts;
+    reopen-last-closed-tab(panel) => { PanelsApi.reopen-last-closed-tab(panel); }
+    strings: ApplicationApi.strings;
+    tab-empty-menu-open <=> PanelsApi.tab-empty-menu-open;
+    tab-empty-menu-panel: PanelsApi.tab-empty-menu-panel;
+    tab-empty-menu-x: PanelsApi.tab-empty-menu-x;
+    tab-empty-menu-y: PanelsApi.tab-empty-menu-y;
+    duplicate-tab(p1, p2) => { PanelsApi.duplicate-tab(p1, p2); }
+    fav-save-tab(p1, p2) => { SidebarApi.fav-save-tab(p1, p2); }
+    tab-menu-open <=> PanelsApi.tab-menu-open;
+    tab-menu-panel: PanelsApi.tab-menu-panel;
+    tab-menu-tab: PanelsApi.tab-menu-tab;
+    tab-menu-x: PanelsApi.tab-menu-x;
+    tab-menu-y: PanelsApi.tab-menu-y;
+    column-toggle(p1, p2, p3) => { PanelsApi.column-toggle(p1, p2, p3); }
+    columns-menu-open <=> MenuApi.columns-menu-open;
+    columns-menu-panel: MenuApi.columns-menu-panel;
+    columns-menu-x: MenuApi.columns-menu-x;
+    columns-menu-y: MenuApi.columns-menu-y;
+    ext-filter-toggle(p1) => { PanelsApi.ext-filter-toggle(p1); }
+    panels: PanelsApi.panels;
+    set-group-mode(p1, p2) => { PanelsApi.set-group-mode(p1, p2); }
+    return-focus() => { root.return-focus(); }
+    file-drop-action(p1) => { DragDropApi.file-drop-action(p1); }
+    file-drop-menu-open <=> DragDropApi.file-drop-menu-open;
+    file-drop-menu-x: DragDropApi.file-drop-menu-x;
+    file-drop-menu-y: DragDropApi.file-drop-menu-y;
+}
+
+// ===== Favorites popups and the container context menu =====
+// Extracted to overlays/favorites.slint; the forwards below are the
+// whole contract with it (forms two-way, validation in, saves out).
+OverlayFavorites {
+    strings: ApplicationApi.strings;
+    fav-name-open <=> SidebarApi.fav-name-open;
+    fav-name-rename: SidebarApi.fav-name-rename;
+    fav-name-value <=> SidebarApi.fav-name-value;
+    fav-name-invalid: SidebarApi.fav-name-invalid;
+    fav-name-focus-armed <=> SidebarApi.fav-name-focus-armed;
+    fav-name-check(t) => { SidebarApi.fav-name-check(t); }
+    fav-name-confirm() => { SidebarApi.fav-name-confirm(); }
+    fav-save-open <=> SidebarApi.fav-save-open;
+    fav-save-target: SidebarApi.fav-save-target;
+    fav-save-multi: SidebarApi.fav-save-multi;
+    fav-save-alias <=> SidebarApi.fav-save-alias;
+    fav-container-labels: SidebarApi.fav-container-labels;
+    fav-container-index <=> SidebarApi.fav-container-index;
+    fav-save-commit(alias, index) => { SidebarApi.fav-save-commit(alias, index); }
+    fav-save-new-container(name, parent) => { SidebarApi.fav-save-new-container(name, parent); }
+    fav-newc-open <=> SidebarApi.fav-newc-open;
+    fav-newc-name <=> SidebarApi.fav-newc-name;
+    fav-newc-parent-index <=> SidebarApi.fav-newc-parent-index;
+    fav-newc-focus-armed <=> SidebarApi.fav-newc-focus-armed;
+    // Sidebar container / favorite context menu.
+    fav-menu-open <=> SidebarApi.fav-menu-open;
+    fav-menu-x <=> SidebarApi.fav-menu-x;
+    fav-menu-y <=> SidebarApi.fav-menu-y;
+    fav-menu-container <=> SidebarApi.fav-menu-container;
+    fav-menu-confirm-delete <=> SidebarApi.fav-menu-confirm-delete;
+    fav-menu-id: SidebarApi.fav-menu-id;
+    fav-menu-name: SidebarApi.fav-menu-name;
+    fav-open(id) => { SidebarApi.fav-open(id); }
+    fav-open-all(id) => { SidebarApi.fav-open-all(id); }
+    fav-delete(id) => { SidebarApi.fav-delete(id); }
+    fav-copy-path(id) => { SidebarApi.fav-copy-path(id); }
+    open-fav-name(rename, id, name) => { root.open-fav-name(rename, id, name); }
+}
+
+
+// ===== Settings dialog and the shortcut menu =====
+// Extracted to overlays/settings.slint; the forwards below are the
+// whole contract with it (state in, edits two-way, actions back out).
+OverlaySettings {
+    strings: ApplicationApi.strings;
+    app-version: SettingsApi.app-version;
+    platform-windows: SettingsApi.platform-windows;
+    language-labels: ApplicationApi.language-labels;
+    theme-labels: ApplicationApi.theme-labels;
+    ui-scale-labels: ApplicationApi.ui-scale-labels;
+    tabbar-default-labels: ApplicationApi.tabbar-default-labels;
+    settings-columns: SettingsApi.settings-columns;
+    openers-all: SettingsApi.openers-all;
+    ow-recipes-col1: SettingsApi.ow-recipes-col1;
+    ow-recipes-col2: SettingsApi.ow-recipes-col2;
+    ow-recipes-missing: SettingsApi.ow-recipes-missing;
+    ffmpeg-found: ApplicationApi.ffmpeg-found;
+    ffmpeg-flatpak: ApplicationApi.ffmpeg-flatpak;
+    ffmpeg-detected-index: ApplicationApi.ffmpeg-detected-index;
+    ffmpeg-version: ApplicationApi.ffmpeg-version;
+    shell-ext-rows: SettingsApi.shell-ext-rows;
+    shortcut-groups: SettingsApi.shortcut-groups;
+    shortcut-has-overrides: SettingsApi.shortcut-has-overrides;
+    shortcut-conflict-action: SettingsApi.shortcut-conflict-action;
+    shortcut-conflict-message: SettingsApi.shortcut-conflict-message;
+    shortcut-menu-x: MenuApi.shortcut-menu-x;
+    shortcut-menu-y: MenuApi.shortcut-menu-y;
+    shortcut-menu-action: MenuApi.shortcut-menu-action;
+    config-dir-path: SettingsApi.config-dir-path;
+    config-path-redundant: SettingsApi.config-path-redundant;
+    data-dir-path: SettingsApi.data-dir-path;
+    cache-dir-path: SettingsApi.cache-dir-path;
+    annotation-orphans: SettingsApi.annotation-orphans;
+    settings-open <=> SettingsApi.settings-open;
+    settings-tab <=> SettingsApi.settings-tab;
+    language-index <=> ApplicationApi.language-index;
+    theme-pref <=> ApplicationApi.theme-pref;
+    ui-scale-index <=> ApplicationApi.ui-scale-index;
+    clock-utc-pref <=> ApplicationApi.clock-utc-pref;
+    tabbar-default-pref <=> ApplicationApi.tabbar-default-pref;
+    tab-tooltip-enabled <=> ApplicationApi.tab-tooltip-enabled;
+    compact-preview-rows-enabled <=> ApplicationApi.compact-preview-rows-enabled;
+    ws-warn-unsaved <=> ApplicationApi.ws-warn-unsaved;
+    shell-menu-enabled <=> SettingsApi.shell-menu-enabled;
+    size-depth <=> SettingsApi.size-depth;
+    rmtime-depth <=> SettingsApi.rmtime-depth;
+    ow-subtab <=> SettingsApi.ow-subtab;
+    opener-search-text <=> SettingsApi.opener-search-text;
+    ow-recipes-open <=> SettingsApi.ow-recipes-open;
+    shortcut-capturing <=> SettingsApi.shortcut-capturing;
+    shortcut-search-text <=> SettingsApi.shortcut-search-text;
+    shortcut-menu-open <=> MenuApi.shortcut-menu-open;
+    language-changed(index) => { ApplicationApi.language-changed(index); }
+    theme-changed(index) => { ApplicationApi.theme-changed(index); }
+    ui-scale-changed(index) => { ApplicationApi.ui-scale-changed(index); }
+    clock-mode-changed(index) => { ApplicationApi.clock-mode-changed(index); }
+    tabbar-default-changed(index) => { ApplicationApi.tabbar-default-changed(index); }
+    tab-tooltip-changed(enabled) => { ApplicationApi.tab-tooltip-changed(enabled); }
+    compact-preview-rows-changed(enabled) => { ApplicationApi.compact-preview-rows-changed(enabled); }
+    ws-warn-unsaved-changed(enabled) => { ApplicationApi.ws-warn-unsaved-changed(enabled); }
+    shell-menu-changed(enabled) => { SettingsApi.shell-menu-changed(enabled); }
+    default-column-toggle(column, enabled) => { SettingsApi.default-column-toggle(column, enabled); }
+    size-depth-changed(depth) => { SettingsApi.size-depth-changed(depth); }
+    rmtime-depth-changed(depth) => { SettingsApi.rmtime-depth-changed(depth); }
+    opener-search(text) => { SettingsApi.opener-search(text); }
+    ow-add() => { SettingsApi.ow-add(); }
+    ow-edit(id) => { SettingsApi.ow-edit(id); }
+    ow-duplicate(id) => { SettingsApi.ow-duplicate(id); }
+    ow-delete(id) => { SettingsApi.ow-delete(id); }
+    ow-move(id, dir) => { SettingsApi.ow-move(id, dir); }
+    ow-recipe-add(index) => { SettingsApi.ow-recipe-add(index); }
+    ffmpeg-recheck() => { ApplicationApi.ffmpeg-recheck(); }
+    shell-ext-toggle(label, enabled) => { SettingsApi.shell-ext-toggle(label, enabled); }
+    shortcut-search(text) => { SettingsApi.shortcut-search(text); }
+    shortcut-reset(action-id) => { SettingsApi.shortcut-reset(action-id); }
+    shortcut-reset-all() => { SettingsApi.shortcut-reset-all(); }
+    shortcut-unassign(action-id) => { SettingsApi.shortcut-unassign(action-id); }
+    shortcut-resolve-conflict(reassign) => { SettingsApi.shortcut-resolve-conflict(reassign); }
+    settings-copy(text) => { ApplicationApi.settings-copy(text); }
+    clean-annotations() => { SettingsApi.clean-annotations(); }
+    open-config-dir() => { SettingsApi.open-config-dir(); }
+    open-data-dir() => { SettingsApi.open-data-dir(); }
+    open-cache-dir() => { SettingsApi.open-cache-dir(); }
+    open-shortcut-menu(action, ax, ay) => { root.open-shortcut-menu(action, ax, ay); }
+    return-focus() => { root.return-focus(); }
+}
+
+// ===== Workspaces overlay =====
+// Extracted to overlays/workspaces.slint; the forwards below are the
+// whole contract with it (state in, actions back out).
+OverlayWorkspaces {
+    strings: ApplicationApi.strings;
+    workspaces-open <=> WorkspacesApi.workspaces-open;
+    workspaces: WorkspacesApi.workspaces;
+    ws-toast <=> WorkspacesApi.ws-toast;
+    ws-sort-newest-first: WorkspacesApi.ws-sort-newest-first;
+    ws-name-taken: WorkspacesApi.ws-name-taken;
+    ws-name-focus-armed <=> WorkspacesApi.ws-name-focus-armed;
+    ws-save-new(name) => { WorkspacesApi.ws-save-new(name); }
+    ws-name-check(name) => { WorkspacesApi.ws-name-check(name); }
+    ws-load-guarded(id) => { WorkspacesApi.ws-load-guarded(id); }
+    ws-overwrite(id) => { WorkspacesApi.ws-overwrite(id); }
+    ws-delete(id) => { WorkspacesApi.ws-delete(id); }
+    ws-rename(id, name) => { WorkspacesApi.ws-rename(id, name); }
+    ws-reset-guarded() => { WorkspacesApi.ws-reset-guarded(); }
+    ws-toggle-sort() => { WorkspacesApi.ws-toggle-sort(); }
+}
+
+// ===== Rename, note editor, new-entry popup and the cleanup list =====
+// Extracted to overlays/notes.slint; the forwards below are the whole
+// contract with it (forms two-way, validation in, actions out).
+OverlayNotes {
+    strings: ApplicationApi.strings;
+    platform-windows: SettingsApi.platform-windows;
+    return-focus() => { root.return-focus(); }
+    rename-popup-open <=> OperationsApi.rename-popup-open;
+    rename-current-name: OperationsApi.rename-current-name;
+    rename-current-is-dir: OperationsApi.rename-current-is-dir;
+    rename-new-name <=> OperationsApi.rename-new-name;
+    rename-conflict: OperationsApi.rename-conflict;
+    rename-name-error: OperationsApi.rename-name-error;
+    rename-replace-available: OperationsApi.rename-replace-available;
+    rename-focus-armed <=> root.rename-focus-armed;
+    rename-check(t) => { OperationsApi.rename-check(t); }
+    rename-confirmed(t) => { OperationsApi.rename-confirmed(t); }
+    rename-force-replace(name) => { return OperationsApi.rename-force-replace(name); }
+    comment-popup-open <=> MenuApi.comment-popup-open;
+    comment-target-name: PanelsApi.comment-target-name;
+    comment-text: PanelsApi.comment-text;
+    comment-focus-armed <=> root.comment-focus-armed;
+    comment-confirmed(t) => { MenuApi.comment-confirmed(t); }
+    create-popup-open <=> OperationsApi.create-popup-open;
+    create-kind: OperationsApi.create-kind;
+    create-name <=> OperationsApi.create-name;
+    create-name-error: OperationsApi.create-name-error;
+    create-target <=> OperationsApi.create-target;
+    create-shortcut-folder <=> OperationsApi.create-shortcut-folder;
+    create-link-symlink <=> OperationsApi.create-link-symlink;
+    create-focus-armed <=> root.create-focus-armed;
+    create-can-confirm: root.create-can-confirm;
+    create-confirmed(kind, name, target) => { return OperationsApi.create-confirmed(kind, name, target); }
+    create-browse-target() => { OperationsApi.create-browse-target(); }
+    orphans-open <=> SettingsApi.orphans-open;
+    orphan-rows: PanelsApi.orphan-rows;
+    orphans-confirm-label: SettingsApi.orphans-confirm-label;
+    orphans-checked: SettingsApi.orphans-checked;
+    orphan-toggled(key, on) => { PanelsApi.orphan-toggled(key, on); }
+    orphans-select-all(on) => { SettingsApi.orphans-select-all(on); }
+    orphans-confirmed() => { SettingsApi.orphans-confirmed(); }
+    filename-caret-offset(name, folder) => { return PanelsApi.filename-caret-offset(name, folder); }
+}
+
+// ===== Modal dialogs =====
+// Extracted to overlays/dialogs.slint; the forwards below are the whole
+// contract with it (state in, decisions back out).
+OverlayDialogs {
+    strings: ApplicationApi.strings;
+    delete-warning-open <=> OperationsApi.delete-warning-open;
+    delete-warning-permanent: OperationsApi.delete-warning-permanent;
+    delete-warning-confirmed() => { OperationsApi.delete-warning-confirmed(); }
+    open-many-open <=> OperationsApi.open-many-open;
+    open-many-body: OperationsApi.open-many-body;
+    open-many-confirmed() => { OperationsApi.open-many-confirmed(); }
+    ws-dirty-warn-open <=> WorkspacesApi.ws-dirty-warn-open;
+    ws-dirty-title-text: WorkspacesApi.ws-dirty-title-text;
+    ws-dirty-body-text: WorkspacesApi.ws-dirty-body-text;
+    ws-dirty-target-id: WorkspacesApi.ws-dirty-target-id;
+    ws-dirty-reset: WorkspacesApi.ws-dirty-reset;
+    workspaces-open <=> WorkspacesApi.workspaces-open;
+    ws-reset() => { WorkspacesApi.ws-reset(); }
+    ws-load(id) => { WorkspacesApi.ws-load(id); }
+    ws-save-and-load() => { WorkspacesApi.ws-save-and-load(); }
+    paste-conflict-open <=> OperationsApi.paste-conflict-open;
+    paste-conflict-name <=> OperationsApi.paste-conflict-name;
+    paste-conflict-original: OperationsApi.paste-conflict-original;
+    paste-conflict-is-dir: OperationsApi.paste-conflict-is-dir;
+    paste-conflict-name-taken: OperationsApi.paste-conflict-name-taken;
+    paste-conflict-rename-only: OperationsApi.paste-conflict-rename-only;
+    paste-conflict-focus-armed <=> root.paste-conflict-focus-armed;
+    filename-caret-offset(name, folder) => { return PanelsApi.filename-caret-offset(name, folder); }
+    paste-conflict-check(t) => { OperationsApi.paste-conflict-check(t); }
+    paste-conflict-confirm(t) => { OperationsApi.paste-conflict-confirm(t); }
+    paste-conflict-skip() => { OperationsApi.paste-conflict-skip(); }
+    paste-conflict-replace() => { OperationsApi.paste-conflict-replace(); }
+    paste-conflict-replace-all() => { OperationsApi.paste-conflict-replace-all(); }
+    paste-conflict-skip-all() => { OperationsApi.paste-conflict-skip-all(); }
+    paste-conflict-cancel() => { OperationsApi.paste-conflict-cancel(); }
+}
+
+// ===== Progress toasts, drag pills and the global notice =====
+// Extracted to overlays/toasts.slint; the forwards below are the
+// whole contract with it (state in, dismissals back out).
+OverlayToasts {
+    strings: ApplicationApi.strings;
+    ops: OperationsApi.ops;
+    ops-more-text: OperationsApi.ops-more-text;
+    op-cancel(id) => { OperationsApi.op-cancel(id); }
+    op-dismiss(id) => { OperationsApi.op-dismiss(id); }
+    drag-active: DragDropApi.drag-active;
+    drag-abs-x: DragDropApi.drag-abs-x;
+    drag-abs-y: DragDropApi.drag-abs-y;
+    file-drag-active: DragDropApi.file-drag-active;
+    file-drag-abs-x: DragDropApi.file-drag-abs-x;
+    file-drag-abs-y: DragDropApi.file-drag-abs-y;
+    file-drag-target-exec: DragDropApi.file-drag-target-exec;
+    file-drag-copy: DragDropApi.file-drag-copy;
+    file-drop-will-cancel: root.file-drop-will-cancel;
+    sidebar-item-drop-will-cancel: root.sidebar-item-drop-will-cancel;
+    favorite-reorder-drop-will-cancel: root.favorite-reorder-drop-will-cancel;
+    fav-hover-panel: root.fav-hover-panel;
+    fav-reorder-drag-abs-x: root.fav-reorder-drag-abs-x;
+    fav-reorder-drag-abs-y: root.fav-reorder-drag-abs-y;
+    view-drag-active: DragDropApi.view-drag-active;
+    view-drag-abs-x: DragDropApi.view-drag-abs-x;
+    view-drag-abs-y: DragDropApi.view-drag-abs-y;
+    view-drag-target: DragDropApi.view-drag-target;
+    view-drag-outside: root.view-drag-outside;
+    notice-text <=> PanelsApi.notice-text;
+    notice-tone: PanelsApi.notice-tone;
+    notice-icon: PanelsApi.notice-icon;
+    notice-duration: PanelsApi.notice-duration;
+}
+// Auto-expand: a collapsed container hovered during a drag
+// expands after a short delay (in-place insertion on the bridge side → the ongoing
+// drag survives). The countdown restarts on every change of
+// hovered container.
+fav-autoexp-timer := Timer {
+    interval: 650ms;
+    running: DragDropApi.fav-drag-active && DragDropApi.fav-drag-hover-container != "";
+    triggered => { SidebarApi.fav-expand(DragDropApi.fav-drag-hover-container); }
+}
+// Also auto-expands during a TAB or FILE drag over a
+// collapsed container — makes the gesture consistent with internal drag.
+// `root.fav-ext-collapsed` (declared at the root) tracks
+// `sidebar-column.hover-collapsed-container`; its `changed` (at the root) restarts
+// this countdown.
+fav-autoexp-ext-timer := Timer {
+    interval: 650ms;
+    running: (DragDropApi.drag-active || DragDropApi.file-drag-active)
+        && root.fav-ext-collapsed != "";
+    triggered => { SidebarApi.fav-expand(root.fav-ext-collapsed); }
+}
+// Auto-expands the whole COLLAPSED favorites section when a tab/file drag
+// dwells on its header → the tree appears so the drop can land, instead of
+// the gesture doing nothing over a folded section. Purely declarative (no
+// imperative restart): it arms only while the drag actually hovers the
+// header, fires once after 650ms, and expanding flips
+// `hover-collapsed-section` false so `running` drops — it cannot re-fire
+// or loop, and leaves no pending fire to re-expand a section the user
+// later collapses.
+Timer {
+    interval: 650ms;
+    running: (DragDropApi.drag-active || DragDropApi.file-drag-active)
+        && root.fav-hover-collapsed-section;
+    triggered => {
+        SidebarApi.fav-section-collapsed = false;
+        SidebarApi.sidebar-section-state-changed(2, false);
+    }
+}
+Timer {
+    interval: 50ms;
+    running: DragDropApi.file-drag-refresh-pending && !DragDropApi.file-drag-active
+        && !DragDropApi.file-drop-menu-open && !OperationsApi.op-busy;
+    triggered => {
+        DragDropApi.file-drag-refresh-pending = false;
+        PanelsApi.refresh();
+    }
+}
+// Drive change detection: subst, USB, 
+// Drive change detection: subst, USB, net use,
+// mount… don't always emit a system event. We probe the
+// signature only while the "Locations" panel is open;
+// the bridge only rebuilds the sidebar if it changed (near-zero cost).
+Timer {
+    interval: 1500ms;
+    running: SidebarApi.left-panel == 1;
+    triggered => { SidebarApi.poll-drives(); }
+}
+// Cross-instance IPC init: shortly after startup (the window
+// exists → HWND available for tagging + subclassing). RETRIES as long
+// as the bridge returns `false` (window not found yet).
+ipc-init-timer := Timer {
+    interval: 250ms;
+    running: true;
+    triggered => { if (SidebarApi.init-ipc()) { ipc-init-timer.running = false; } }
+}
+// Re-checking unavailable tabs: active ONLY as long
+// as at least one panel is; the bridge only tests `is_dir` if a
+// drive/mount changed (non-blocking otherwise).
+Timer {
+    interval: 2s;
+    running: SidebarApi.any-unavailable;
+    triggered => { SidebarApi.recheck-unavailable(); }
+}
+// Closes the "Open with", "New", and Windows shell sub-menu cascade
+// flyouts when neither the parent entry nor the flyout is hovered
+// (small delay → tolerates passing through the gap between them).
+FlyoutCloseTimer {
+    open <=> MenuApi.mark-menu-open;
+    parent-hover: PanelsApi.mark-parent-hover;
+    flyout-hover: PanelsApi.mark-flyout-hover;
+}
+FlyoutCloseTimer {
+    open <=> MenuApi.ow-menu-open;
+    parent-hover: SettingsApi.ow-parent-hover;
+    flyout-hover: SettingsApi.ow-flyout-hover;
+}
+FlyoutCloseTimer {
+    open <=> MenuApi.new-menu-open;
+    parent-hover: PanelsApi.new-parent-hover;
+    flyout-hover: PanelsApi.new-flyout-hover;
+}
+FlyoutCloseTimer {
+    open <=> MenuApi.ctx-shell-sub-open;
+    parent-hover: MenuApi.ctx-shell-sub-parent-hover;
+    flyout-hover: MenuApi.ctx-shell-sub-flyout-hover;
+}
+
+// ===== "Custom command" popup — rendered LAST =====
+// Extracted to overlays/custom_command.slint; the forwards below are
+// the whole contract with it (the form is two-way, the rest is read).
+OverlayCustomCommand {
+    strings: ApplicationApi.strings;
+    platform-windows: SettingsApi.platform-windows;
+    ow-popup-open <=> SettingsApi.ow-popup-open;
+    ow-popup-focus-armed <=> SettingsApi.ow-popup-focus-armed;
+    ow-popup-name <=> SettingsApi.ow-popup-name;
+    ow-popup-program <=> SettingsApi.ow-popup-program;
+    ow-popup-args <=> SettingsApi.ow-popup-args;
+    ow-popup-elevated <=> SettingsApi.ow-popup-elevated;
+    ow-popup-ctx-file <=> SettingsApi.ow-popup-ctx-file;
+    ow-popup-ctx-dir <=> SettingsApi.ow-popup-ctx-dir;
+    ow-popup-ctx-bg <=> SettingsApi.ow-popup-ctx-bg;
+    ow-popup-ctx-ext <=> SettingsApi.ow-popup-ctx-ext;
+    ow-popup-default-ext <=> SettingsApi.ow-popup-default-ext;
+    ow-popup-used-ext <=> SettingsApi.ow-popup-used-ext;
+    ow-popup-is-store: SettingsApi.ow-popup-is-store;
+    ow-popup-preview: SettingsApi.ow-popup-preview;
+    ow-popup-runs: SettingsApi.ow-popup-runs;
+    ow-popup-valid: SettingsApi.ow-popup-valid;
+    ow-popup-changed() => { SettingsApi.ow-popup-changed(); }
+    ow-popup-commit() => { SettingsApi.ow-popup-commit(); }
+    ow-browse() => { SettingsApi.ow-browse(); }
+}
+
+// ===== The note attached to an entry =====
+// Extracted to overlays/notes.slint; it reads the `Note` global, so
+// there is nothing to forward.
+OverlayNoteBubble { }
+
+// ===== GLOBAL tooltip — rendered VERY LAST → above
+// everything (panels, popups). Position set by the hovered button (global Tip).
+if Tip.text != "" : Rectangle {
+    x: clamp(Tip.x, 4px, max(4px, parent.width - self.width - 4px));
+    y: clamp(Tip.y, 4px, max(4px, parent.height - self.height - 4px));
+    width: gtip.preferred-width + 14px;
+    height: 24px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    drop-shadow-blur: 6px;
+    drop-shadow-color: #00000066;
+    gtip := Text {
+        text: Tip.text;
+        font-size: 11px;
+        color: #ffffff;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+}

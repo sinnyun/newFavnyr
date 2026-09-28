@@ -53,8 +53,12 @@ pub(super) const RATIO_MATCH: f32 = 1e-4;
 /// Tells the view whether there is anything to even out, and whether the way
 /// back is currently on offer (the menu row then reads "restore" instead).
 pub(super) fn push_equalize_state(window: &MainWindow, state: &AppState) {
-    window.set_equalize_available(state.panels.borrow().len() > 1);
-    window.set_equalize_undone(equalize_undo_for(state, &[]).is_some());
+    window
+        .global::<crate::PanelsApi>()
+        .set_equalize_available(state.panels.borrow().len() > 1);
+    window
+        .global::<crate::PanelsApi>()
+        .set_equalize_undone(equalize_undo_for(state, &[]).is_some());
 }
 
 /// The fractional rectangle of a view, as the GUI reads it.
@@ -134,7 +138,7 @@ pub(super) fn splitter_views(geom: &Layout) -> Vec<SplitterView> {
 /// two views concerned back to work. Same separation as the footers.
 pub(super) fn push_geometry_inplace(window: &MainWindow, state: &AppState) {
     let geom = current_geom(state);
-    let boxes_model = window.get_panel_boxes();
+    let boxes_model = window.global::<crate::PanelsApi>().get_panel_boxes();
     let rects = panel_rects(&geom, boxes_model.row_count());
     for (i, r) in rects.iter().enumerate() {
         if let Some(cur) = boxes_model.row_data(i)
@@ -148,7 +152,7 @@ pub(super) fn push_geometry_inplace(window: &MainWindow, state: &AppState) {
     }
 
     let new_sv = splitter_views(&geom);
-    let sp_model = window.get_splitters();
+    let sp_model = window.global::<crate::PanelsApi>().get_splitters();
     if sp_model.row_count() == new_sv.len() {
         // In-place update: doesn't recreate the elements → the drag survives.
         for (i, v) in new_sv.iter().enumerate() {
@@ -161,7 +165,9 @@ pub(super) fn push_geometry_inplace(window: &MainWindow, state: &AppState) {
             }
         }
     } else {
-        window.set_splitters(ModelRc::new(VecModel::from(new_sv)));
+        window
+            .global::<crate::PanelsApi>()
+            .set_splitters(ModelRc::new(VecModel::from(new_sv)));
     }
 }
 
@@ -320,44 +326,60 @@ pub(super) fn update_panels_ui(window: &MainWindow, state: &AppState) {
     // middle-scroll, rubber-band) started in a NON-active view would die the
     // instant it becomes active. The model is only replaced for a
     // STRUCTURAL change (split/close → the number of panels changes).
-    let existing = window.get_panels();
+    let existing = window.global::<crate::PanelsApi>().get_panels();
     if existing.row_count() == views.len() {
         for (i, v) in views.into_iter().enumerate() {
             existing.set_row_data(i, v);
         }
     } else {
-        window.set_panels(ModelRc::new(VecModel::from(views)));
+        window
+            .global::<crate::PanelsApi>()
+            .set_panels(ModelRc::new(VecModel::from(views)));
     }
     // View footers in their PARALLEL model. In-place update when the
     // panel count is unchanged → the model instance is preserved, so
     // `push_active_footer` keeps writing into the same live model.
-    let existing_footers = window.get_panel_footers();
+    let existing_footers = window.global::<crate::PanelsApi>().get_panel_footers();
     if existing_footers.row_count() == footers.len() {
         for (i, f) in footers.into_iter().enumerate() {
             existing_footers.set_row_data(i, f);
         }
     } else {
-        window.set_panel_footers(ModelRc::new(VecModel::from(footers)));
+        window
+            .global::<crate::PanelsApi>()
+            .set_panel_footers(ModelRc::new(VecModel::from(footers)));
     }
     // Where each view sits, in its own parallel model for the same reason.
     let boxes: Vec<PanelBox> = rects.iter().map(|r| panel_box(*r)).collect();
-    let existing_boxes = window.get_panel_boxes();
+    let existing_boxes = window.global::<crate::PanelsApi>().get_panel_boxes();
     if existing_boxes.row_count() == boxes.len() {
         for (i, b) in boxes.into_iter().enumerate() {
             existing_boxes.set_row_data(i, b);
         }
     } else {
-        window.set_panel_boxes(ModelRc::new(VecModel::from(boxes)));
+        window
+            .global::<crate::PanelsApi>()
+            .set_panel_boxes(ModelRc::new(VecModel::from(boxes)));
     }
-    window.set_splitters(ModelRc::new(VecModel::from(splitter_views(&geom))));
+    window
+        .global::<crate::PanelsApi>()
+        .set_splitters(ModelRc::new(VecModel::from(splitter_views(&geom))));
     push_equalize_state(window, state);
-    window.set_active_panel_idx(active);
-    window.set_active_ext_filter_on(active_ext_on);
-    window.set_can_add_panel(can_add);
+    window
+        .global::<crate::PanelsApi>()
+        .set_active_panel_idx(active);
+    window
+        .global::<crate::PanelsApi>()
+        .set_active_ext_filter_on(active_ext_on);
+    window
+        .global::<crate::PanelsApi>()
+        .set_can_add_panel(can_add);
     // Is there at least one "unavailable" panel? Drives the auto
     // re-check Timer on the Slint side.
     let any_unavail = state.panels.borrow().iter().any(|p| p.unavailable);
-    window.set_any_unavailable(any_unavail);
+    window
+        .global::<crate::SidebarApi>()
+        .set_any_unavailable(any_unavail);
     // This central path is taken by structural mutations and
     // tab state changes. The comparison is purely in-memory, so the
     // title stays reactive without hooking any I/O into UI interactions.

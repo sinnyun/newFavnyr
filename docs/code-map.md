@@ -3,7 +3,7 @@
 本文件是仓库的"文件级说明书"：每个自有文件负责什么、关键标识符、依赖关系、契约。
 正文中文，文件路径 / 类型 / 函数名保留英文原文。
 
-- 统计日期：2026-09-29（**`main_window.slint` 的侧栏列提取落地后**统计；§1 合计已含 `.slint` 全部 36 个文件，拆分前基线与两批对照见 §6）
+- 统计日期：2026-09-29（领域 API 迁移及窗口覆盖层提取后；行数统计仅更新相关文件，§1 总表待全量重算）
 - 统计口径：`find` 遍历仓库，行数取 `wc -l`；**代码文件** = `.rs` / `.slint` / `.toml` / `.bat` / `.yml` / `.md`；**排除** `vendor/`（第三方源码）、`target/`、`.git/`、`.reasonix/`（工具快照）；资源文件（`assets/icons/*.svg` 等、`Cargo.lock`、`LICENSE`、`.gitattributes`、`.gitignore`）不计入
 - 拆分方案与执行记录另见 [split-plan.md](split-plan.md)（§16 为进度与偏差）
 
@@ -23,8 +23,8 @@
 两个拆分重点的现状（拆分前：`bridge.rs` 19 001 行、`main_window.slint` 15 897 行，合计占自有代码 56%）：
 
 - `crates/favnyr-gui/src/bridge.rs` → **`bridge/` 62 个文件**，`mod.rs` 仅 151 行（模块声明 + 重导出 + `defer`）。最大者：`install/mod.rs` 791、`tests.rs` 790、`tabs.rs` 735、`install/cb_files.rs` 714、`state.rs` 674。对外的 `crate::bridge::…` 路径全部不变。
-- `crates/favnyr-gui/src/ui/main_window.slint` → **`ui/` 36 个 .slint**：`main_window.slint`（3 010 行）保留 `MainWindow` 契约面（518 个成员，见 §4.4）、布局骨架与区块实例（转发层）；内部组件按 `structs` / `theme` / `widgets/` / `panel` / `sidebar` / `workspaces` / `progress` 分文件，`MainWindow` 内的覆盖层区块（右键菜单、弹窗、设置面板、toast…）已全部提取到 `ui/overlays/*.slint`，设置面板的三页再下沉到 `ui/overlays/settings/*.slint`；`panel.slint` 的第二层同样落地，面板现有外壳 + `ui/panel/{tabs_bar,nav_bar,selection,list,scrollbars,overlays}.slint` 六个组件；`sidebar.slint` 也按组件再分，侧栏现有外壳（节头一族 + `Sidebar`）+ `ui/sidebar/{item,fav,rail}.slint` 三个组件，窗口里的整条侧栏列（四个可重排节 + 收藏树 + 回收站 + 落点指示线）再提成 `ui/sidebar/column.slint`；`widgets/rows.slint` 的最后一块再拆出 `ui/widgets/rows/{header,marks}.slint`（可交互的列头 + 菜单用的两个标记控件），行/分组头/瓦片三个纯视觉形状留在原文件。方案与执行记录见 split-plan.md §2 步骤 3 与 §16。
-- 13 个超 800 行文件（拆分前）已全部拆到目标结构；`main_window.slint` 的转发层、`panel.slint` 的第二层、`sidebar.slint` 与 `widgets/rows.slint` 的分块均已完成。第一批拆出的子文件里仍有 5 个超 800（`bridge/tests.rs`、`bridge/state.rs`、`bridge/thumbs.rs`、`bridge/rows/build.rs`、`core/src/fs/tests.rs`），已在第二批下沉为子模块（见 §6）。现在全仓（`vendor/parley` 除外）只剩 `main_window.slint`（3 010，契约面）一个文件超过 800 行——`MainWindow` 的 518 个契约成员必须留在组件内（Slint 没有"部分组件"或文件包含机制可以搬走声明，理由见 §6）；能搬的只有布局子树，侧栏列已于 2026-09-29 提成 `ui/sidebar/column.slint`（3 195 → 3 010）。
+- `crates/favnyr-gui/src/ui/main_window.slint` 当前 1 602 行：Rust-facing 的应用、面板、拖放、侧栏、工作区、菜单、设置、操作接口已迁入 `ui/api/*.slint` 的 8 个领域 global，Rust 桥接通过 `window.global::<...>()` 访问；覆盖层实例与计时器已提取为 `ui/window/overlays.slint`（648 行）。窗口主体布局和状态协调仍在 `MainWindow`，因此 800 行目标尚未达到。此前完成的 `structs` / `theme` / `widgets` / `panel` / `sidebar` / `workspaces` / `progress` 组件拆分记录见 §16。
+- 本轮修改后，`ui/main_window.slint` 为 1 602 行，仍超过 800 行；目前超限问题已从巨大 Rust 契约面转为根窗口的布局和交互逻辑耦合。下一步需要把面板画布、侧栏交互和窗口级行为分别收敛为明确的组件接口，再搬迁实现，不能仅依据 `root.*` 文本批量迁移。此前关于停止拆分的决定已由本轮架构目标取代，详见 [split-plan.md](split-plan.md) §17。
 
 ## 2. 仓库结构
 

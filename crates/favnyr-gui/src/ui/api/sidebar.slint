@@ -1,0 +1,113 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global SidebarApi {
+    // "Places" sidebar -----
+    // Stable semantic models. The order of the four movable sections
+    // is a small model of codes: 0 Drives · 1 Shortcuts · 2 Favorites ·
+    // 3 Network. Trash stays fixed below them.
+    in property <[SidebarPlace]> sidebar-places-drives;
+    in property <[SidebarPlace]> sidebar-places-shortcuts;
+    in property <[SidebarPlace]> sidebar-places-network;
+    in property <[SidebarPlace]> sidebar-places-trash;
+    in property <[int]> sidebar-section-order;
+    callback sidebar-section-reordered(int /*section*/, int /*final index*/);
+    // Open left panel: 0 collapsed · 1 Places · 2 Favorites.
+    in-out property <int> left-panel: 1;
+    in-out property <length> sidebar-width: 210px;
+    callback sidebar-place-clicked(string, int);   // (path, kind)
+    callback place-open-new-tab(string, int);      // (path, kind) → new tab (active view)
+    // True only for sources that designate a directory. A favorite pointing to
+    // a file may still become a tab at an exact gap, but never a panel drop.
+    in-out property <bool> sidebar-item-split-capable: false;
+    callback sidebar-refresh();                     // re-scans places
+    callback poll-drives();                          // lightweight drive check: rebuilds only if changed
+    // Cross-instance IPC init: `true` = initialized (the Timer stops),
+    // `false` = window not ready yet → the Timer retries.
+    callback init-ipc() -> bool;
+    // "Unavailable" tabs (network/missing folder): `any-unavailable`
+    // (set by the bridge) → a Timer calls `recheck-unavailable` to retry
+    // as soon as a drive/mount changes.
+    in-out property <bool> any-unavailable: false;
+    callback recheck-unavailable();
+    callback empty-trash();                         // empties the trash (permanent)
+    // Trash context menu (right-click on the Trash entry).
+    in-out property <bool> trash-menu-open: false;
+    in-out property <length> trash-menu-x;
+    in-out property <length> trash-menu-y;
+    in-out property <bool> trash-menu-confirm: false;   // 2nd click = confirmation
+    // Context menu of a drive / network location (right-click).
+    in-out property <bool> drive-menu-open: false;
+    in-out property <length> drive-menu-x;
+    in-out property <length> drive-menu-y;
+    in-out property <string> drive-menu-path;
+    in-out property <int> drive-menu-kind;
+    in-out property <bool> drive-menu-removable;   // → offers to release the drive
+    // Unpluggable hardware → the entry and the toast say so; otherwise both
+    // speak of releasing, which is all that actually happens.
+    in-out property <bool> drive-menu-hotplug;
+    in-out property <string> drive-menu-device;    // eject/disconnect target (empty → actions hidden)
+    callback drive-eject(string, bool);  // release (device, unpluggable)
+    callback drive-disconnect(string);   // disconnects a mapped network drive (device)
+    callback place-copy-path(string);    // copies the path to the clipboard
+    // Tree-structured favorites -----
+    in property <[FavNode]> fav-nodes;          // flattened tree (visible nodes)
+    in-out property <string> fav-selected-id: "";
+    callback fav-row-activate(string);          // click: container→toggle / favorite→open
+    callback fav-row-middle(string);            // middle-click favorite → new tab
+    callback fav-collapse-all();
+    callback fav-open(string);                  // open favorite (new tab)
+    callback fav-open-all(string);              // container: open all children
+    callback fav-delete(string);
+    callback fav-copy-path(string);
+    // Context menu of a favorite node.
+    in-out property <bool> fav-menu-open: false;
+    in-out property <length> fav-menu-x;
+    in-out property <length> fav-menu-y;
+    in-out property <string> fav-menu-id: "";
+    in-out property <string> fav-menu-name: "";             // label (pre-fills the rename)
+    in-out property <bool> fav-menu-container: false;
+    in-out property <bool> fav-menu-confirm-delete: false;  // 2nd click, non-empty container
+    // Modal popup for creating or renaming a favorites container.
+    // `rename` distinguishes create/rename; `target` = id to rename (rename) or
+    // parent id (create; "" = root). `invalid` is set by the bridge.
+    in-out property <bool> fav-name-open: false;
+    in-out property <bool> fav-name-rename: false;
+    in-out property <string> fav-name-target: "";
+    in-out property <string> fav-name-value: "";
+    in-out property <bool> fav-name-invalid: true;
+    in-out property <bool> fav-name-focus-armed: false;
+    callback fav-name-check(string);
+    callback fav-name-confirm();
+    callback fav-expand(string);   // expands a container (IN-PLACE insertion → drag preserved)
+    // Toggle "Collapse all" / "Expand all" (containers).
+    in-out property <bool> fav-can-collapse: false;
+    callback fav-expand-all();
+    // Collapse of the Favorites SECTION — hides the tree in the unified column.
+    in-out property <bool> fav-section-collapsed: false;
+    // The three other collapsible sections of the left column. These four
+    // properties are restored from the workspace by the bridge.
+    in-out property <bool> sidebar-shortcuts-collapsed: false;
+    in-out property <bool> sidebar-drives-collapsed: false;
+    in-out property <bool> sidebar-network-collapsed: false;
+    callback sidebar-section-state-changed(int /*0 drives · 1 shortcuts · 2 favorites · 3 network*/,
+        bool /*collapsed*/);
+    // "Save as favorite" popup (from a tab / file).
+    in-out property <bool> fav-save-open: false;
+    in-out property <bool> fav-save-focus-armed: false;
+    in-out property <string> fav-save-target: "";     // path (or "N items")
+    in-out property <bool> fav-save-multi: false;
+    in-out property <string> fav-save-alias: "";
+    in property <[string]> fav-container-labels;       // indented labels (dropdown)
+    in-out property <int> fav-container-index: 0;      // 0 = Root
+    callback fav-save-commit(string, int);             // (alias, container index)
+    callback fav-save-new-container(string, int);      // (name, parent container index) → creates + selects
+    // "New container" sub-popup (from the save popup).
+    in-out property <bool> fav-newc-open: false;
+    in-out property <bool> fav-newc-focus-armed: false;
+    in-out property <string> fav-newc-name: "";
+    in-out property <int> fav-newc-parent-index: 0;    // 0 = Root
+    // Save requests (triggered by the tab/file menus).
+    callback fav-save-tab(int, int);                   // (panel, tab)
+    callback fav-save-all-tabs(int);                   // (panel)
+    callback fav-add-selection();                      // selected files (active view)
+}

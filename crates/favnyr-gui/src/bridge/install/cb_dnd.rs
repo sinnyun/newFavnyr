@@ -3,77 +3,83 @@ use super::*;
 pub(super) fn install_file_drag_begin(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_file_drag_begin(move |src_panel: i32, row_idx: i32| {
-        let Some(w) = weak.upgrade() else { return };
-        // A previous drop menu may have been closed without choosing an action.
-        // No new gesture should keep its stale frozen paths.
-        *st.pending_file_drop.borrow_mut() = None;
-        let src = src_panel.max(0) as usize;
-        let changed_count = {
-            let mut panels = st.panels.borrow_mut();
-            let Some(p) = panels.get_mut(src) else {
-                return;
+    window.global::<crate::DragDropApi>().on_file_drag_begin(
+        move |src_panel: i32, row_idx: i32| {
+            let Some(w) = weak.upgrade() else { return };
+            // A previous drop menu may have been closed without choosing an action.
+            // No new gesture should keep its stale frozen paths.
+            *st.pending_file_drop.borrow_mut() = None;
+            let src = src_panel.max(0) as usize;
+            let changed_count = {
+                let mut panels = st.panels.borrow_mut();
+                let Some(p) = panels.get_mut(src) else {
+                    return;
+                };
+                let already = p
+                    .rows_model
+                    .row_data(row_idx.max(0) as usize)
+                    .map(|r| r.selected)
+                    .unwrap_or(false);
+                if already {
+                    None
+                } else {
+                    let (count, _) = selection_set_only(&p.rows_model, row_idx);
+                    let active = p.tabs.active;
+                    p.tabs.tabs[active].selection_anchor = row_idx;
+                    p.tabs.tabs[active].cursor = row_idx;
+                    Some(count)
+                }
             };
-            let already = p
-                .rows_model
-                .row_data(row_idx.max(0) as usize)
-                .map(|r| r.selected)
-                .unwrap_or(false);
-            if already {
-                None
-            } else {
-                let (count, _) = selection_set_only(&p.rows_model, row_idx);
-                let active = p.tabs.active;
-                p.tabs.tabs[active].selection_anchor = row_idx;
-                p.tabs.tabs[active].cursor = row_idx;
-                Some(count)
+            if let Some(count) = changed_count {
+                // `sel-touch` activates the panel before starting the drag. The
+                // footer and the Shift anchor must follow the implicit selection.
+                if *st.active_panel.borrow() == src {
+                    push_active_footer(&w, &st, count);
+                }
             }
-        };
-        if let Some(count) = changed_count {
-            // `sel-touch` activates the panel before starting the drag. The
-            // footer and the Shift anchor must follow the implicit selection.
-            if *st.active_panel.borrow() == src {
-                push_active_footer(&w, &st, count);
-            }
-        }
-    });
+        },
+    );
 }
 
 pub(super) fn install_file_drop_target_invalid(window: &MainWindow, state: AppState) {
     let st = state.clone();
-    window.on_file_drop_target_invalid(move |src_panel, target_panel, row| {
-        file_drop_target_invalid(&st, src_panel, target_panel, row)
-    });
+    window
+        .global::<crate::DragDropApi>()
+        .on_file_drop_target_invalid(move |src_panel, target_panel, row| {
+            file_drop_target_invalid(&st, src_panel, target_panel, row)
+        });
 }
 
 pub(super) fn install_start_native_drag(window: &MainWindow, state: AppState) {
     let st = state.clone();
-    window.on_start_native_drag(move |src_panel: i32| {
-        let src = src_panel.max(0) as usize;
-        let paths = panel_selected_paths(&st, src);
-        if paths.is_empty() {
-            return;
-        }
-        #[cfg(windows)]
-        {
-            let dropped = crate::winddrag::drag_files(&paths);
-            debug!(count = paths.len(), dropped, "native OLE drag finished");
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = paths; // no native drag outside Windows (v1)
-        }
-    });
+    window
+        .global::<crate::DragDropApi>()
+        .on_start_native_drag(move |src_panel: i32| {
+            let src = src_panel.max(0) as usize;
+            let paths = panel_selected_paths(&st, src);
+            if paths.is_empty() {
+                return;
+            }
+            #[cfg(windows)]
+            {
+                let dropped = crate::winddrag::drag_files(&paths);
+                debug!(count = paths.len(), dropped, "native OLE drag finished");
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = paths; // no native drag outside Windows (v1)
+            }
+        });
 }
 
 pub(super) fn install_file_drop_onto_exec(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_file_drop_onto_exec(move || -> bool {
+    window.global::<crate::DragDropApi>().on_file_drop_onto_exec(move || -> bool {
         let Some(w) = weak.upgrade() else { return false };
-        let target = w.get_file_drop_target_panel().max(0) as usize;
-        let row = w.get_file_drop_target_row();
-        let src = w.get_file_drop_src_panel();
+        let target = w.global::<crate::DragDropApi>().get_file_drop_target_panel().max(0) as usize;
+        let row = w.global::<crate::DragDropApi>().get_file_drop_target_row();
+        let src = w.global::<crate::DragDropApi>().get_file_drop_src_panel();
         let sources = if src < 0 {
             std::mem::take(&mut *st.external_drop_paths.borrow_mut())
         } else {
@@ -125,59 +131,61 @@ pub(super) fn install_file_drop_onto_exec(window: &MainWindow, state: AppState) 
 pub(super) fn install_file_drop_action(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_file_drop_action(move |action: i32| {
-        let Some(w) = weak.upgrade() else { return };
-        let Some(PendingFileDrop {
-            sources,
-            destination: dst,
-        }) = st.pending_file_drop.borrow_mut().take()
-        else {
-            return;
-        };
-        if sources.is_empty() || dst.as_os_str().is_empty() {
-            return;
-        }
-        // Never drop a folder INTO itself or one of its
-        // descendants (recursion), nor onto itself.
-        let sources: Vec<PathBuf> = sources
-            .into_iter()
-            .filter(|s| !ops::is_within(&dst, s))
-            .collect();
-        if sources.is_empty() {
-            return;
-        }
-        match action {
-            0 => begin_paste(&w, &st, ClipOp::Cut, dst, sources), // move
-            1 => begin_paste(&w, &st, ClipOp::Copy, dst, sources), // copy
-            2 => {
-                // Link: symbolic link where allowed (both OSes), else a
-                // hard link / junction on the same volume (Windows). Sync
-                // (instant) → we refresh all views at the end. A failure
-                // (e.g. a cross-volume drop without Developer Mode, or a
-                // network share) is surfaced, not just logged.
-                let mut created = Vec::new();
-                let mut any_failed = false;
-                for src in &sources {
-                    match ops::link_into(src, &dst) {
-                        Ok(path) => created.push(path),
-                        Err(err) => {
-                            // Full reason (cross-volume, privilege, filesystem)
-                            // goes to the log; the toast stays concise.
-                            error!(error = %err, src = %src.display(), "link failed");
-                            any_failed = true;
+    window
+        .global::<crate::DragDropApi>()
+        .on_file_drop_action(move |action: i32| {
+            let Some(w) = weak.upgrade() else { return };
+            let Some(PendingFileDrop {
+                sources,
+                destination: dst,
+            }) = st.pending_file_drop.borrow_mut().take()
+            else {
+                return;
+            };
+            if sources.is_empty() || dst.as_os_str().is_empty() {
+                return;
+            }
+            // Never drop a folder INTO itself or one of its
+            // descendants (recursion), nor onto itself.
+            let sources: Vec<PathBuf> = sources
+                .into_iter()
+                .filter(|s| !ops::is_within(&dst, s))
+                .collect();
+            if sources.is_empty() {
+                return;
+            }
+            match action {
+                0 => begin_paste(&w, &st, ClipOp::Cut, dst, sources), // move
+                1 => begin_paste(&w, &st, ClipOp::Copy, dst, sources), // copy
+                2 => {
+                    // Link: symbolic link where allowed (both OSes), else a
+                    // hard link / junction on the same volume (Windows). Sync
+                    // (instant) → we refresh all views at the end. A failure
+                    // (e.g. a cross-volume drop without Developer Mode, or a
+                    // network share) is surfaced, not just logged.
+                    let mut created = Vec::new();
+                    let mut any_failed = false;
+                    for src in &sources {
+                        match ops::link_into(src, &dst) {
+                            Ok(path) => created.push(path),
+                            Err(err) => {
+                                // Full reason (cross-volume, privilege, filesystem)
+                                // goes to the log; the toast stays concise.
+                                error!(error = %err, src = %src.display(), "link failed");
+                                any_failed = true;
+                            }
                         }
                     }
+                    invalidate_thumbnail_paths(&st, &created);
+                    w.global::<crate::OperationsApi>().invoke_refresh_all();
+                    if any_failed {
+                        let lang = st.snapshot_config().language;
+                        show_notice(&w, i18n::tr(lang, "link_failed"));
+                    }
                 }
-                invalidate_thumbnail_paths(&st, &created);
-                w.invoke_refresh_all();
-                if any_failed {
-                    let lang = st.snapshot_config().language;
-                    show_notice(&w, i18n::tr(lang, "link_failed"));
-                }
+                _ => {}
             }
-            _ => {}
-        }
-    });
+        });
 }
 
 pub(super) fn install_tab_drag_progress(
@@ -186,20 +194,22 @@ pub(super) fn install_tab_drag_progress(
 ) {
     let weak = window.as_weak();
     let last = hover_target.clone();
-    window.on_tab_drag_progress(move |_from_idx: i32, ax: f32, ay: f32| {
-        let Some(w) = weak.upgrade() else { return };
-        // Logical client → physical screen (`WindowFromPoint`'s frame of reference).
-        let (sx, sy) = window_logical_to_screen(&w, ax, ay);
-        let target = crate::winmsg::target_at(sx, sy).unwrap_or(0);
-        let prev = last.get();
-        if prev != target && prev != 0 {
-            crate::winmsg::hover_end(prev); // left the previous instance
-        }
-        if target != 0 {
-            crate::winmsg::hover(target, sx, sy);
-        }
-        last.set(target);
-    });
+    window.global::<crate::DragDropApi>().on_tab_drag_progress(
+        move |_from_idx: i32, ax: f32, ay: f32| {
+            let Some(w) = weak.upgrade() else { return };
+            // Logical client → physical screen (`WindowFromPoint`'s frame of reference).
+            let (sx, sy) = window_logical_to_screen(&w, ax, ay);
+            let target = crate::winmsg::target_at(sx, sy).unwrap_or(0);
+            let prev = last.get();
+            if prev != target && prev != 0 {
+                crate::winmsg::hover_end(prev); // left the previous instance
+            }
+            if target != 0 {
+                crate::winmsg::hover(target, sx, sy);
+            }
+            last.set(target);
+        },
+    );
 }
 
 pub(super) fn install_tab_drag_completed(
@@ -210,7 +220,7 @@ pub(super) fn install_tab_drag_completed(
     let last_hover = hover_target.clone();
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_tab_drag_completed(
+    window.global::<crate::DragDropApi>().on_tab_drag_completed(
         move |src_panel: i32, from_idx: i32, target_intra: i32, abs_x: f32, abs_y: f32| {
             let Some(w) = weak.upgrade() else { return };
             // End of drag: clears any hover preview still displayed in
@@ -246,10 +256,11 @@ pub(super) fn install_tab_drag_completed(
                 // A and the user sees B under the cursor, we do transfer
                 // to B even if the point is still within A's bounds.
                 if let Some(target) = crate::winmsg::target_at(at.0, at.1) {
-                    w.set_drag_target_panel(-1);
-                    w.set_drag_target_zone(0);
-                    w.set_drag_target_gap(-1);
-                    w.set_drag_target_gap_panel(-1);
+                    w.global::<crate::DragDropApi>().set_drag_target_panel(-1);
+                    w.global::<crate::DragDropApi>().set_drag_target_zone(0);
+                    w.global::<crate::DragDropApi>().set_drag_target_gap(-1);
+                    w.global::<crate::DragDropApi>()
+                        .set_drag_target_gap_panel(-1);
                     match transfer_tab_to(&st, source_panel, from, target, at) {
                         Transfer::Moved => {
                             refresh_all_panels(&w, &st);
@@ -268,10 +279,11 @@ pub(super) fn install_tab_drag_completed(
                 // 2) Outside the window, no target instance → tear-off: new
                 // Favnyr instance on the tab's folder.
                 if outside {
-                    w.set_drag_target_panel(-1);
-                    w.set_drag_target_zone(0);
-                    w.set_drag_target_gap(-1);
-                    w.set_drag_target_gap_panel(-1);
+                    w.global::<crate::DragDropApi>().set_drag_target_panel(-1);
+                    w.global::<crate::DragDropApi>().set_drag_target_zone(0);
+                    w.global::<crate::DragDropApi>().set_drag_target_gap(-1);
+                    w.global::<crate::DragDropApi>()
+                        .set_drag_target_gap_panel(-1);
                     if tear_off_tab(&st, source_panel, from, Some(at)) {
                         refresh_all_panels(&w, &st);
                     }
@@ -279,16 +291,17 @@ pub(super) fn install_tab_drag_completed(
                 }
             }
             // Target + zone computed by the hovered panel (Slint).
-            let dtp = w.get_drag_target_panel();
-            let zone = w.get_drag_target_zone();
-            w.set_drag_target_panel(-1);
-            w.set_drag_target_zone(0);
+            let dtp = w.global::<crate::DragDropApi>().get_drag_target_panel();
+            let zone = w.global::<crate::DragDropApi>().get_drag_target_zone();
+            w.global::<crate::DragDropApi>().set_drag_target_panel(-1);
+            w.global::<crate::DragDropApi>().set_drag_target_zone(0);
             // Last claimed insertion gap (header) + panel claiming
             // full geometry on the Slint side, exact for any width.
-            let gap = w.get_drag_target_gap();
-            let gap_panel = w.get_drag_target_gap_panel();
-            w.set_drag_target_gap(-1);
-            w.set_drag_target_gap_panel(-1);
+            let gap = w.global::<crate::DragDropApi>().get_drag_target_gap();
+            let gap_panel = w.global::<crate::DragDropApi>().get_drag_target_gap_panel();
+            w.global::<crate::DragDropApi>().set_drag_target_gap(-1);
+            w.global::<crate::DragDropApi>()
+                .set_drag_target_gap_panel(-1);
 
             // --- Drop on an EDGE → split of the target panel + adoption of the tab.
             if dtp >= 0 && (2..=5).contains(&zone) {

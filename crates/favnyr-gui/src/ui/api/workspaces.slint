@@ -1,0 +1,45 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global WorkspacesApi {
+    // Named workspaces (overlay) -----
+    in-out property <bool> workspaces-open: false;
+    in property <[WorkspaceEntry]> workspaces;
+    in-out property <string> ws-toast: "";   // feedback message (cleared by a Timer)
+    // List sort direction: true = most recent first (default).
+    in-out property <bool> ws-sort-newest-first: true;
+    callback ws-save-new(string);       // saves the current state under this name
+    callback ws-save-current();         // quick save of the current named workspace
+    in-out property <bool> ws-name-taken: false;
+    callback ws-name-check(string);     // live validation: name already used?
+    // Deferred focus of the "workspace name" field — armed ONLY when the
+    // panel opens because the user asked to SAVE a
+    // still-unnamed workspace (Ctrl+S on an ad hoc state): the cursor is then in the
+    // field, indicating a name must be entered. Normal opening (rail
+    // button, Ctrl+Q) → not armed: the list is browsed, nothing gets named.
+    in-out property <bool> ws-name-focus-armed: false;
+    callback ws-load(string);           // loads workspace `id` (WITHOUT the guard)
+    callback ws-overwrite(string);      // replaces workspace `id` with the current state
+    callback ws-delete(string);         // deletes workspace `id`
+    callback ws-rename(string, string); // (id, new-name)
+    callback ws-reset();                // starts over from a blank space (1 panel, $HOME) — DIRECT
+    callback ws-reset-guarded();        // "Start a new workspace" WITH the guard
+    // "Unsaved changes" guard. The Load button goes
+    // through `ws-load-guarded`: the bridge loads directly if the current state is clean,
+    // otherwise it FILLS the dialog below (interpolated texts + target id) and
+    // opens it. `ws-save-and-load` saves the current state THEN loads the target.
+    callback ws-load-guarded(string /*target_id*/);
+    callback ws-save-and-load();        // saves the current state THEN runs the pending action
+    // Recomputes the list + the is-current/is-dirty flags from the LIVE state.
+    // Called on EVERY menu opening (see `changed workspaces-open`): the
+    // "unsaved changes" check happens when the menu opens, not
+    // only after a save.
+    callback ws-refresh();
+    in-out property <bool> ws-dirty-warn-open: false;
+    in-out property <string> ws-dirty-title-text;   // interpolated by the bridge
+    in-out property <string> ws-dirty-body-text;    // interpolated by the bridge
+    in-out property <string> ws-dirty-target-id;    // workspace to load after the decision
+    // Nature of the pending action behind the dialog: false = load
+    // `ws-dirty-target-id`, true = start over blank ("Start a new workspace").
+    in-out property <bool> ws-dirty-reset: false;
+    callback ws-toggle-sort();          // reverses the list's sort direction
+}

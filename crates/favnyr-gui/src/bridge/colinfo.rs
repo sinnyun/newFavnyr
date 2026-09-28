@@ -87,7 +87,9 @@ pub(super) fn push_settings_columns(window: &MainWindow, lang: Lang, cols: &[Col
         .iter()
         .map(|c| column_info_explicit(&strings, c, 0.0))
         .collect();
-    window.set_settings_columns(ModelRc::new(VecModel::from(infos)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_settings_columns(ModelRc::new(VecModel::from(infos)));
 }
 
 /// [`column_info`] with the wording used wherever a column is CHOSEN from a

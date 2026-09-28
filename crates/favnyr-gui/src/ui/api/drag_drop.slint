@@ -1,0 +1,86 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global DragDropApi {
+    /// A view is being carried by its grip.
+    in-out property <bool> view-drag-active: false;
+    in-out property <length> view-drag-abs-x;
+    in-out property <length> view-drag-abs-y;
+    /// The view being carried, and the one under the cursor. `-1` for none.
+    in-out property <int> view-drag-source: -1;
+    in-out property <int> view-drag-target: -1;
+    // (src_panel, src_tab, target_intra, abs_x, abs_y) — src_panel passed
+    // explicitly to handle a drag from a NON-active panel.
+    callback tab-drag-completed(int, int, int, length, length);
+    callback tab-drag-progress(int, length, length);
+    /// Drop of a view's SELECTION (files/folders) on a FAVORITES
+    /// folder: (src_panel, container id).
+    callback file-to-favorite(int, string);
+    /// Global tab drag state — propagated to ALL PanelComponents
+    /// so each computes its own preview line.
+    in-out property <bool> drag-active: false;
+    in-out property <length> drag-abs-x: 0px;
+    in-out property <length> drag-abs-y: 0px;
+    /// Last insertion gap claimed during the drag + claiming panel
+    /// . Read by the BRIDGE on cross-view drop: if `drag-target-gap-panel`
+    /// == target panel, the drop in its header uses this EXACT gap; otherwise
+    /// (drop in the body) the tab goes to the end of the bar. Reset at drag start.
+    in-out property <int> drag-target-gap: -1;
+    in-out property <int> drag-target-gap-panel: -1;
+    // Index of the tab drag's SOURCE panel (for the danger preview "will
+    // close" on the source whose last tab is being dragged). -1 = none.
+    in-out property <int> drag-source-panel: -1;
+    // Drop target — set by the panel under the cursor.
+    // `panel` = index (-1 if none); `zone` = 0 none·1 center·2 W·3 E·4 N·5 S.
+    in-out property <int> drag-target-panel: -1;
+    in-out property <int> drag-target-zone: 0;
+    // File drag'n'drop between views -----
+    in-out property <bool> file-drag-active: false;
+    in-out property <length> file-drag-abs-x: 0px;
+    in-out property <length> file-drag-abs-y: 0px;
+    in-out property <int> file-drag-source-panel: -1;
+    in-out property <int> file-drag-target-panel: -1;   // panel under the cursor
+    in-out property <int> file-drag-target-row: -1;     // hovered row (folder/executable/other)
+    in-out property <bool> file-drag-target-folder: false;
+    in-out property <bool> file-drag-target-exec: false;
+    in-out property <bool> file-drag-target-invalid: false; // target = source/descendant
+    callback file-drop-target-invalid(int /*src panel*/, int /*target panel*/, int /*row*/) -> bool;
+    in-out property <bool> file-drag-copy: false;       // internal Ctrl or external OLE key-state
+    // A watcher event that arrived during the gesture is replayed cleanly after
+    // the drag/menu/operation instead of rebuilding the model under the mouse.
+    in-out property <bool> file-drag-refresh-pending: false;
+    // Native (OLE) drag triggered once when the cursor leaves the
+    // window during a drag → external apps. Re-armed on every new drag.
+    in-out property <bool> native-drag-armed: false;
+    callback start-native-drag(int /*src_panel*/);
+    callback file-drag-begin(int /*src_panel*/, int /*row_idx*/);  // ensures the selection
+    // Drop menu (Move / Copy / Link here) + panels captured on drop.
+    in-out property <bool> file-drop-menu-open: false;
+    in-out property <length> file-drop-menu-x;
+    in-out property <length> file-drop-menu-y;
+    in-out property <int> file-drop-src-panel: -1;
+    in-out property <int> file-drop-target-panel: -1;
+    in-out property <int> file-drop-target-row: -1;     // target folder row captured on drop (1 = current folder)
+    callback file-drop-action(int /*0 move · 1 copy · 2 link*/);
+    // Drop onto an executable → launches it with the files as arguments.
+    // Returns true if launched (the bridge reads the already-set file-drop-src/target/row).
+    callback file-drop-onto-exec() -> bool;
+    in-out property <bool> sidebar-section-drag-active: false;
+    in-out property <int> sidebar-section-drag-source: -1;
+    in-out property <int> sidebar-section-drag-target: -1;
+    in-out property <length> sidebar-section-drag-preview-y: 0px;
+    in-out property <length> sidebar-section-drag-last-x: 0px;
+    in-out property <length> sidebar-section-drag-last-y: 0px;
+    // A navigable location dropped on a tab gap or onto a panel. Favorite ids
+    // use kind -1; the bridge resolves their stored path before acting.
+    callback sidebar-item-dropped(string, int, int, int, int);
+    in-out property <bool> sidebar-item-drag-active: false;
+    // Drag reordering: delegated to the bridge (target/zone computed in f32).
+    callback fav-drag-move(int, length, length);   // (row-index, cur-y, row-top)
+    callback fav-drag-drop(int, length, length, bool); // final bool: commit tree move
+    // Drag indicators (set by the bridge during the move).
+    in-out property <bool> fav-drag-active: false;
+    in-out property <int> fav-drag-target-index: -1;
+    in-out property <int> fav-drag-zone: 0;
+    // Collapsed container currently hovered during a drag (auto-expand after a delay).
+    in-out property <string> fav-drag-hover-container: "";
+}

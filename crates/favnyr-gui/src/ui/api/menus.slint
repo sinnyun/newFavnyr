@@ -1,0 +1,109 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global MenuApi {
+    // "Split" menu: opened via a panel's token (which activates
+    // beforehand), so it acts on the active panel via `panel-split`.
+    in-out property <bool> split-menu-open: false;
+    in-out property <length> split-menu-x;
+    in-out property <length> split-menu-y;
+    // "Tab bar position" menu: 3 radio options (top /
+    // left / right), per view. `set-tab-bar-mode(panel, mode)` → bridge.
+    in-out property <bool> tabbar-menu-open: false;
+    in-out property <length> tabbar-menu-x;
+    in-out property <length> tabbar-menu-y;
+    in-out property <int> tabbar-menu-panel: -1;
+    in-out property <int> tabbar-menu-mode: 0;     // CURRENT mode (checked option)
+    // "View mode" menu: 3 radio options (list /
+    // previews / grid), per view. `view-menu-mode` is the CURRENT mode code
+    // (checked option). The view button in the nav bar opens it.
+    in-out property <bool> view-menu-open: false;
+    in-out property <length> view-menu-x;
+    in-out property <length> view-menu-y;
+    in-out property <int> view-menu-panel: -1;
+    in-out property <string> view-menu-mode: "list";
+    // URL bar menu (right-click): Paste / Copy path.
+    in-out property <bool> url-menu-open: false;
+    in-out property <length> url-menu-x;
+    in-out property <length> url-menu-y;
+    in-out property <bool> columns-menu-open: false;
+    in-out property <length> columns-menu-x;
+    in-out property <length> columns-menu-y;
+    in-out property <int> columns-menu-panel: 0;
+    /// Emitted on right-click in a panel's empty area (useful for Paste).
+    callback empty-right-clicked(length, length);
+    // Bumped by the Menu key; see `PanelComponent.menu-key-serial`.
+    in-out property <int> menu-key-serial: 0;
+    // Row the keyboard context menu targets in the ACTIVE view, -1 for the
+    // background menu.
+    callback keyboard-context-row() -> int;
+    // "Open with" submenu: flyout on hover of the entry (the parent menu
+    // stays visible). Hover tracked via two properties (the entry + the flyout) for
+    // a clean deferred close, without referencing conditional elements.
+    // "Colour & note" flyout — same mechanism as "Open with" below, so the
+    // strip is reached by hovering rather than by an extra click.
+    in-out property <bool> mark-menu-open: false;
+    in-out property <length> mark-menu-x;
+    in-out property <length> mark-menu-y;
+    // Does the selection contain at least ONE folder? Distinct from
+    // `ctx-selection-is-dir`, which describes only the primary item: a mixed
+    // selection starting with a file still has folders to colour.
+    in-out property <bool> ctx-selection-has-dir: false;
+    callback folder-color-picked(int);
+    // Note editor. Single item at a time, so the entry that opens it is gated
+    // on `ctx-selection-single` exactly as "Create a shortcut" is.
+    in-out property <bool> comment-popup-open: false;
+    callback comment-confirmed(string);
+    // Asks the bridge to fill the three properties above from the selection,
+    // then open the editor — the row itself knows neither the name nor the
+    // note already stored.
+    callback open-comment-editor();
+    in-out property <bool> ow-menu-open: false;
+    in-out property <length> ow-menu-x;
+    in-out property <length> ow-menu-y;
+    // "New" submenu (empty area) — SAME mechanism as "Open with"
+    // above: flyout on hover, deferred close via two hover flags.
+    in-out property <bool> new-menu-open: false;
+    in-out property <length> new-menu-x;
+    in-out property <length> new-menu-y;
+    // Context menu target = a SINGLE file (not a folder) → on Windows,
+    // "Open as administrator" replaces "Open in a new tab".
+    in-out property <bool> ctx-selection-is-file: false;
+    // A single item is selected (file OR folder) — gates "Create a shortcut".
+    in-out property <bool> ctx-selection-single: false;
+    // The primary selected item is a folder — hides "Open with" (files only).
+    in-out property <bool> ctx-selection-is-dir: false;
+    callback ctx-close();
+    // ----- Menu/properties state (global) -----
+    in-out property <bool> ctx-menu-open: false;
+    in-out property <length> ctx-menu-x;
+    in-out property <length> ctx-menu-y;
+    // true = right-click on a blank area (no targeted entry) → menu
+    // reduced to only the actions that make sense without a selection (Paste…).
+    in-out property <bool> ctx-on-empty: false;
+    // User commands PINNED to the context menu — pushed by the
+    // bridge on EVERY opening (filtered by file/folder/background context).
+    in property <[OpenerItem]> ctx-custom-entries;
+    in-out property <bool> ctx-custom-bg: false;  // true = background menu (target = current folder)
+    callback ctx-custom-run(string /*id*/);
+    // Entries of the WINDOWS CONTEXT MENU (hosted shell extensions) —
+    // pushed by the bridge on every opening (live IContextMenu session).
+    in property <[ShellCtxEntry]> ctx-shell-entries;
+    callback ctx-shell-run(int /*command offset*/);
+    // Shell CASCADE flyout (PeaZip…) — same mechanism as the "Open
+    // with" flyout: hover of the parent → the bridge pushes the children
+    // (`ctx-shell-sub-hover`), deferred close Timer on both hovers.
+    in property <[ShellCtxEntry]> ctx-shell-sub-entries;
+    in-out property <bool> ctx-shell-sub-open: false;
+    in-out property <length> ctx-shell-sub-x;
+    in-out property <length> ctx-shell-sub-y;
+    in-out property <int> ctx-shell-sub-for: -1;   // `sub` index of the open parent
+    in-out property <bool> ctx-shell-sub-parent-hover: false;
+    in-out property <bool> ctx-shell-sub-flyout-hover: false;
+    callback ctx-shell-sub-hover(int /*sub*/);
+    // Context menu of a keyboard shortcut: same shared mechanism as
+    // the other menus (close-ctx-menus / Dismiss). `action` = the targeted id.
+    in-out property <bool> shortcut-menu-open: false;
+    in-out property <length> shortcut-menu-x;
+    in-out property <length> shortcut-menu-y;
+    in-out property <string> shortcut-menu-action;
+}

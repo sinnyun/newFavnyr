@@ -3,49 +3,51 @@ use super::*;
 pub(super) fn install_rows_area_width(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_rows_area_width(move |idx: i32, width: f32| {
-        let Some(w) = weak.upgrade() else { return };
-        let idx = idx.max(0) as usize;
-        let width = width.max(0.0);
-        let compact = st.config.borrow().compact_icon_rows_in_preview;
-        {
-            let mut panels = st.panels.borrow_mut();
-            let Some(panel) = panels.get_mut(idx) else {
-                return;
-            };
-            // Sub-pixel churn (fractional scaling, scrollbar toggling) must
-            // not re-pack the grid.
-            if (panel.grid_width.get() - width).abs() < 0.5 {
-                return;
+    window
+        .global::<crate::PanelsApi>()
+        .on_rows_area_width(move |idx: i32, width: f32| {
+            let Some(w) = weak.upgrade() else { return };
+            let idx = idx.max(0) as usize;
+            let width = width.max(0.0);
+            let compact = st.config.borrow().compact_icon_rows_in_preview;
+            {
+                let mut panels = st.panels.borrow_mut();
+                let Some(panel) = panels.get_mut(idx) else {
+                    return;
+                };
+                // Sub-pixel churn (fractional scaling, scrollbar toggling) must
+                // not re-pack the grid.
+                if (panel.grid_width.get() - width).abs() < 0.5 {
+                    return;
+                }
+                let tab = &panel.tabs.tabs[panel.tabs.active];
+                let before = grid_metrics(tab.zoom, panel.grid_width.get());
+                let after = grid_metrics(tab.zoom, width);
+                panel.grid_width.set(width);
+                if !tab.mode.is_grid() {
+                    return; // remembered; the next rebuild will use it
+                }
+                // Two widths of the same "packing bucket" yield the exact same
+                // geometry: resizing across one must not rebuild the rows.
+                if before == after {
+                    return;
+                }
+                rebuild_panel_rows(
+                    panel,
+                    st.config.borrow().language,
+                    compact,
+                    &annotations_now(&st),
+                    &st.clipboard.borrow(),
+                );
             }
-            let tab = &panel.tabs.tabs[panel.tabs.active];
-            let before = grid_metrics(tab.zoom, panel.grid_width.get());
-            let after = grid_metrics(tab.zoom, width);
-            panel.grid_width.set(width);
-            if !tab.mode.is_grid() {
-                return; // remembered; the next rebuild will use it
-            }
-            // Two widths of the same "packing bucket" yield the exact same
-            // geometry: resizing across one must not rebuild the rows.
-            if before == after {
-                return;
-            }
-            rebuild_panel_rows(
-                panel,
-                st.config.borrow().language,
-                compact,
-                &annotations_now(&st),
-                &st.clipboard.borrow(),
-            );
-        }
-        update_panels_ui(&w, &st);
-    });
+            update_panels_ui(&w, &st);
+        });
 }
 
 pub(super) fn install_zoom_view(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_zoom_view(
+    window.global::<crate::PanelsApi>().on_zoom_view(
         move |idx: i32, delta: i32, top: f32, height: f32, pointer_y: f32| {
             let Some(w) = weak.upgrade() else {
                 return top.max(0.0);
@@ -130,26 +132,28 @@ pub(super) fn install_zoom_view(window: &MainWindow, state: AppState) {
 pub(super) fn install_toggle_show_hidden(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_toggle_show_hidden(move |idx: i32| {
-        let Some(w) = weak.upgrade() else { return };
-        let idx = idx as usize;
-        let path = {
-            let mut panels = st.panels.borrow_mut();
-            if idx >= panels.len() {
-                return;
-            }
-            let active = panels[idx].tabs.active;
-            let t = &mut panels[idx].tabs.tabs[active];
-            t.show_hidden = !t.show_hidden;
-            t.current_path.clone()
-        };
-        refresh_listing(&w, &st, &path);
-    });
+    window
+        .global::<crate::PanelsApi>()
+        .on_toggle_show_hidden(move |idx: i32| {
+            let Some(w) = weak.upgrade() else { return };
+            let idx = idx as usize;
+            let path = {
+                let mut panels = st.panels.borrow_mut();
+                if idx >= panels.len() {
+                    return;
+                }
+                let active = panels[idx].tabs.active;
+                let t = &mut panels[idx].tabs.tabs[active];
+                t.show_hidden = !t.show_hidden;
+                t.current_path.clone()
+            };
+            refresh_listing(&w, &st, &path);
+        });
 }
 
 pub(super) fn install_imgmeta_ready(window: &MainWindow, state: AppState) {
     let st = state.clone();
-    window.on_imgmeta_ready(
+    window.global::<crate::PanelsApi>().on_imgmeta_ready(
         move |panel_idx: i32,
               row_idx: i32,
               path: SharedString,
@@ -190,50 +194,52 @@ pub(super) fn install_imgmeta_ready(window: &MainWindow, state: AppState) {
 
 pub(super) fn install_thumb_ready(window: &MainWindow, state: AppState) {
     let st = state.clone();
-    window.on_thumb_ready(move |path: SharedString, serial: i32, img: Image| {
-        let key = path.to_string();
-        let target = PathBuf::from(&key);
-        let locations = st.thumb_scheduler.in_flight_locations(&target, serial);
-        if locations.is_empty() {
-            // The path was invalidated or superseded while decoding. Never
-            // let an old generation repopulate the cache under a reused name.
-            st.thumb_scheduler.complete(&target, serial);
-            return;
-        }
-        st.thumb_cache.borrow_mut().put(key.clone(), img.clone());
-        let panels = st.panels.borrow();
-        for location in locations {
-            let Some(panel) = panels.get(location.panel) else {
-                continue;
-            };
-            let tab = &panel.tabs.tabs[panel.tabs.active];
-            if !tab.mode.thumbnails() {
-                continue;
+    window.global::<crate::PanelsApi>().on_thumb_ready(
+        move |path: SharedString, serial: i32, img: Image| {
+            let key = path.to_string();
+            let target = PathBuf::from(&key);
+            let locations = st.thumb_scheduler.in_flight_locations(&target, serial);
+            if locations.is_empty() {
+                // The path was invalidated or superseded while decoding. Never
+                // let an old generation repopulate the cache under a reused name.
+                st.thumb_scheduler.complete(&target, serial);
+                return;
             }
-            let model = &panel.rows_model;
-            let Some(mut row) = model.row_data(location.row) else {
-                continue;
-            };
-            // The index may have been recycled by a watcher: the path remains
-            // authoritative. A row outside the window keeps only the LRU.
-            if row.rendered
-                && row.thumbnail.size().width == 0
-                && row_path(&row).as_deref() == Some(target.as_path())
-            {
-                row.thumbnail = img.clone();
-                model.set_row_data(location.row, row);
+            st.thumb_cache.borrow_mut().put(key.clone(), img.clone());
+            let panels = st.panels.borrow();
+            for location in locations {
+                let Some(panel) = panels.get(location.panel) else {
+                    continue;
+                };
+                let tab = &panel.tabs.tabs[panel.tabs.active];
+                if !tab.mode.thumbnails() {
+                    continue;
+                }
+                let model = &panel.rows_model;
+                let Some(mut row) = model.row_data(location.row) else {
+                    continue;
+                };
+                // The index may have been recycled by a watcher: the path remains
+                // authoritative. A row outside the window keeps only the LRU.
+                if row.rendered
+                    && row.thumbnail.size().width == 0
+                    && row_path(&row).as_deref() == Some(target.as_path())
+                {
+                    row.thumbnail = img.clone();
+                    model.set_row_data(location.row, row);
+                }
             }
-        }
-        // The worker waits for this acknowledgment before choosing the next job:
-        // a scroll that happened during the decoding can therefore re-prioritize the
-        // queue before the next thumbnail is started.
-        st.thumb_scheduler.complete(Path::new(&key), serial);
-    });
+            // The worker waits for this acknowledgment before choosing the next job:
+            // a scroll that happened during the decoding can therefore re-prioritize the
+            // queue before the next thumbnail is started.
+            st.thumb_scheduler.complete(Path::new(&key), serial);
+        },
+    );
 }
 
 pub(super) fn install_folder_stats_ready(window: &MainWindow, state: AppState) {
     let st = state.clone();
-    window.on_folder_stats_ready(
+    window.global::<crate::PanelsApi>().on_folder_stats_ready(
         move |panel_idx: i32,
               row_idx: i32,
               path: SharedString,
@@ -286,52 +292,58 @@ pub(super) fn install_panel_column_resized(window: &MainWindow, state: AppState)
     // End of a column resize: stores its width
     // per panel (survives model rebuilds). Uniform for any
     // resizable column (name/path/size/modified/ext/resolution/depth).
-    window.on_panel_column_resized(move |idx: i32, id: SharedString, width: f32| {
-        let mut panels = st.panels.borrow_mut();
-        if let Some(p) = panels.get_mut(idx as usize) {
-            set_col_width(&mut p.columns, &id, width);
-        }
-    });
+    window.global::<crate::PanelsApi>().on_panel_column_resized(
+        move |idx: i32, id: SharedString, width: f32| {
+            let mut panels = st.panels.borrow_mut();
+            if let Some(p) = panels.get_mut(idx as usize) {
+                set_col_width(&mut p.columns, &id, width);
+            }
+        },
+    );
 }
 
 pub(super) fn install_column_toggle(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_column_toggle(move |idx: i32, id: SharedString, visible: bool| {
-        let Some(w) = weak.upgrade() else { return };
-        let id = id.to_string();
-        {
-            let mut panels = st.panels.borrow_mut();
-            if let Some(p) = panels.get_mut(idx as usize) {
-                // The "name" anchor column is never hideable.
-                if id != "name"
-                    && let Some(c) = p.columns.iter_mut().find(|c| c.id == id)
-                {
-                    c.visible = visible;
+    window.global::<crate::PanelsApi>().on_column_toggle(
+        move |idx: i32, id: SharedString, visible: bool| {
+            let Some(w) = weak.upgrade() else { return };
+            let id = id.to_string();
+            {
+                let mut panels = st.panels.borrow_mut();
+                if let Some(p) = panels.get_mut(idx as usize) {
+                    // The "name" anchor column is never hideable.
+                    if id != "name"
+                        && let Some(c) = p.columns.iter_mut().find(|c| c.id == id)
+                    {
+                        c.visible = visible;
+                    }
                 }
             }
-        }
-        update_panels_ui(&w, &st);
-        // resolution/depth column enabled → computes the missing image
-        // metadata (no-op if no relevant column is visible).
-        request_imgmeta(&st);
-        st.persist_workspace();
-    });
+            update_panels_ui(&w, &st);
+            // resolution/depth column enabled → computes the missing image
+            // metadata (no-op if no relevant column is visible).
+            request_imgmeta(&st);
+            st.persist_workspace();
+        },
+    );
 }
 
 pub(super) fn install_column_moved(window: &MainWindow, state: AppState) {
     let st = state.clone();
     let weak = window.as_weak();
-    window.on_column_moved(move |idx: i32, id: SharedString, delta: i32| {
-        let Some(w) = weak.upgrade() else { return };
-        let id = id.to_string();
-        {
-            let mut panels = st.panels.borrow_mut();
-            if let Some(p) = panels.get_mut(idx as usize) {
-                reorder_column_by_delta(&mut p.columns, &id, delta as f32);
+    window.global::<crate::PanelsApi>().on_column_moved(
+        move |idx: i32, id: SharedString, delta: i32| {
+            let Some(w) = weak.upgrade() else { return };
+            let id = id.to_string();
+            {
+                let mut panels = st.panels.borrow_mut();
+                if let Some(p) = panels.get_mut(idx as usize) {
+                    reorder_column_by_delta(&mut p.columns, &id, delta as f32);
+                }
             }
-        }
-        update_panels_ui(&w, &st);
-        st.persist_workspace();
-    });
+            update_panels_ui(&w, &st);
+            st.persist_workspace();
+        },
+    );
 }

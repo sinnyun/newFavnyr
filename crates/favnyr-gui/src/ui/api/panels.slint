@@ -1,0 +1,200 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global PanelsApi {
+    // Panels: flattened rendering of the layout tree.
+    in property <[PanelView]> panels;
+    // Per-panel footers, indexed like `panels`. PARALLEL model,
+    // deliberately kept separate from `panels`: the bridge can write the selection
+    // count to it on every rubber-band step without rewriting the `PanelView`s
+    // (see `PanelComponent.footer-text`).
+    in property <[string]> panel-footers;
+    // Where each view sits, parallel to `panels` — see `PanelBox`.
+    in property <[PanelBox]> panel-boxes;
+    in property <[SplitterView]> splitters;
+    in property <int> active-panel-idx: 0;
+    in property <bool> can-add-panel: true;
+    callback panel-clicked(int);
+    callback panel-closed(int);
+    /// Two views exchange their places in the layout. Nothing else moves:
+    /// neither the shape of the split tree nor a single proportion, so each
+    /// view takes the size of its new place.
+    callback views-swapped(int, int);
+    /// A view released outside the window leaves for a window of its own.
+    callback view-torn-off(int, length, length);
+    /// Evens out the views a separator governs: `idx` designates it, `-1`
+    /// means the whole layout (the menu, which aims at no separator).
+    /// Double-clicking the same separator again puts the sizes back.
+    callback equalize-views(int);
+    /// More than one view, so there is something to even out.
+    in property <bool> equalize-available: false;
+    /// A way back is being held: the menu row offers it instead.
+    in property <bool> equalize-undone: false;
+    /// Splits the active panel. `dir`: 0 = side by side (Row), 1 = stacked (Column).
+    callback panel-split(int);
+    /// Resize of a splitter: `idx` of the Split node, `frac` = pointer
+    /// position as a fraction [0,1] of the container along the split axis.
+    callback splitter-resized(int, float);
+    /// Sets the display mode of panel `idx`'s active tab: "list", "previews"
+    /// or "grid" (the mode menu of the view button).
+    callback set-view-mode(int /*idx*/, string /*mode code*/);
+    /// Advances panel `idx`'s active tab to the next display mode
+    /// (list → previews → grid → list): the view button's Ctrl+P route.
+    callback cycle-view-mode(int /*idx*/);
+    /// Shows / hides the contents of the direct subfolders for panel `idx`'s
+    /// active tab ("show subfolder contents": one section per subfolder).
+    callback toggle-subfolder-contents(int /*idx*/);
+    /// Folds / unfolds a section (header click), by its key.
+    callback toggle-section(int /*idx*/, string /*section key*/);
+    /// Width of a view's list area, in logical px — what the grid packs its
+    /// tiles with. Reported whenever the area changes size.
+    callback rows-area-width(int /*idx*/, length /*width*/);
+    /// Zoom of panel `idx`'s active tab entries: `delta` = +1 / -1.
+    /// The viewport and pointer position let the bridge preserve
+    /// a semantic anchor despite variable row heights.
+    callback zoom-view(int /*idx*/, int /*delta*/, length /*top*/, length /*height*/,
+        length /*pointer-y*/) -> length;
+    /// Current state of the Ctrl key (tracked by the root FocusScope) — used
+    /// to distinguish wheel (scroll) from Ctrl+wheel (zoom).
+    in-out property <bool> ctrl-down: false;
+    /// Current state of the Shift key (tracked like `ctrl-down`) — rubber-band mode:
+    /// Shift = add to selection, Ctrl = subtract.
+    in-out property <bool> shift-down: false;
+    /// Shows / hides hidden files for panel `idx`'s active tab.
+    callback toggle-show-hidden(int);
+    /// Keyboard navigation of the active view's cursor. `kind`: 0=up,
+    /// 1=down, 2=start, 3=end. `extend` = extend the selection (Shift).
+    callback move-cursor(int, bool);
+    /// Resolves a key combination → action id (or "" if none) using the
+    /// effective shortcut map (defaults + overrides). `keyname` is already
+    /// normalized by `chord-key-name`.
+    callback match-action(string, bool, bool, bool) -> string;
+    /// Emitted by the bridge when a thumbnail is ready (full path, generation, image).
+    callback thumb-ready(string, int, image);
+    /// Exact viewport of a panel: drives virtualization and prioritization.
+    callback panel-viewport-changed(int /*panel*/, length /*top*/, length /*height*/);
+    /// Hit-test of a content ordinate within variable-height rows.
+    callback panel-row-at-content-y(int /*panel*/, length /*y*/) -> int;
+    /// Wakes the UI thread from the INITIAL FILL thread: drains
+    /// the channel of delivered listings (the Rust handler captured the AppState).
+    callback initial-listing-drain();
+    /// Ordinary background listings delivered off-UI, with an anti-race generation.
+    callback async-listing-drain();
+    /// "Show subfolder contents" scans delivered off-UI: drains the queue of
+    /// finished scans (the Rust handler captured the AppState).
+    callback subfolders-drain();
+    // the worker computed a folder's recursive stats (path, Unix mtime, total
+    // size in bytes — both as text to dodge Slint's `int` i32 limit; an empty
+    // string means "not computed" for that metric).
+    callback folder-stats-ready(int /* panel */, int /* row */, string /* path */, string /* mtime */, string /* size */);
+    // the worker read an image's metadata (path, resolution, bits).
+    callback imgmeta-ready(
+        int /* panel */, int /* row */, string /* path */,
+        string /* resolution */, string /* depth */, string /* mtime (unix, text) */
+    );
+    callback set-tab-bar-mode(int /*panel*/, int /*mode*/);
+    /// Vertical bar width resized via the grip —
+    /// persisted per view on the bridge side.
+    callback panel-vbar-resized(int /*panel*/, length /*width*/);
+    /// Bumped by the menu's "Copy"; the URL field watches it and copies its
+    /// own selection. A callback could not do this: the field is inside a
+    /// panel, and only it knows what is highlighted.
+    in-out property <int> url-copy-serial: 0;
+    in-out property <int> url-paste-serial: 0;
+    // EDITABLE text of the URL bar (shared: only one panel in edit mode at
+    // a time). Lets the bridge paste the clipboard into it without submitting.
+    in-out property <string> url-edit-text;
+    // ----- Column widths: PER PANEL (carried by each PanelView).
+    //       A header resize reports here with the panel's index. -----
+    callback panel-column-resized(int /*panel*/, string /*id*/, length /*width*/);
+    // Tab bar scroll target — geometric computation on the bridge side
+    // (panel, tab_idx[-1=chevron], forward, viewport-x, view-w) → viewport-x.
+    callback panel-scroll-target(int, int, bool, length, length) -> length;
+    // check/uncheck a column (panel_idx, col_id, visible) + menu.
+    callback column-toggle(int, string, bool);
+    // Reordering: panel, column identifier, and target visible index.
+    callback column-moved(int, string, int);
+    // extension filter. `ext-filter-toggle(panel)` shows/hides the bar
+    // (from the columns menu OR the close button). Input is shared with the
+    // type-ahead (filter-type/backspace/clear routed bridge-side).
+    callback ext-filter-toggle(int);
+    // changes the grouping mode (panel_idx, code "folders"/"files"/"mixed").
+    callback set-group-mode(int, string);
+    // Active view's "type-ahead" filter -----
+    // Typed text (maintained by the bridge). The bar shows in the active view
+    // as soon as it's non-empty. Reset on navigation / panel change / Escape.
+    in property <string> active-filter: "";
+    // Active panel's "extension filter" mode: when true, keyboard
+    // input (filter-type/backspace/clear) feeds the extension filter instead of
+    // the by-name type-ahead → shared routing on the bridge side.
+    in property <bool> active-ext-filter-on: false;
+    callback filter-type(string);       // a printable character typed
+    callback filter-backspace();        // removes the last character
+    callback filter-clear();            // clears it ("x" / Escape)
+    // EFFECTIVE shortcuts displayed in context menus, pushed by
+    // the bridge (dynamic: follow user rebinds).
+    in property <MenuShortcuts> menu-shortcuts;
+    // ----- Per-panel callbacks (routed from the active panel) -----
+    callback go-back();
+    callback go-forward();
+    callback go-parent();
+    callback go-home();
+    callback refresh();
+    callback sort-clicked(string);
+    callback row-activated(int);
+    callback row-clicked(int) -> bool;
+    callback row-ctrl-clicked(int);
+    callback row-shift-clicked(int);
+    callback select-all();
+    callback deselect-all();
+    callback rubber-band-begin(int);
+    callback rubber-band-update(length, length, length, length);
+    callback row-right-clicked(int, length, length);
+    callback tab-new();
+    callback tab-clicked(int);
+    callback tab-closed(int);
+    /// Drop of a tab on a FAVORITES folder: (src_panel, src_tab,
+    /// container id). Saves the tab's path into this folder.
+    callback tab-to-favorite(int, int, string);
+    in-out property <bool> mark-parent-hover: false;
+    in-out property <bool> mark-flyout-hover: false;
+    // Slot already applied to the target, so the strip can point at it.
+    in-out property <int> mark-current-color: 0;
+    in-out property <string> comment-target-name;   // shown as the caption
+    in-out property <string> comment-text;          // note the editor opens on
+    in-out property <bool> new-parent-hover: false;
+    in-out property <bool> new-flyout-hover: false;
+    callback filename-caret-offset(string /* name */, bool /* folder */) -> int;
+    in property <[OrphanRow]> orphan-rows;
+    callback orphan-toggled(string, bool);
+    // GLOBAL "notice" toast (e.g. "Access denied" on an unreadable folder) — set
+    // by the bridge, auto-cleared by a Timer. Independent of overlays.
+    in-out property <string> notice-text: "";
+    // Toast tone: 0 = danger (red), 1 = success (green),
+    // 2 = info (accent). Drives background + border + icon tint. Set by the bridge.
+    in-out property <int> notice-tone: 0;
+    // Toast icon: 0 = closed lock (access/error), 1 = open
+    // lock (eject OK), 2 = checkmark (generic success), 3 = bookmark (favorites).
+    in-out property <int> notice-icon: 0;
+    // Toast display duration, set by the bridge based on message LENGTH
+    // (adaptive reading time) — a long message (e.g. "service X is using the
+    // device") stays displayed longer.
+    in-out property <duration> notice-duration: 2800ms;
+    // Scroll of a panel's tab bar (viewport-x ≤ 0, plain) —
+    // reported to the bridge for cross-instance insertion hit-testing.
+    callback panel-tabs-scrolled(int, length);
+    callback duplicate-tab(int, int);                  // (panel, tab) → copy inserted after
+    // Context menu of a tab (right-click).
+    in-out property <bool> tab-menu-open: false;
+    in-out property <length> tab-menu-x;
+    in-out property <length> tab-menu-y;
+    in-out property <int> tab-menu-panel: -1;
+    in-out property <int> tab-menu-tab: -1;
+    // Menu of a tab bar's dead zone. It reuses the existing favorites
+    // callback and only exposes the specific restore action.
+    in-out property <bool> tab-empty-menu-open: false;
+    in-out property <length> tab-empty-menu-x;
+    in-out property <length> tab-empty-menu-y;
+    in-out property <int> tab-empty-menu-panel: -1;
+    in-out property <bool> closed-tabs-available: false;
+    callback reopen-last-closed-tab(int /*panel*/);
+}

@@ -39,7 +39,9 @@ pub(super) fn load_named_into(window: &MainWindow, state: &AppState, id: &str) {
             *state.current_workspace.borrow_mut() = Some(name);
             state.remember_workspace_saved();
             push_sidebar_sections_ui(window, state);
-            window.set_closed_tabs_available(state.has_closed_tabs());
+            window
+                .global::<crate::PanelsApi>()
+                .set_closed_tabs_available(state.has_closed_tabs());
             refresh_all_panels(window, state);
             state.persist_workspace();
             update_window_title(window, state);
@@ -54,7 +56,9 @@ pub(super) fn load_named_into(window: &MainWindow, state: &AppState, id: &str) {
 pub(super) fn reset_into(window: &MainWindow, state: &AppState) {
     state.reset_to_blank();
     push_sidebar_sections_ui(window, state);
-    window.set_closed_tabs_available(false);
+    window
+        .global::<crate::PanelsApi>()
+        .set_closed_tabs_available(false);
     refresh_all_panels(window, state);
     state.persist_workspace();
     update_window_title(window, state);
@@ -173,7 +177,10 @@ pub(super) fn refresh_workspaces_ui(window: &MainWindow, state: &AppState) {
                 .map(|m| m.id.clone())
         })
         .flatten();
-    if !window.get_ws_sort_newest_first() {
+    if !window
+        .global::<crate::WorkspacesApi>()
+        .get_ws_sort_newest_first()
+    {
         metas.reverse();
     }
     let entries: Vec<WorkspaceEntry> = metas
@@ -191,7 +198,9 @@ pub(super) fn refresh_workspaces_ui(window: &MainWindow, state: &AppState) {
             }
         })
         .collect();
-    window.set_workspaces(ModelRc::new(VecModel::from(entries)));
+    window
+        .global::<crate::WorkspacesApi>()
+        .set_workspaces(ModelRc::new(VecModel::from(entries)));
 }
 
 pub(super) fn normalized_workspace_name(name: &str) -> String {

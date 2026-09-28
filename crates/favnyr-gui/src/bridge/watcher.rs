@@ -54,13 +54,16 @@ pub(super) fn install_watcher(state: &AppState, window: &MainWindow, path: &Path
                                         // their pointer capture. A long operation also
                                         // suspends them, to avoid re-listing on every write;
                                         // `run_heavy` calls `refresh_all` at its end.
-                                        if w.get_file_drag_active() {
-                                            w.set_file_drag_refresh_pending(true);
+                                        if w.global::<crate::DragDropApi>().get_file_drag_active() {
+                                            w.global::<crate::DragDropApi>()
+                                                .set_file_drag_refresh_pending(true);
                                             return;
                                         }
-                                        let busy = w.get_drag_active() || w.get_op_busy();
+                                        let busy =
+                                            w.global::<crate::DragDropApi>().get_drag_active()
+                                                || w.global::<crate::OperationsApi>().get_op_busy();
                                         if !busy {
-                                            w.invoke_refresh();
+                                            w.global::<crate::PanelsApi>().invoke_refresh();
                                         }
                                     },
                                 );

@@ -97,18 +97,37 @@ pub(super) fn advance_paste(window: &MainWindow, state: &AppState) {
             rename_only,
             is_dir,
         } => {
-            window.set_paste_conflict_original(original.into());
-            window.set_paste_conflict_name(suggested.into());
-            window.set_paste_conflict_name_taken(false);
-            window.set_paste_conflict_rename_only(rename_only);
-            window.set_paste_conflict_is_dir(is_dir);
-            window.set_paste_conflict_open(true);
-            window.set_paste_conflict_focus_gen(
-                window.get_paste_conflict_focus_gen().wrapping_add(1),
-            );
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_original(original.into());
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_name(suggested.into());
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_name_taken(false);
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_rename_only(rename_only);
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_is_dir(is_dir);
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_open(true);
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_focus_gen(
+                    window
+                        .global::<crate::OperationsApi>()
+                        .get_paste_conflict_focus_gen()
+                        .wrapping_add(1),
+                );
         }
         Step::Execute(job) => {
-            window.set_paste_conflict_open(false);
+            window
+                .global::<crate::OperationsApi>()
+                .set_paste_conflict_open(false);
             execute_paste(window, state, job);
         }
     }

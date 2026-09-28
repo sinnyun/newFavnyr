@@ -110,8 +110,12 @@ pub(super) fn build_shortcut_groups(state: &AppState) -> (Vec<ShortcutGroup>, bo
 /// Pushes the shortcut list + the overrides state to the UI.
 pub(super) fn push_shortcuts_ui(window: &MainWindow, state: &AppState) {
     let (groups, has_overrides) = build_shortcut_groups(state);
-    window.set_shortcut_groups(ModelRc::new(VecModel::from(groups)));
-    window.set_shortcut_has_overrides(has_overrides);
+    window
+        .global::<crate::SettingsApi>()
+        .set_shortcut_groups(ModelRc::new(VecModel::from(groups)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_shortcut_has_overrides(has_overrides);
     // Context menus reflect the SAME effective map (dynamic).
     push_menu_shortcuts(window, state);
 }
@@ -162,24 +166,26 @@ pub(super) fn push_menu_shortcuts(window: &MainWindow, state: &AppState) {
     let lang = state.snapshot_config().language;
     let km = state.keymap.borrow();
     let d = |id: &str| SharedString::from(chord_display(lang, km.chord_of(id)));
-    window.set_menu_shortcuts(MenuShortcuts {
-        open: d("open"),
-        terminal: d("terminal"),
-        copy: d("copy"),
-        cut: d("cut"),
-        paste: d("paste"),
-        rename: d("rename"),
-        delete: d("delete"),
-        properties: d("properties"),
-        new_folder: d("new-folder"),
-        new_file: d("new-file"),
-        split_side: d("split-side"),
-        split_stack: d("split-stack"),
-        equalize: d("equalize-views"),
-        tab_reopen_closed: d("tab-reopen-closed"),
-        open_settings: d("open-settings"),
-        open_workspaces: d("open-workspaces"),
-    });
+    window
+        .global::<crate::PanelsApi>()
+        .set_menu_shortcuts(MenuShortcuts {
+            open: d("open"),
+            terminal: d("terminal"),
+            copy: d("copy"),
+            cut: d("cut"),
+            paste: d("paste"),
+            rename: d("rename"),
+            delete: d("delete"),
+            properties: d("properties"),
+            new_folder: d("new-folder"),
+            new_file: d("new-file"),
+            split_side: d("split-side"),
+            split_stack: d("split-stack"),
+            equalize: d("equalize-views"),
+            tab_reopen_closed: d("tab-reopen-closed"),
+            open_settings: d("open-settings"),
+            open_workspaces: d("open-workspaces"),
+        });
 }
 
 /// Applies an override (or removes it if it equals the default) + rebuilds the map.
@@ -227,7 +233,7 @@ pub(super) fn push_active_footer(window: &MainWindow, state: &AppState, selected
     // label) would invalidate the Repeater's `rendered-rows` model property and,
     // on every rubber-band step, selection `row_changed`s would be
     // deferred until a re-list (scroll) — resulting in "skipped" entries.
-    let footers = window.get_panel_footers();
+    let footers = window.global::<crate::PanelsApi>().get_panel_footers();
     if let Some(cur) = footers.row_data(idx)
         && cur.as_str() != footer.as_str()
     {

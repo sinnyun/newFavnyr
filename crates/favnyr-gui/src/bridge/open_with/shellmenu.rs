@@ -10,11 +10,15 @@ pub(in crate::bridge) fn refresh_shell_menu(
     state: &AppState,
     targets: &[PathBuf],
 ) -> usize {
-    window.set_ctx_shell_sub_open(false); // resets the flyout from a previous opening
+    window
+        .global::<crate::MenuApi>()
+        .set_ctx_shell_sub_open(false); // resets the flyout from a previous opening
     let enabled = state.config.borrow().shell_ctx_menu;
     if !enabled || targets.is_empty() {
         *state.shell_menu.borrow_mut() = None;
-        window.set_ctx_shell_entries(ModelRc::new(VecModel::from(Vec::<ShellCtxEntry>::new())));
+        window
+            .global::<crate::MenuApi>()
+            .set_ctx_shell_entries(ModelRc::new(VecModel::from(Vec::<ShellCtxEntry>::new())));
         return 0;
     }
     let work_dir = state.current_path();
@@ -73,13 +77,17 @@ pub(in crate::bridge) fn refresh_shell_menu(
             let n = items.len();
             *state.shell_menu.borrow_mut() = Some(session);
             *state.shell_subs.borrow_mut() = subs;
-            window.set_ctx_shell_entries(ModelRc::new(VecModel::from(items)));
+            window
+                .global::<crate::MenuApi>()
+                .set_ctx_shell_entries(ModelRc::new(VecModel::from(items)));
             n
         }
         None => {
             *state.shell_menu.borrow_mut() = None;
             *state.shell_subs.borrow_mut() = Vec::new();
-            window.set_ctx_shell_entries(ModelRc::new(VecModel::from(Vec::<ShellCtxEntry>::new())));
+            window
+                .global::<crate::MenuApi>()
+                .set_ctx_shell_entries(ModelRc::new(VecModel::from(Vec::<ShellCtxEntry>::new())));
             0
         }
     }
@@ -189,5 +197,7 @@ pub(in crate::bridge) fn refresh_shell_ext_rows(window: &MainWindow, state: &App
             label: l.into(),
         })
         .collect();
-    window.set_shell_ext_rows(ModelRc::new(VecModel::from(rows)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_shell_ext_rows(ModelRc::new(VecModel::from(rows)));
 }

@@ -1,0 +1,33 @@
+import { Strings } from "../structs.slint";
+
+export global ApplicationApi {
+    in property <Strings> strings;
+    in property <[string]> language-labels;
+    in property <[string]> theme-labels;
+    in property <[string]> ui-scale-labels;
+    in-out property <int> language-index: 0;
+    in-out property <int> theme-pref: 0;
+    in-out property <int> ui-scale-index: 0;
+    callback language-changed(int);
+    callback theme-changed(int);
+    callback ui-scale-changed(int);
+
+    in property <bool> ffmpeg-found: false;
+    in property <string> ffmpeg-version;
+    in property <bool> ffmpeg-flatpak: false;
+    in property <int> ffmpeg-detected-index: -1;
+    callback ffmpeg-recheck();
+    callback settings-copy(string);
+
+    in property <[string]> tabbar-default-labels;
+    in-out property <int> tabbar-default-pref: 0;
+    callback tabbar-default-changed(int);
+    in-out property <int> clock-utc-pref: 0;
+    callback clock-mode-changed(int);
+    in-out property <bool> tab-tooltip-enabled: false;
+    callback tab-tooltip-changed(bool);
+    in-out property <bool> ws-warn-unsaved: true;
+    callback ws-warn-unsaved-changed(bool);
+    in-out property <bool> compact-preview-rows-enabled: true;
+    callback compact-preview-rows-changed(bool);
+}

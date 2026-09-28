@@ -130,7 +130,11 @@ pub(super) fn spawn_thumb_worker(scheduler: Arc<ThumbScheduler>, weak: slint::We
                 let posted = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak_for_ui.upgrade() {
                         match Image::load_from_path(&ui_path) {
-                            Ok(img) => w.invoke_thumb_ready(path_str.into(), serial, img),
+                            Ok(img) => w.global::<crate::PanelsApi>().invoke_thumb_ready(
+                                path_str.into(),
+                                serial,
+                                img,
+                            ),
                             Err(_) => scheduler_for_ui.complete(&ui_path, serial),
                         }
                     } else {
@@ -152,7 +156,11 @@ pub(super) fn spawn_thumb_worker(scheduler: Arc<ThumbScheduler>, weak: slint::We
             let completion_path = wait_path.clone();
             let posted = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak_for_ui.upgrade() {
-                    w.invoke_thumb_ready(path_str.into(), serial, image_from_thumb(&thumb));
+                    w.global::<crate::PanelsApi>().invoke_thumb_ready(
+                        path_str.into(),
+                        serial,
+                        image_from_thumb(&thumb),
+                    );
                 } else {
                     scheduler_for_ui.complete(&completion_path, serial);
                 }

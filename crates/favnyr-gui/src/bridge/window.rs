@@ -57,8 +57,12 @@ pub fn persist_window_size(window: &MainWindow, state: &AppState) {
     }
 
     // Left panel: open state + width.
-    let left_panel = window.get_left_panel();
-    let sidebar_width = window.get_sidebar_width().round().max(0.0) as u32;
+    let left_panel = window.global::<crate::SidebarApi>().get_left_panel();
+    let sidebar_width = window
+        .global::<crate::SidebarApi>()
+        .get_sidebar_width()
+        .round()
+        .max(0.0) as u32;
 
     let cfg = state.snapshot_config();
     let dimensions_changed = logical_size

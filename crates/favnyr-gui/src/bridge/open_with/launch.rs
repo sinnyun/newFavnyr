@@ -63,7 +63,10 @@ pub(in crate::bridge) fn create_link_entry(
         return None;
     }
     // Symlink tab checked → direct link with the exact name; otherwise .lnk shortcut.
-    if window.get_create_link_symlink() {
+    if window
+        .global::<crate::OperationsApi>()
+        .get_create_link_symlink()
+    {
         if !ops::is_valid_entry_name(name) {
             error!(name, "invalid link name");
             return None;
@@ -271,13 +274,15 @@ pub(in crate::bridge) fn open_selected_files(
         return;
     }
     let lang = state.config.borrow().language;
-    window.set_open_many_body(
+    window.global::<crate::OperationsApi>().set_open_many_body(
         i18n::tr(lang, "open_many_body")
             .replace("{count}", &paths.len().to_string())
             .into(),
     );
     *state.pending_open.borrow_mut() = paths;
-    window.set_open_many_open(true);
+    window
+        .global::<crate::OperationsApi>()
+        .set_open_many_open(true);
 }
 
 /// Opens FILE(s), never a folder. Shared by the double-click AND by
@@ -330,23 +335,53 @@ pub(in crate::bridge) fn open_ow_create(
     program: &str,
     name: &str,
 ) {
-    window.set_ow_popup_id(SharedString::new());
-    window.set_ow_popup_name(name.into());
-    window.set_ow_popup_program(program.into());
-    window.set_ow_popup_icon_kind(openers::OpenerIcon::None.as_i32());
-    window.set_ow_popup_is_store(false); // creation = command with an executable
-    window.set_ow_popup_args(SharedString::new());
-    window.set_ow_popup_default_ext(SharedString::new());
-    window.set_ow_popup_used_ext(SharedString::new());
-    window.set_ow_popup_elevated(false); // unchecked by default
-    window.set_ow_popup_ctx_file(false); // not pinned by default
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_id(SharedString::new());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_name(name.into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_program(program.into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_icon_kind(openers::OpenerIcon::None.as_i32());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_is_store(false); // creation = command with an executable
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_args(SharedString::new());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_default_ext(SharedString::new());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_used_ext(SharedString::new());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_elevated(false); // unchecked by default
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_ctx_file(false); // not pinned by default
     // Every file, so ticking "Files" changes nothing about who sees the entry
     // until the user narrows it down deliberately.
-    window.set_ow_popup_ctx_ext(openers::CTX_EXT_ALL.into());
-    window.set_ow_popup_ctx_dir(false);
-    window.set_ow_popup_ctx_bg(false);
-    window.set_ow_popup_add(true);
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_ctx_ext(openers::CTX_EXT_ALL.into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_ctx_dir(false);
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_ctx_bg(false);
+    window.global::<crate::SettingsApi>().set_ow_popup_add(true);
     recompute_ow_preview(window, state);
-    window.set_ow_popup_open(true);
-    window.set_ow_popup_focus_armed(true);
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_open(true);
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_focus_armed(true);
 }

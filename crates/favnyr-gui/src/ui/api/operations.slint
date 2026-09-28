@@ -1,0 +1,137 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global OperationsApi {
+    /// Guard before opening a whole selection of files at once. The body
+    /// carries the count and is written by the bridge.
+    in-out property <bool> open-many-open: false;
+    in-out property <string> open-many-body;
+    callback open-many-confirmed();
+    callback refresh-all();   // re-lists ALL panels (after a multi-view op)
+
+    callback rename-confirmed(string);
+    callback rename-force-replace(string) -> bool;
+    callback navigate-to(string);
+    in property <bool> selection-is-executable;     // drives "Use as application"
+    callback run-opener(string /*id*/);             // runs an opener on the selection
+    // ----- Global operations (target the active panel) -----
+    callback action-open();
+    callback action-open-new-tab();
+    callback action-open-admin();   // "Open as administrator" (file, Windows)
+    callback action-open-with();
+    callback action-open-parent();
+    callback action-open-terminal();
+    callback action-copy();
+    callback action-cut();
+    callback action-paste();
+    callback action-duplicate();
+    callback action-copy-path();
+    callback action-copy-name();
+    callback action-rename();
+    callback action-delete();
+    callback action-delete-permanent();
+    callback action-restore-last-trashed();
+    // Internal deliveries from the trash workers, drained on the UI thread.
+    callback process-op-events();
+    callback action-properties();
+    // ----- Rename modal popup -----
+    in-out property <bool> rename-popup-open: false;
+    in property <string> rename-current-name;
+    // Folders keep the caret at the end; for a file, the bridge places
+    // the caret right before the extension via `fs::ops::split_name`.
+    in property <bool> rename-current-is-dir: false;
+    in-out property <string> rename-new-name;
+    // Name conflict (same logic as paste): `rename-check` is called on
+    // every keystroke; the bridge sets `rename-conflict` if the name is already
+    // taken at the same level (or invalid). Blocks confirmation.
+    in-out property <bool> rename-conflict: false;
+    // Already-translated reason the name is refused ("" when it is fine).
+    // Filled by the bridge, which alone knows whether the name is taken or
+    // simply unusable on this filesystem.
+    in-out property <string> rename-name-error: "";
+    // Replaceable conflict, file↔file only. Distinguishes a real duplicate
+    // from an invalid name or a conflict involving a folder.
+    in-out property <bool> rename-replace-available: false;
+    callback rename-check(string);
+    // ----- New folder / file / shortcut popup (empty area) -----
+    in-out property <bool> create-popup-open: false;
+    // Type of entry to create: 0 = folder, 1 = file, 2 = shortcut.
+    in-out property <int> create-kind: 0;
+    in-out property <string> create-name;
+    // New folder/file: live validation shared with Rename.
+    // Shortcuts/links keep their own specific rules.
+    in-out property <bool> create-name-valid: false;
+    in-out property <bool> create-conflict: false;
+    // Already-translated reason the name is refused ("" when it is fine), see
+    // `rename-name-error`.
+    in-out property <string> create-name-error: "";
+    // Target of a shortcut (mode 2): pointed-to path, typed or chosen via Browse.
+    in-out property <string> create-target;
+    // Shortcut popup tab: true = target a FOLDER, false = a
+    // FILE. Only drives the "Browse…" picker's type (creating
+    // the .lnk is identical). Default: folder.
+    in-out property <bool> create-shortcut-folder: true;
+    // "Create a shortcut" popup tab (kind 3): true = symlink,
+    // false = .lnk shortcut (Windows). Target = selected file (create-target).
+    in-out property <bool> create-link-symlink: false;
+    callback create-check(int /*kind*/, string /*name*/);
+    callback create-confirmed(int /*kind*/, string /*name*/, string /*target*/) -> bool;
+    callback create-browse-target();           // native picker → fills create-target
+    callback action-create-link();             // file context menu → kind 3 popup
+    // Permanent-deletion warning, shared between a network volume
+    // without a trash and the explicit Shift+Delete shortcut.
+    in-out property <bool> delete-warning-open: false;
+    // true = explicit permanent deletion; false = standard network
+    // deletion (the `trash` primitive will itself fall back to permanent).
+    in-out property <bool> delete-warning-permanent: false;
+    callback delete-warning-confirmed();
+    // Paste conflict popup -----
+    in-out property <bool> paste-conflict-open: false;
+    // Bumped by the bridge for EACH conflict, including when the popup stays
+    // open between two items. This makes focus reliable across the whole series.
+    in-out property <int> paste-conflict-focus-gen: 0;
+    // Original name in conflict (shown in the message).
+    in property <string> paste-conflict-original;
+    // Type of the source, to never interpret a folder name's dot
+    // as an extension when positioning the caret.
+    in property <bool> paste-conflict-is-dir: false;
+    // Name proposed / edited by the user.
+    in-out property <string> paste-conflict-name;
+    // True if the entered name is already taken (or invalid) — disables "Paste".
+    in property <bool> paste-conflict-name-taken: false;
+    // True when the conflict is a COPY WITHIN THE SAME FOLDER: overwriting
+    // would amount to destroying the source, skipping amounts to canceling → we show
+    // ONLY "Cancel" / "Paste" (with the renamed name). Set by the bridge.
+    in property <bool> paste-conflict-rename-only: false;
+    /// Live validation on every keystroke (the bridge updates name-taken).
+    callback paste-conflict-check(string);
+    /// Pastes with the entered name (resolves this conflict, moves to the next).
+    callback paste-conflict-confirm(string);
+    /// Skips this item — the others continue.
+    callback paste-conflict-skip();
+    /// Overwrites the existing target for THIS item, then moves to the next.
+    callback paste-conflict-replace();
+    /// Overwrites THIS item and all remaining conflicts, then runs.
+    callback paste-conflict-replace-all();
+    /// Skips THIS item and all remaining conflicts, then runs.
+    callback paste-conflict-skip-all();
+    /// Cancels the whole paste operation.
+    callback paste-conflict-cancel();
+    // Long operations in progress, one row per operation and one
+    // non-blocking floating toast each. Driven by the bridge (background threads).
+    // A row only appears once its operation passes the deferred-appearance
+    // threshold, so a quick copy never flashes a toast.
+    in property <[OpProgress]> ops: [];
+    // "+N others" summary shown when more operations run than the stack displays.
+    in property <string> ops-more-text;
+    /// `true` while at least one operation is in flight — including those with no
+    /// toast yet. Gates the deferred refreshes, which must not re-list mid-operation.
+    in property <bool> op-busy: false;
+    /// Emitted by the bridge (from a worker thread) to create or refresh one
+    /// operation's row.
+    callback op-progress(OpProgress);
+    callback op-cancel(int);
+    /// Emitted by the bridge at the end of an operation (releases it on the Rust side).
+    callback op-finished(int);
+    /// Closes one operation's toast, by hand or after its auto-dismiss delay.
+    callback op-dismiss(int);
+}

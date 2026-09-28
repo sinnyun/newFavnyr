@@ -1,0 +1,167 @@
+import { ColumnInfo, FavNode, MenuShortcuts, OpProgress, OpenerItem, OrphanRow, OwRecipe, PanelBox, PanelView, ShellCtxEntry, ShellExtRow, ShortcutGroup, SidebarPlace, SplitterView, Strings, WorkspaceEntry } from "../structs.slint";
+
+export global SettingsApi {
+    // Settings: default columns (1st launch / Reset) — all of them, with their
+    // default visibility. `default-column-toggle(id, visible)` updates the config.
+    in property <[ColumnInfo]> settings-columns;
+    callback default-column-toggle(string, bool);
+    // recursive folder modification-date depth
+    // (0 = disabled). Drives `Config.recursive_mtime_depth`.
+    in-out property <int> rmtime-depth: 0;
+    callback rmtime-depth-changed(int);
+    // recursive folder SIZE depth (0 = disabled).
+    // Drives `Config.recursive_size_depth`.
+    in-out property <int> size-depth: 0;
+    callback size-depth-changed(int);
+    // Configurable shortcuts -----
+    // Action groups (pushed by the bridge when settings open and
+    // after each modification / search).
+    in property <[ShortcutGroup]> shortcut-groups;
+    // True if at least one override exists (enables "Reset all").
+    in property <bool> shortcut-has-overrides: false;
+    // Action currently being reassigned (keyboard capture); "" = none.
+    in-out property <string> shortcut-capturing: "";
+    // Pending conflict: targeted action + localized message ready to display.
+    // (in-out: set by the bridge, reset by the UI on close.)
+    in-out property <string> shortcut-conflict-action: "";
+    in-out property <string> shortcut-conflict-message: "";
+    // Current search/filter text.
+    in-out property <string> shortcut-search-text: "";
+    callback shortcut-rebind(string /*action_id*/, string /*raw chord*/);
+    callback shortcut-reset(string /*action_id*/);
+    callback shortcut-unassign(string /*action_id*/);
+    callback shortcut-reset-all();
+    callback shortcut-resolve-conflict(bool /*reassign*/);
+    callback shortcut-search(string);
+    // ----- Settings: open an XDG path in the OS file manager -----
+    callback open-config-dir();
+    callback open-data-dir();
+    callback open-cache-dir();
+    // True on Windows only (pushed by the bridge): gates the
+    // "Open with…" entry (native picker), absent on other OSes.
+    in property <bool> platform-windows: false;
+    // True only on Linux: gates Linux-specific application discovery controls.
+    in property <bool> platform-linux: false;
+    // Open with -----
+    in property <[OpenerItem]> openers-suggested;   // "Open with" submenu
+    in property <[OpenerItem]> openers-all;         // Settings list
+    in-out property <string> opener-search-text: "";
+    callback opener-search(string);
+    callback ow-use-as-app();                       // creates an opener from the selected exe
+    callback ow-add();                              // blank creation popup (Settings)
+    // Ready-made archiving commands, empty when no archiver is installed.
+    // Recipes are pre-split into two balanced rows on the bridge side (Slint's
+    // `for` cannot carry an inline `if`), so the block wraps without sideways
+    // scroll. Row 1 holds the first half (the extra chip when the count is odd).
+    // Two balanced columns of full-width rows. Splitting in Rust rather than
+    // in Slint, whose `for` cannot carry an inline slice.
+    in property <[OwRecipe]> ow-recipes-col1: [];
+    in property <[OwRecipe]> ow-recipes-col2: [];
+    // Tools none of whose recipes could be resolved, already worded by the
+    // bridge — empty when everything supported is installed.
+    in property <string> ow-recipes-missing: "";
+    // Collapsed by default: expanded, the block would push the saved commands
+    // — the tab's actual content — below the fold for everyone.
+    in-out property <bool> ow-recipes-open: false;
+    callback ow-recipe-add(int);                    // opens the editor prefilled
+    callback ow-edit(string /*id*/);                // edit popup
+    callback ow-duplicate(string /*id*/);           // clones an entry
+    callback ow-delete(string /*id*/);
+    callback ow-move(string /*id*/, int /*dir -1/+1*/);
+    callback ow-popup-changed();                    // recomputes the preview (bridge)
+    callback ow-popup-commit();                     // saves OR launches (depending on the case)
+    callback ow-browse();                           // opens an exe picker (native)
+    // Home-grown application picker: list enumerated by the OS.
+    callback ow-open-picker();                      // "Choose an application…"
+    callback ow-pick(string /*key handler*/);       // choice → launches + captures
+    callback ow-pick-browse();                      // browse the OS → saves + launches
+    in property <[OpenerItem]> ow-picker-handlers;
+    in-out property <string> ow-picker-search-text: "";
+    callback ow-picker-search(string);
+    in-out property <bool> ow-picker-open: false;
+    callback ow-picker-show-other-apps-changed(bool);
+    // Linux-only discovery of .desktop launchers without a MimeType declaration.
+    in-out property <bool> ow-picker-show-other-apps: false;
+    // "Set as default": the chosen app becomes Favnyr's default for the
+    // file's extension (overrides the OS). Unchecked on every opening.
+    in-out property <bool> ow-picker-set-default: false;
+    in-out property <bool> ow-parent-hover: false;
+    in-out property <bool> ow-flyout-hover: false;
+    // "Custom command" popup (create/edit/one-shot launch).
+    in-out property <bool> ow-popup-open: false;
+    in-out property <bool> ow-popup-focus-armed: false;
+    in-out property <string> ow-popup-id: "";       // "" = creation
+    in-out property <string> ow-popup-name: "";
+    in-out property <string> ow-popup-program: "";
+    // Persisted visual family inherited from a ready-made recipe.
+    in-out property <int> ow-popup-icon-kind: 0;
+    // Opener based on an OS association (Windows Store/UWP app, Linux .desktop):
+    // no executable → the Program field is frozen + explicit label.
+    in-out property <bool> ow-popup-is-store: false;
+    in-out property <string> ow-popup-args: "";
+    // Run as administrator (UAC elevation) — Windows only, unchecked by
+    // default. The checkbox is only shown if `platform-windows`.
+    in-out property <bool> ow-popup-elevated: false;
+    // Pinning to the context menu: 3 checkboxes → file/folder/background bits.
+    in-out property <bool> ow-popup-ctx-file: false;
+    // Extensions the FILE entry is limited to; "*" means every file. Only
+    // meaningful with the Files box — folders and the background have none.
+    in-out property <string> ow-popup-ctx-ext: "";
+    in-out property <bool> ow-popup-ctx-dir: false;
+    in-out property <bool> ow-popup-ctx-bg: false;
+    in-out property <string> ow-popup-default-ext: "";
+    in-out property <string> ow-popup-used-ext: "";   // extensions listed in "Open with"
+    in-out property <bool> ow-popup-add: true;       // "Add to applications"
+    in property <string> ow-popup-preview: "";       // resolved preview (set by the bridge)
+    // How many processes the command will start, already worded by the bridge.
+    in property <string> ow-popup-runs: "";
+    in property <bool> ow-popup-valid: false;        // valid program (set by the bridge)
+    // Promotion toast after the native dialog (Windows).
+    in-out property <bool> ow-promote-visible: false;
+    callback ow-promote-accept();
+    // Setting: integrate the Windows menu (kill-switch if the extension is slow/broken).
+    in-out property <bool> shell-menu-enabled: true;
+    callback shell-menu-changed(bool);
+    // "Detected Windows entries" settings panel: list built at
+    // launch (completed as used), checkboxes → hide/show the entry.
+    in property <[ShellExtRow]> shell-ext-rows;
+    callback shell-ext-toggle(string /*label*/, bool /*enabled*/);
+    // ----- Settings -----
+    in-out property <bool> settings-open: false;
+    // Annotations pointing at an item that is gone. Counted when the panel
+    // opens, never swept on its own — see the hint beside the button.
+    in-out property <int> annotation-orphans: 0;
+    callback count-annotation-orphans();
+    /// Opens the cleanup list. The sweeping itself waits for an answer.
+    callback clean-annotations();
+    /// The cleanup list, and what is ticked in it.
+    ///
+    /// Ticks are NOT held here: the bridge owns the set of keys, and this model
+    /// only mirrors it. That is what lets "Select all" cover every orphan
+    /// rather than only the rows currently built.
+    in-out property <bool> orphans-open: false;
+    /// Label of the confirming button, count already interpolated by the
+    /// bridge — where the number sits in the sentence differs by language.
+    in property <string> orphans-confirm-label;
+    in property <int> orphans-checked: 0;
+    callback orphans-select-all(bool);
+    callback orphans-confirmed();
+    // App version (CARGO_PKG_VERSION), set by the bridge.
+    in property <string> app-version: "0.0.0";
+    // Active tab of the Settings panel: 0 = General, 1 = Shortcuts (key
+    // management has its own page so it no longer weighs down "General").
+    in-out property <int> settings-tab: 0;
+    // Sub-tab of the "Open with" tab: 0 = Favnyr commands,
+    // 1 = detected Windows entries (shell extensions).
+    in-out property <int> ow-subtab: 0;
+    // LAZY probe of the shell menu: triggered when the
+    // sub-tab opens — nothing at startup (see `scan_shell_ext`).
+    callback shell-ext-scan();
+    in property <string> config-dir-path;
+    in property <string> data-dir-path;
+    in property <string> cache-dir-path;
+    // True when the config folder == the data folder (Windows case:
+    // `config.toml` lives in the Data dir) → the "Configuration file" row
+    // would be redundant and is hidden. On Linux the two differ.
+    in property <bool> config-path-redundant: false;
+}

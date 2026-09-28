@@ -68,7 +68,7 @@ pub(super) fn push_op(
     let weak = weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(w) = weak.upgrade() {
-            w.invoke_op_progress(row);
+            w.global::<crate::OperationsApi>().invoke_op_progress(row);
         }
     });
 }
@@ -102,13 +102,17 @@ pub(super) fn refresh_ops_ui(window: &MainWindow, state: &AppState) {
     } else {
         i18n::op_more_text(state.snapshot_config().language, hidden)
     };
-    window.set_ops_more_text(text.into());
+    window
+        .global::<crate::OperationsApi>()
+        .set_ops_more_text(text.into());
 }
 
 /// Publishes whether anything heavy is in flight. Drives the deferred
 /// refreshes, which must not re-list while an operation is writing.
 pub(super) fn sync_op_busy(window: &MainWindow, state: &AppState) {
-    window.set_op_busy(state.ops.in_flight());
+    window
+        .global::<crate::OperationsApi>()
+        .set_op_busy(state.ops.in_flight());
 }
 
 /// Settling delay before re-listing once operations complete. Short enough to
@@ -135,7 +139,7 @@ pub(super) fn request_op_refresh(window: &MainWindow) {
             Duration::from_millis(OP_REFRESH_DEBOUNCE_MS),
             move || {
                 if let Some(w) = weak.upgrade() {
-                    w.invoke_refresh_all();
+                    w.global::<crate::OperationsApi>().invoke_refresh_all();
                 }
             },
         );
@@ -173,7 +177,8 @@ pub(super) fn deliver_op_event(
     let weak = weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(w) = weak.upgrade() {
-            w.invoke_process_op_events();
+            w.global::<crate::OperationsApi>()
+                .invoke_process_op_events();
         }
     });
 }
@@ -596,22 +601,23 @@ pub(super) fn run_heavy(
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(w) = weak2.upgrade() {
             if final_visible {
-                w.invoke_op_progress(OpProgress {
-                    id: op_id,
-                    state: final_state,
-                    progress: 1.0,
-                    indeterminate: false,
-                    title: title.into(),
-                    detail: SharedString::default(),
-                    percent: if final_state == OP_SUCCESS {
-                        SharedString::from("100 %")
-                    } else {
-                        SharedString::default()
-                    },
-                });
+                w.global::<crate::OperationsApi>()
+                    .invoke_op_progress(OpProgress {
+                        id: op_id,
+                        state: final_state,
+                        progress: 1.0,
+                        indeterminate: false,
+                        title: title.into(),
+                        detail: SharedString::default(),
+                        percent: if final_state == OP_SUCCESS {
+                            SharedString::from("100 %")
+                        } else {
+                            SharedString::default()
+                        },
+                    });
             } else {
                 // Finished below the appearance threshold: make sure no row lingers.
-                w.invoke_op_dismiss(op_id);
+                w.global::<crate::OperationsApi>().invoke_op_dismiss(op_id);
             }
             if let Some(message) = lock_notice {
                 show_notice(&w, message);
@@ -619,7 +625,7 @@ pub(super) fn run_heavy(
             // Releases the operation, which then schedules the re-listing of ALL
             // views (an op can involve 2 panels: drag-drop source+target, or the
             // same folder open in 2 views).
-            w.invoke_op_finished(op_id);
+            w.global::<crate::OperationsApi>().invoke_op_finished(op_id);
         }
     });
 }

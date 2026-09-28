@@ -49,7 +49,7 @@ pub(super) fn spawn_rmtime_worker(
             let weak = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    w.invoke_folder_stats_ready(
+                    w.global::<crate::PanelsApi>().invoke_folder_stats_ready(
                         panel,
                         row,
                         path_str.into(),
@@ -205,7 +205,7 @@ pub(super) fn spawn_imgmeta_worker(
             let weak = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(win) = weak.upgrade() {
-                    win.invoke_imgmeta_ready(
+                    win.global::<crate::PanelsApi>().invoke_imgmeta_ready(
                         panel,
                         row,
                         path_str.into(),

@@ -6,42 +6,70 @@ pub fn install(window: &MainWindow, state: AppState) {
     // its PanelView via update_panels_ui.)
 
     // Initialization from config.
-    window.on_filename_caret_offset(|name: SharedString, is_dir: bool| {
-        filename_caret_offset(name.as_str(), is_dir)
-    });
+    window
+        .global::<crate::PanelsApi>()
+        .on_filename_caret_offset(|name: SharedString, is_dir: bool| {
+            filename_caret_offset(name.as_str(), is_dir)
+        });
     let cfg = state.snapshot_config();
     apply_language(window, cfg.language);
     // One toast row per running operation, owned by the state so that the
     // worker threads can address a row by its operation id.
-    window.set_ops(state.ops_model.clone().into());
-    window.set_closed_tabs_available(state.has_closed_tabs());
+    window
+        .global::<crate::OperationsApi>()
+        .set_ops(state.ops_model.clone().into());
+    window
+        .global::<crate::PanelsApi>()
+        .set_closed_tabs_available(state.has_closed_tabs());
     // The "Open with…" entry (native picker) only exists on Windows.
-    window.set_platform_windows(cfg!(windows));
-    window.set_platform_linux(cfg!(target_os = "linux"));
-    window.set_theme_pref(match cfg.theme {
-        Theme::Auto => 0,
-        Theme::Light => 1,
-        Theme::Dark => 2,
-    });
+    window
+        .global::<crate::SettingsApi>()
+        .set_platform_windows(cfg!(windows));
+    window
+        .global::<crate::SettingsApi>()
+        .set_platform_linux(cfg!(target_os = "linux"));
+    window
+        .global::<crate::ApplicationApi>()
+        .set_theme_pref(match cfg.theme {
+            Theme::Auto => 0,
+            Theme::Light => 1,
+            Theme::Dark => 2,
+        });
     // Default tab bar position (settings).
-    window.set_tabbar_default_pref(cfg.default_tab_bar_mode.min(2) as i32);
+    window
+        .global::<crate::ApplicationApi>()
+        .set_tabbar_default_pref(cfg.default_tab_bar_mode.min(2) as i32);
     // Tab path tooltip (settings) — unchecked by default.
-    window.set_tab_tooltip_enabled(cfg.tab_path_tooltip);
+    window
+        .global::<crate::ApplicationApi>()
+        .set_tab_tooltip_enabled(cfg.tab_path_tooltip);
     // "Unsaved changes" guard before loading, checked by
     // default in settings.
-    window.set_ws_warn_unsaved(cfg.warn_unsaved_workspace);
+    window
+        .global::<crate::ApplicationApi>()
+        .set_ws_warn_unsaved(cfg.warn_unsaved_workspace);
     // Hybrid Previews mode: single-icon types stay compact.
-    window.set_compact_preview_rows_enabled(cfg.compact_icon_rows_in_preview);
+    window
+        .global::<crate::ApplicationApi>()
+        .set_compact_preview_rows_enabled(cfg.compact_icon_rows_in_preview);
     // Timezone for the "Modified" column (settings): 0 = local time
     // (default), 1 = UTC. The effective offset is cached for the rows.
-    window.set_clock_utc_pref(if cfg.clock_utc { 1 } else { 0 });
+    window
+        .global::<crate::ApplicationApi>()
+        .set_clock_utc_pref(if cfg.clock_utc { 1 } else { 0 });
     refresh_mtime_offset(&state);
     // Windows shell context menu (shell extensions) — checked by default.
-    window.set_shell_menu_enabled(cfg.shell_ctx_menu);
+    window
+        .global::<crate::SettingsApi>()
+        .set_shell_menu_enabled(cfg.shell_ctx_menu);
     // Left panel: any positive state opens the unified Places +
     // Favorites panel. This normalization also accepts the serialized value 2.
-    window.set_left_panel(if cfg.left_panel >= 1 { 1 } else { 0 });
-    window.set_sidebar_width(cfg.sidebar_width.max(140) as f32);
+    window
+        .global::<crate::SidebarApi>()
+        .set_left_panel(if cfg.left_panel >= 1 { 1 } else { 0 });
+    window
+        .global::<crate::SidebarApi>()
+        .set_sidebar_width(cfg.sidebar_width.max(140) as f32);
     push_sidebar_sections_ui(window, &state);
     refresh_sidebar(window, &state);
     // The Slint chevrons immediately update the live workspace state.
@@ -100,11 +128,13 @@ pub fn install(window: &MainWindow, state: AppState) {
     // Eject / network disconnect -----
     // These operations can block (unmounting, power loss, network
     // I/O) → background thread, then back to the UI (toast + sidebar re-scan).
-    window.on_place_copy_path(move |path: SharedString| {
-        if let Err(err) = crate::actions::copy_to_clipboard(&path) {
-            warn!(error = %err, "copy path failed");
-        }
-    });
+    window
+        .global::<crate::SidebarApi>()
+        .on_place_copy_path(move |path: SharedString| {
+            if let Err(err) = crate::actions::copy_to_clipboard(&path) {
+                warn!(error = %err, "copy path failed");
+            }
+        });
     install_drive_eject(window, state.clone());
     install_drive_disconnect(window, state.clone());
 
@@ -167,10 +197,14 @@ pub fn install(window: &MainWindow, state: AppState) {
     // default columns (Settings) — initial state + toggle.
     push_settings_columns(window, cfg.language, &cfg.default_columns);
     // recursive mtime depth (initial state + handler).
-    window.set_rmtime_depth(cfg.recursive_mtime_depth);
+    window
+        .global::<crate::SettingsApi>()
+        .set_rmtime_depth(cfg.recursive_mtime_depth);
     install_rmtime_depth_changed(window, state.clone());
     // recursive size depth (initial state + handler), mirroring the mtime one.
-    window.set_size_depth(cfg.recursive_size_depth);
+    window
+        .global::<crate::SettingsApi>()
+        .set_size_depth(cfg.recursive_size_depth);
     install_size_depth_changed(window, state.clone());
     install_default_column_toggle(window, state.clone());
     // configurable shortcuts (settings) — list + rebind/reset/search.
@@ -620,31 +654,43 @@ pub fn install(window: &MainWindow, state: AppState) {
     install_column_moved(window, state.clone());
 
     // App version (displayed in the Settings header).
-    window.set_app_version(env!("CARGO_PKG_VERSION").into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_app_version(env!("CARGO_PKG_VERSION").into());
 
     // ----- XDG paths (informational in the Settings panel) -----
-    window.set_config_dir_path(paths::config_path().display().to_string().into());
-    window.set_data_dir_path(paths::data_dir().display().to_string().into());
-    window.set_cache_dir_path(paths::cache_dir().display().to_string().into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_config_dir_path(paths::config_path().display().to_string().into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_data_dir_path(paths::data_dir().display().to_string().into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_cache_dir_path(paths::cache_dir().display().to_string().into());
     // Windows: `config_dir() == data_dir()` (%APPDATA%\favnyr) → `config.toml`
     // lives in the Data dir, so the "Configuration file" row is
     // redundant and hidden. Linux: separate folders → row kept.
-    window.set_config_path_redundant(paths::config_dir() == paths::data_dir());
+    window
+        .global::<crate::SettingsApi>()
+        .set_config_path_redundant(paths::config_dir() == paths::data_dir());
 
     // Open an XDG folder in the OS's file manager (xdg-open). For config,
     // we open the **folder** (not the toml file) to stay consistent with
     // the other two entries.
-    window.on_open_config_dir(|| {
-        if let Err(err) = actions::open_path(&paths::config_dir()) {
-            error!(error = %err, "xdg_open(config_dir) failed");
-        }
-    });
-    window.on_open_data_dir(|| {
+    window
+        .global::<crate::SettingsApi>()
+        .on_open_config_dir(|| {
+            if let Err(err) = actions::open_path(&paths::config_dir()) {
+                error!(error = %err, "xdg_open(config_dir) failed");
+            }
+        });
+    window.global::<crate::SettingsApi>().on_open_data_dir(|| {
         if let Err(err) = actions::open_path(&paths::data_dir()) {
             error!(error = %err, "xdg_open(data_dir) failed");
         }
     });
-    window.on_open_cache_dir(|| {
+    window.global::<crate::SettingsApi>().on_open_cache_dir(|| {
         if let Err(err) = actions::open_path(&paths::cache_dir()) {
             error!(error = %err, "xdg_open(cache_dir) failed");
         }

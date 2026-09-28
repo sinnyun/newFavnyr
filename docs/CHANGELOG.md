@@ -389,3 +389,11 @@ files touched, so a behaviour can be traced back to its source.
 - 一处编译期坑：子组件的几何函数起初写成私有 `pure function`，`build.rs` 以 `The function 'section-top' is private` 失败（EXIT=101），改为 `public pure function`（同 `theme.slint` 写法）后通过。
 - 门禁：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` 干净；`cargo test -p favnyr-core -p favnyr-gui` → core 205（1 ignored）+ gui 138、0 failed，用例数与拆分前一致；debug 二进制冷启动 15 s 存活（`starting Slint event loop init_ms=108`、`workspace restored panels=1`）。
 - 尚未人工点检（本轮搬的是布局子树，运行时应无差异）：四节的折叠与拖拽重排（含落点指示线）、Places 行点击 / 中键 / 右键 / 拖出、收藏树展开折叠与重排拖拽、tab 或文件拖到收藏文件夹的落点高亮与自动展开、收藏右键菜单。
+
+## 2026-09-29 — MainWindow 领域 API 迁移与覆盖层提取（架构重构进行中）
+
+- 将 MainWindow 的 483 个 Rust-facing 属性和回调迁入 8 个 `ui/api/*.slint` 领域 global，并迁移 Rust 桥接访问。
+- 将窗口覆盖层实例、覆盖层计时器和焦点恢复委托提取至 `ui/window/overlays.slint`（648 行）；`main_window.slint` 当前 1 602 行，800 行目标尚未完成，后续需重新划分窗口交互和面板布局的组件接口。
+- 新增架构执行记录 `docs/superpowers/plans/2026-09-29-main-window-architecture.md`；更新 `docs/code-map.md` 与 `docs/split-plan.md`，记录当前完成范围与剩余拆分工作。
+- 涉及：`crates/favnyr-gui/src/bridge/**/*.rs`、`crates/favnyr-gui/src/ui/main_window.slint`、`crates/favnyr-gui/src/ui/api/*.slint`、`crates/favnyr-gui/src/ui/window/overlays.slint`、`docs/code-map.md`、`docs/split-plan.md`、`docs/superpowers/plans/2026-09-29-main-window-architecture.md`。
+- 验证：`cargo fmt --all`、`cargo check -p favnyr-gui --tests`、`cargo test -p favnyr-core -p favnyr-gui` 通过；UI 文件行数检查确认仍有 `main_window.slint` 超过 800 行。

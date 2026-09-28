@@ -101,7 +101,9 @@ pub(in crate::bridge) fn push_filtered_ow_picker_ui(
         .as_ref()
         .map(|context| filtered_ow_picker_items(&context.items, filter))
         .unwrap_or_default();
-    window.set_ow_picker_handlers(ModelRc::new(VecModel::from(visible)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_picker_handlers(ModelRc::new(VecModel::from(visible)));
 }
 
 /// Rebuilds both the visible application list and the handler context used when
@@ -135,7 +137,9 @@ pub(in crate::bridge) fn refresh_ow_picker_handlers(
         handlers,
         items,
     });
-    let filter = window.get_ow_picker_search_text();
+    let filter = window
+        .global::<crate::SettingsApi>()
+        .get_ow_picker_search_text();
     push_filtered_ow_picker_ui(window, state, filter.as_str());
 }
 
@@ -211,7 +215,9 @@ pub(in crate::bridge) fn push_filtered_openers_ui(window: &MainWindow, state: &A
         })
         .cloned()
         .collect();
-    window.set_openers_all(ModelRc::new(VecModel::from(visible)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_openers_all(ModelRc::new(VecModel::from(visible)));
 }
 
 /// Pushes the opener lists to the GUI (suggested submenu + Settings list).
@@ -237,7 +243,9 @@ pub(in crate::bridge) fn push_openers_ui(window: &MainWindow, state: &AppState) 
         let all: Vec<OpenerItem> = st.openers.iter().map(opener_to_item).collect();
         (suggested, all)
     };
-    window.set_openers_suggested(ModelRc::new(VecModel::from(suggested)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_openers_suggested(ModelRc::new(VecModel::from(suggested)));
     *state.opener_settings_cache.borrow_mut() = all;
     push_filtered_openers_ui(window, state);
 }
@@ -259,7 +267,9 @@ pub(in crate::bridge) fn push_ctx_custom_entries(
         .map(opener_to_item)
         .collect();
     let n = items.len();
-    window.set_ctx_custom_entries(ModelRc::new(VecModel::from(items)));
+    window
+        .global::<crate::MenuApi>()
+        .set_ctx_custom_entries(ModelRc::new(VecModel::from(items)));
     n
 }
 

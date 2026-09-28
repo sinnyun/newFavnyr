@@ -158,7 +158,7 @@ pub(super) fn request_async_panel_listing(
         if queued {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    w.invoke_async_listing_drain();
+                    w.global::<crate::PanelsApi>().invoke_async_listing_drain();
                 }
             });
         }
@@ -440,7 +440,9 @@ pub(super) fn annotations_cleaned_text(lang: favnyr_core::i18n::Lang, removed: u
 
 /// The badge beside the "Clean up" button, from the snapshot.
 pub(super) fn push_orphan_count(window: &MainWindow, state: &AppState) {
-    window.set_annotation_orphans(i32::try_from(state.orphans.borrow().len()).unwrap_or(i32::MAX));
+    window
+        .global::<crate::SettingsApi>()
+        .set_annotation_orphans(i32::try_from(state.orphans.borrow().len()).unwrap_or(i32::MAX));
 }
 
 /// Splits a path into the folder that still exists and the name that does not.
@@ -489,12 +491,18 @@ pub(super) fn push_orphan_rows(window: &MainWindow, state: &AppState) {
         .collect();
     let picked = chosen.len();
     drop(chosen);
-    window.set_orphan_rows(ModelRc::new(VecModel::from(rows)));
-    window.set_orphans_checked(i32::try_from(picked).unwrap_or(i32::MAX));
+    window
+        .global::<crate::PanelsApi>()
+        .set_orphan_rows(ModelRc::new(VecModel::from(rows)));
+    window
+        .global::<crate::SettingsApi>()
+        .set_orphans_checked(i32::try_from(picked).unwrap_or(i32::MAX));
     let lang = state.config.borrow().language;
-    window.set_orphans_confirm_label(
-        i18n::tr(lang, "annotations_cleanup_confirm")
-            .replace("{count}", &picked.to_string())
-            .into(),
-    );
+    window
+        .global::<crate::SettingsApi>()
+        .set_orphans_confirm_label(
+            i18n::tr(lang, "annotations_cleanup_confirm")
+                .replace("{count}", &picked.to_string())
+                .into(),
+        );
 }

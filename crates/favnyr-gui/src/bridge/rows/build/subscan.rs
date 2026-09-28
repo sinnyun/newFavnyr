@@ -93,7 +93,7 @@ pub(in crate::bridge) fn spawn_subscan_worker(
                 let weak = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        w.invoke_subfolders_drain();
+                        w.global::<crate::PanelsApi>().invoke_subfolders_drain();
                     }
                 });
             }

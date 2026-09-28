@@ -394,17 +394,24 @@ pub(super) fn locate_tab_drop(
 pub(super) fn set_external_hover(window: &MainWindow, sx: i32, sy: i32) {
     // Physical screen → logical window (`drag-abs-x/y`'s frame of reference, see tab-drag-progress).
     let (wx, wy) = screen_to_window_logical(window, sx, sy);
-    window.set_drag_source_panel(-1);
-    window.set_drag_abs_x(wx);
-    window.set_drag_abs_y(wy);
-    window.set_drag_active(true);
+    window
+        .global::<crate::DragDropApi>()
+        .set_drag_source_panel(-1);
+    window.global::<crate::DragDropApi>().set_drag_abs_x(wx);
+    window.global::<crate::DragDropApi>().set_drag_abs_y(wy);
+    window.global::<crate::DragDropApi>().set_drag_active(true);
 }
 
 /// End of cross-instance hover / drop: turns off the simulated drag → clears the
 /// insertion preview.
 pub(super) fn clear_external_hover(window: &MainWindow) {
-    if window.get_drag_active() && window.get_drag_source_panel() < 0 {
-        window.set_drag_active(false);
+    if window.global::<crate::DragDropApi>().get_drag_active()
+        && window
+            .global::<crate::DragDropApi>()
+            .get_drag_source_panel()
+            < 0
+    {
+        window.global::<crate::DragDropApi>().set_drag_active(false);
     }
 }
 
@@ -420,24 +427,55 @@ pub(super) fn set_external_file_hover(
     copy: bool,
 ) {
     let (wx, wy) = screen_to_window_logical(window, screen_x, screen_y);
-    window.set_file_drag_source_panel(-1);
-    window.set_file_drag_target_invalid(false);
-    window.set_file_drag_copy(copy);
-    window.set_file_drag_abs_x(wx);
-    window.set_file_drag_abs_y(wy);
-    window.set_file_drag_active(true);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drag_source_panel(-1);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drag_target_invalid(false);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drag_copy(copy);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drag_abs_x(wx);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drag_abs_y(wy);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drag_active(true);
 }
 
 #[cfg(windows)]
 pub(super) fn clear_external_file_hover(window: &MainWindow) {
-    if window.get_file_drag_active() && window.get_file_drag_source_panel() < 0 {
-        window.set_file_drag_active(false);
-        window.set_file_drag_target_panel(-1);
-        window.set_file_drag_target_row(-1);
-        window.set_file_drag_target_folder(false);
-        window.set_file_drag_target_exec(false);
-        window.set_file_drag_target_invalid(false);
-        window.set_file_drag_copy(false);
+    if window.global::<crate::DragDropApi>().get_file_drag_active()
+        && window
+            .global::<crate::DragDropApi>()
+            .get_file_drag_source_panel()
+            < 0
+    {
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_active(false);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_target_panel(-1);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_target_row(-1);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_target_folder(false);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_target_exec(false);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_target_invalid(false);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drag_copy(false);
     }
 }
 
@@ -459,12 +497,16 @@ pub(super) fn on_external_file_drop(
         return;
     }
     set_external_file_hover(window, screen_x, screen_y, copy);
-    let target_panel = window.get_file_drag_target_panel();
+    let target_panel = window
+        .global::<crate::DragDropApi>()
+        .get_file_drag_target_panel();
     if target_panel < 0 {
         clear_external_file_hover(window);
         return;
     }
-    let target_row = window.get_file_drag_target_row();
+    let target_row = window
+        .global::<crate::DragDropApi>()
+        .get_file_drag_target_row();
     let target = target_panel as usize;
     let target_info = if target_row >= 0 {
         panel_path_at_row(state, target, target_row as usize).map(|path| {
@@ -501,20 +543,39 @@ pub(super) fn on_external_file_drop(
         return;
     }
     *state.external_drop_paths.borrow_mut() = paths;
-    window.set_file_drop_src_panel(-1);
-    window.set_file_drop_target_panel(target_panel);
-    window.set_file_drop_target_row(target_row);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drop_src_panel(-1);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drop_target_panel(target_panel);
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drop_target_row(target_row);
 
     let (wx, wy) = screen_to_window_logical(window, screen_x, screen_y);
-    window.set_file_drop_menu_open(false);
-    if window.invoke_file_drop_onto_exec() {
+    window
+        .global::<crate::DragDropApi>()
+        .set_file_drop_menu_open(false);
+    if window
+        .global::<crate::DragDropApi>()
+        .invoke_file_drop_onto_exec()
+    {
         // The callback consumed `external_drop_paths`.
     } else if copy {
-        window.invoke_file_drop_action(1);
+        window
+            .global::<crate::DragDropApi>()
+            .invoke_file_drop_action(1);
     } else {
-        window.set_file_drop_menu_x(wx);
-        window.set_file_drop_menu_y(wy);
-        window.set_file_drop_menu_open(true);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drop_menu_x(wx);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drop_menu_y(wy);
+        window
+            .global::<crate::DragDropApi>()
+            .set_file_drop_menu_open(true);
     }
     clear_external_file_hover(window);
 }

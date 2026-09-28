@@ -352,26 +352,39 @@ pub(in crate::bridge) fn push_recipes_ui(window: &MainWindow, state: &AppState) 
     }
     let mid = rows.len().div_ceil(2);
     let (col1, col2) = rows.split_at(mid);
-    window.set_ow_recipes_col1(ModelRc::new(VecModel::from(col1.to_vec())));
-    window.set_ow_recipes_col2(ModelRc::new(VecModel::from(col2.to_vec())));
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_recipes_col1(ModelRc::new(VecModel::from(col1.to_vec())));
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_recipes_col2(ModelRc::new(VecModel::from(col2.to_vec())));
     let hint = if missing.is_empty() {
         String::new()
     } else {
         i18n::tr(lang, "ow_recipes_missing")
             .replace("{tools}", &i18n::process_list(lang, &missing, false))
     };
-    window.set_ow_recipes_missing(hint.into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_recipes_missing(hint.into());
 }
 
 /// Recomputes the command's live preview + the program's validity (popup).
 pub(in crate::bridge) fn recompute_ow_preview(window: &MainWindow, state: &AppState) {
-    let program = window.get_ow_popup_program().to_string();
-    let args = split_args(&window.get_ow_popup_args());
+    let program = window
+        .global::<crate::SettingsApi>()
+        .get_ow_popup_program()
+        .to_string();
+    let args = split_args(&window.global::<crate::SettingsApi>().get_ow_popup_args());
     // An OS association app (Windows UWP/Store, Linux `.desktop`) has no exe
     // to validate; otherwise the program must exist (path) OR be a PATH
     // command on Linux — see `program_is_valid`.
-    window
-        .set_ow_popup_valid(window.get_ow_popup_is_store() || actions::program_is_valid(&program));
+    window.global::<crate::SettingsApi>().set_ow_popup_valid(
+        window
+            .global::<crate::SettingsApi>()
+            .get_ow_popup_is_store()
+            || actions::program_is_valid(&program),
+    );
     let selection = selected_paths(state);
     // Sample used to resolve the tags. A bare "example.txt" would leave `{dir}`
     // empty, so an argument like `{dir}/out.7z` would render as "/out.7z" and
@@ -418,12 +431,16 @@ pub(in crate::bridge) fn recompute_ow_preview(window: &MainWindow, state: &AppSt
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| program.clone());
-    window.set_ow_popup_preview(format!("{prog_name} {}", display_argv(&argv)).into());
-    window.set_ow_popup_runs(run_count_text(
-        state.snapshot_config().language,
-        temp.has_tag() && !temp.expands_list(),
-        selection.len(),
-    ));
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_preview(format!("{prog_name} {}", display_argv(&argv)).into());
+    window
+        .global::<crate::SettingsApi>()
+        .set_ow_popup_runs(run_count_text(
+            state.snapshot_config().language,
+            temp.has_tag() && !temp.expands_list(),
+            selection.len(),
+        ));
 }
 
 /// Sentence telling how many processes the command will start.

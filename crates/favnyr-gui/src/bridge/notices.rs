@@ -187,10 +187,11 @@ pub(super) fn notice_for(
     duration_ms: i64,
 ) {
     let (tone, icon) = kind.codes();
-    w.set_notice_tone(tone);
-    w.set_notice_icon(icon);
-    w.set_notice_duration(duration_ms);
-    w.set_notice_text(text.into());
+    w.global::<crate::PanelsApi>().set_notice_tone(tone);
+    w.global::<crate::PanelsApi>().set_notice_icon(icon);
+    w.global::<crate::PanelsApi>()
+        .set_notice_duration(duration_ms);
+    w.global::<crate::PanelsApi>().set_notice_text(text.into());
 }
 
 /// Non-blocking startup-by-workspace-name warning. Exposed to the

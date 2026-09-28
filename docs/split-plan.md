@@ -408,3 +408,13 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 - ✅ `ui/widgets/rows.slint`（922 行）按组件拆分已完成：父文件 596 行（`FileRowView` / `SectionHeaderView` / `FileTileView` 三个纯视觉形状）+ `widgets/rows/{header,marks}.slint`（223 / 114），两次提交各一块，取舍标准与偏差见上文第 28–30 条。**仍需维护者人工点检**：列头的排序点击 / 拖拽改序 / 右缘改宽 / 右键菜单，列表行与分组头的渲染（缩略图、应用图标、链接徽标、age 药丸），网格瓦片，"颜色与备注"飞出里的色条与清理清单的红勾——色条与红勾要打开飞出菜单才出现，冷启动冒烟覆盖不到。
 - ✅ `main_window.slint` 的侧栏列区块（245 行 / 56 个 `root.` 名）已提成 `ui/sidebar/column.slint`（374 行，一次提交），窗口 3 195 → 3 010 行，形状与偏差见上文第 41–45 条。**仍需维护者人工点检**：四节的折叠与拖拽重排（含落点指示线）、Places 行的点击 / 中键 / 右键 / 拖出、收藏树的展开折叠与重排拖拽、把 tab 或文件拖到收藏文件夹时的落点高亮与自动展开（两个 650 ms 计时器现在跨一层读 `sidebar-column.hover-*`）、收藏右键菜单（`fav-menu-*` 跨两层 `<=>`）。
 - `ui/main_window.slint`（3 010，契约面）仍是唯一超过 800 行的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)；2026-09-29 决定**停在侧栏列**这一刀：剩余可搬的最大块是 `panels-container`（434 行 / 156 个 `root.` 名），它要转发的成员太多、又把 `MainWindow` 的根布局夹在中间，收益/风险不如前几刀。`bridge/tests.rs`（2 346）按模块再分、`bridge/state.rs`（1 508）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）已在第二批完成，见上文第 31–40 条。
+
+## 17. 领域 API 与窗口组件的架构重划（2026-09-29）
+
+用户将目标改为重新设计窗口架构，并要求每个 Slint 源文件不超过 800 行。原有“保留 500 余个 MainWindow 契约成员，停止在 3 010 行”的决定不再适用。
+
+- 已完成第一阶段：483 个 Rust-facing 属性与回调迁入 `ui/api/{application,panels,drag_drop,sidebar,workspaces,menus,settings,operations}.slint`；Rust 桥接访问已改用对应的 `window.global::<...>()`。编译检查通过。
+- 已提取 `main_window.slint` 中的覆盖层实例和相关计时器为 `ui/window/overlays.slint`，648 行。焦点仍由主窗口的 `FocusScope` 管理，组件通过回调请求焦点恢复。
+- 当前 `main_window.slint` 为 1 602 行，**目标尚未完成**。关键剩余耦合：根组件同时拥有键盘/焦点协调、侧栏拖放状态与函数、面板画布回调和布局几何输出。直接抽出面板布局会要求复制或转发大量函数，尚未形成合适的组件接口。
+- 后续应先把状态和行为按所有权归属到窗口键盘行为、侧栏交互、面板画布、覆盖层，再用 Slint 组件的窄接口连接；随后逐块迁移并验证拖放、焦点、几何及层叠顺序。800 行上限是最终验收条件，不能以本轮 API 迁移代替。
+- 本轮验证：`cargo check -p favnyr-gui --tests` 通过；`cargo test -p favnyr-core -p favnyr-gui` 通过（core 206 项含 1 项 ignored，GUI 138 项）；Slint 文件行数检查确认只有 `main_window.slint` 超过 800 行。
