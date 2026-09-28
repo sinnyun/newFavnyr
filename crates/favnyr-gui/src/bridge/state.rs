@@ -1,8 +1,10 @@
 use super::*;
 
 mod clipdrop;
+mod nav;
 
 pub(super) use clipdrop::*;
+pub(super) use nav::*;
 
 /// Minimum ratio for one side of a split (guards against degenerate panels).
 pub(super) const MIN_SPLIT_RATIO: f32 = 0.08;
@@ -15,70 +17,6 @@ pub(super) struct OwPickCtx {
     pub(super) handlers: Vec<openwith::AppHandler>,
     /// Cached rows keep icon extraction out of the typing path.
     pub(super) items: Vec<OpenerItem>,
-}
-
-// ---------- Navigation history ----------
-
-#[derive(Debug, Default)]
-pub(super) struct NavHistory {
-    pub(super) stack: Vec<PathBuf>,
-    pub(super) cursor: usize,
-}
-
-impl NavHistory {
-    pub(super) fn current(&self) -> Option<&Path> {
-        self.stack.get(self.cursor).map(|p| p.as_path())
-    }
-
-    /// Pushes a new path, truncating any "forward" entries.
-    pub(super) fn push(&mut self, path: PathBuf) {
-        if self.current().map(|c| c == path).unwrap_or(false) {
-            return;
-        }
-        if !self.stack.is_empty() {
-            self.stack.truncate(self.cursor + 1);
-        }
-        self.stack.push(path);
-        self.cursor = self.stack.len() - 1;
-    }
-
-    pub(super) fn can_back(&self) -> bool {
-        self.cursor > 0
-    }
-    pub(super) fn can_forward(&self) -> bool {
-        self.cursor + 1 < self.stack.len()
-    }
-    pub(super) fn back(&mut self) -> Option<PathBuf> {
-        if !self.can_back() {
-            return None;
-        }
-        self.cursor -= 1;
-        Some(self.stack[self.cursor].clone())
-    }
-    pub(super) fn forward(&mut self) -> Option<PathBuf> {
-        if !self.can_forward() {
-            return None;
-        }
-        self.cursor += 1;
-        Some(self.stack[self.cursor].clone())
-    }
-}
-
-// ---------- Sort state ----------
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct SortState {
-    pub(super) column: SortColumn,
-    pub(super) order: SortOrder,
-}
-
-impl Default for SortState {
-    fn default() -> Self {
-        Self {
-            column: SortColumn::Name,
-            order: SortOrder::Asc,
-        }
-    }
 }
 
 // Tabs ----------
