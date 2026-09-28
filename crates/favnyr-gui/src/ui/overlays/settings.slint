@@ -1,0 +1,1507 @@
+// The Settings dialog and the shortcut context menu it raises.
+//
+// Three tab pages — General (language, theme, zoom, clock, tab bar, shell
+// menu, columns, sizes), Shortcuts (search, capture, conflicts, reset) and
+// "Open with" (openers, recipes, ffmpeg) — plus the two popups that hang off
+// them: the shell-extension list of the General page and the small "unassign"
+// menu of a shortcut row, which is declared last so it renders above the
+// panel.
+//
+// Extracted from main_window.slint. The pages edit a lot of window state, so
+// the fields they bind two-way are in-out here; everything they only display
+// comes in, and every action goes back out through a callback.
+
+import { ColumnInfo, OpenerItem, OwRecipe, ShellExtRow, ShortcutGroup, Strings } from "../structs.slint";
+import { Dismiss, Theme, Tokens } from "../theme.slint";
+import { PathRow, SearchField, SettingsRowButton } from "../widgets/inputs.slint";
+import { ModalBackdrop } from "../widgets/tabs.slint";
+import { CommandIcon, MenuItem, OwRecipeButton } from "../widgets/menus.slint";
+import { FfmpegCmdRow } from "../progress.slint";
+import { SidebarHeaderAction } from "../sidebar.slint";
+import { Button, CheckBox, ComboBox, HorizontalBox, ScrollView, SpinBox } from "std-widgets.slint";
+
+export component OverlaySettings inherits Rectangle {
+    // Transparent, full-window host; the panel centres itself on it.
+    width: 100%;
+    height: 100%;
+
+    // Window contract.
+    in property <Strings> strings;
+    in-out property <bool> settings-open: false;   // the panel itself
+    in-out property <int> settings-tab: 0;         // General | Shortcuts | "Open with"
+
+    // Whatever the three tab pages only display.
+    in property <string> app-version;
+    in property <bool> platform-windows;
+    in property <[string]> language-labels;
+    in property <[string]> theme-labels;
+    in property <[string]> ui-scale-labels;
+    in property <[string]> tabbar-default-labels;
+    in property <[ColumnInfo]> settings-columns;
+    in property <[OpenerItem]> openers-all;
+    in property <[OwRecipe]> ow-recipes-col1;
+    in property <[OwRecipe]> ow-recipes-col2;
+    in property <string> ow-recipes-missing;
+    in property <bool> ffmpeg-found;
+    in property <bool> ffmpeg-flatpak;
+    in property <int> ffmpeg-detected-index;
+    in property <string> ffmpeg-version;
+    in property <[ShellExtRow]> shell-ext-rows;
+    in property <[ShortcutGroup]> shortcut-groups;
+    in property <bool> shortcut-has-overrides;
+    in property <string> shortcut-conflict-action;
+    in property <string> shortcut-conflict-message;
+    in property <length> shortcut-menu-x;
+    in property <length> shortcut-menu-y;
+    in property <string> shortcut-menu-action;
+    in property <string> config-dir-path;
+    in property <bool> config-path-redundant;
+    in property <string> data-dir-path;
+    in property <string> cache-dir-path;
+    in property <int> annotation-orphans;
+
+    // Rows, fields and flyouts the tabs edit.
+    in-out property <int> language-index: 0;
+    in-out property <int> theme-pref: 0;
+    in-out property <int> ui-scale-index: 0;
+    in-out property <int> clock-utc-pref: 0;
+    in-out property <int> tabbar-default-pref: 0;
+    in-out property <bool> tab-tooltip-enabled: false;
+    in-out property <bool> compact-preview-rows-enabled: false;
+    in-out property <bool> ws-warn-unsaved: false;
+    in-out property <bool> shell-menu-enabled: false;
+    in-out property <int> size-depth: 0;
+    in-out property <int> rmtime-depth: 0;
+    in-out property <int> ow-subtab: 0;
+    in-out property <string> opener-search-text: "";
+    in-out property <bool> ow-recipes-open: false;
+    in-out property <string> shortcut-capturing: "";
+    in-out property <string> shortcut-search-text: "";
+    in-out property <bool> shortcut-menu-open: false;
+
+    // Actions.
+    callback language-changed(int);
+    callback theme-changed(int);
+    callback ui-scale-changed(int);
+    callback clock-mode-changed(int);
+    callback tabbar-default-changed(int);
+    callback tab-tooltip-changed(bool);
+    callback compact-preview-rows-changed(bool);
+    callback ws-warn-unsaved-changed(bool);
+    callback shell-menu-changed(bool);
+    callback default-column-toggle(string, bool);
+    callback size-depth-changed(int);
+    callback rmtime-depth-changed(int);
+    callback opener-search(string);
+    callback ow-add();
+    callback ow-edit(string /*id*/);
+    callback ow-duplicate(string /*id*/);
+    callback ow-delete(string /*id*/);
+    callback ow-move(string /*id*/, int /*dir -1/+1*/);
+    callback ow-recipe-add(int);
+    callback ffmpeg-recheck();
+    callback shell-ext-toggle(string /*label*/, bool /*enabled*/);
+    callback shortcut-search(string);
+    callback shortcut-reset(string /*action_id*/);
+    callback shortcut-reset-all();
+    callback shortcut-unassign(string /*action_id*/);
+    callback shortcut-resolve-conflict(bool /*reassign*/);
+    callback settings-copy(string /*text*/);
+    callback clean-annotations();
+    callback open-config-dir();
+    callback open-data-dir();
+    callback open-cache-dir();
+    callback open-shortcut-menu(string, length, length);
+
+    // Hands the keyboard back to the window: clicking a shortcut row starts
+    // a capture, and the chord has to reach the window's focus scope.
+    callback return-focus();
+
+    // ===== Settings panel =====
+    // Its backdrop only absorbs clicks, it doesn't close the panel. Escape or X.
+    if root.settings-open : ModalBackdrop { }
+    if root.settings-open : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 560px;
+        // 480 → 620: less scrolling to reach the bottom of the tabs
+        // (long General, "Open with"). Bounded to the window to stay
+        // visible on small screens.
+        height: min(620px, parent.height - 40px);
+        background: Theme.background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000.with-alpha(0.35);
+        drop-shadow-offset-y: 6px;
+
+        // Catch-all BELOW the content (declared first = bottom of the
+        // z-order → steals no click from the controls above): a click on an
+        // inert part of the panel closes the floating menus, exactly as the
+        // window's own catch-all does for the rail and the sidebar.
+        TouchArea {
+            pointer-event(ev) => {
+                if (ev.kind == PointerEventKind.down) { Dismiss.serial += 1; }
+            }
+        }
+
+        VerticalLayout {
+            padding: 0px;
+            spacing: 0px;
+
+            // Header
+            Rectangle {
+                height: 50px;
+                HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 12px;
+                    Text {
+                        text: root.strings.settings-title;
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Theme.foreground;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    // Favnyr's version (discreet, to the right of the title).
+                    Text {
+                        text: "v" + root.app-version;
+                        font-size: 12px;
+                        color: Theme.foreground.with-alpha(0.45);
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                    Rectangle { width: 10px; }
+                    // "X" button (subtle red)
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 6px;
+                        background: close-settings-touch.has-hover ? Tokens.danger.with-alpha(0.27) : Tokens.danger.with-alpha(0.13);
+                        border-width: 1px;
+                        border-color: Tokens.danger.with-alpha(0.4);
+                        Image {
+                            source: @image-url("../../../assets/icons/close.svg");
+                            width: 14px;
+                            height: 14px;
+                            colorize: close-settings-touch.has-hover ? Tokens.danger : Theme.foreground;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        close-settings-touch := TouchArea {
+                            clicked => { root.settings-open = false; }
+                        }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+
+            // Tab bar: General | Shortcuts. The shortcuts page is
+            // separate so there's no need to scroll through all of "General" anymore.
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
+                // -- "General" tab --
+                Rectangle {
+                    height: 30px;
+                    width: gen-tab-txt.preferred-width + 26px;
+                    border-radius: 6px;
+                    background: root.settings-tab == 0 ? Theme.accent-background.with-alpha(0.14)
+                        : (gen-tab-touch.has-hover ? Theme.alternate-background : transparent);
+                    gen-tab-txt := Text {
+                        text: root.strings.settings-tab-general;
+                        x: (parent.width - self.width) / 2;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        font-size: 12.5px;
+                        font-weight: root.settings-tab == 0 ? 700 : 500;
+                        color: root.settings-tab == 0 ? Theme.accent-background : Theme.foreground.with-alpha(0.75);
+                    }
+                    gen-tab-touch := TouchArea { clicked => { root.settings-tab = 0; } }
+                }
+                // -- "Shortcuts" tab --
+                Rectangle {
+                    height: 30px;
+                    width: sc-tab-txt.preferred-width + 26px;
+                    border-radius: 6px;
+                    background: root.settings-tab == 1 ? Theme.accent-background.with-alpha(0.14)
+                        : (sc-tab-touch.has-hover ? Theme.alternate-background : transparent);
+                    sc-tab-txt := Text {
+                        text: root.strings.settings-shortcuts-section;
+                        x: (parent.width - self.width) / 2;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        font-size: 12.5px;
+                        font-weight: root.settings-tab == 1 ? 700 : 500;
+                        color: root.settings-tab == 1 ? Theme.accent-background : Theme.foreground.with-alpha(0.75);
+                    }
+                    sc-tab-touch := TouchArea { clicked => { root.settings-tab = 1; } }
+                }
+                // "Open with" tab --
+                Rectangle {
+                    height: 30px;
+                    width: ow-tab-txt.preferred-width + 26px;
+                    border-radius: 6px;
+                    background: root.settings-tab == 2 ? Theme.accent-background.with-alpha(0.14)
+                        : (ow-tab-touch.has-hover ? Theme.alternate-background : transparent);
+                    ow-tab-txt := Text {
+                        text: root.strings.settings-openers-section;
+                        x: (parent.width - self.width) / 2;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        font-size: 12.5px;
+                        font-weight: root.settings-tab == 2 ? 700 : 500;
+                        color: root.settings-tab == 2 ? Theme.accent-background : Theme.foreground.with-alpha(0.75);
+                    }
+                    ow-tab-touch := TouchArea { clicked => { root.settings-tab = 2; } }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+
+            // Scrollable content — GENERAL tab
+            if root.settings-tab == 0 : ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 18px;
+
+                    // -- Language selector (compact 32px row) --
+                    Rectangle {
+                        height: 32px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: root.strings.settings-language;
+                                // min-width (instead of a fixed width): the label
+                                // widens if a language is long (the ComboBox
+                                // absorbs it), instead of truncating the text at 150%.
+                                min-width: 160px;
+                                vertical-alignment: center;
+                                color: Theme.foreground;
+                                font-size: 13px;
+                            }
+                            settings-lang := ComboBox {
+                                model: root.language-labels;
+                                current-index <=> root.language-index;
+                                horizontal-stretch: 1;
+                                selected(_) => { root.language-changed(settings-lang.current-index); }
+                            }
+                        }
+                    }
+
+                    // -- Theme selector --
+                    Rectangle {
+                        height: 32px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: root.strings.settings-theme;
+                                // min-width (instead of a fixed width): the label
+                                // widens if a language is long (the ComboBox
+                                // absorbs it), instead of truncating the text at 150%.
+                                min-width: 160px;
+                                vertical-alignment: center;
+                                color: Theme.foreground;
+                                font-size: 13px;
+                            }
+                            settings-theme := ComboBox {
+                                model: root.theme-labels;
+                                current-index <=> root.theme-pref;
+                                horizontal-stretch: 1;
+                                selected(_) => { root.theme-changed(settings-theme.current-index); }
+                            }
+                        }
+                    }
+
+                    // -- Interface zoom (factor x screen scale) --
+                    Rectangle {
+                        height: 32px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: root.strings.settings-ui-scale;
+                                min-width: 160px;
+                                vertical-alignment: center;
+                                color: Theme.foreground;
+                                font-size: 13px;
+                            }
+                            settings-ui-scale := ComboBox {
+                                model: root.ui-scale-labels;
+                                current-index <=> root.ui-scale-index;
+                                horizontal-stretch: 1;
+                                selected(_) => { root.ui-scale-changed(settings-ui-scale.current-index); }
+                            }
+                        }
+                    }
+
+                    // DEFAULT tab bar position (new "from
+                    // scratch" views; existing views keep
+                    // their per-view setting).
+                    Rectangle {
+                        height: 32px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: root.strings.settings-tabbar-default;
+                                // min-width (instead of a fixed width): the label
+                                // widens if a language is long (the ComboBox
+                                // absorbs it), instead of truncating the text at 150%.
+                                min-width: 160px;
+                                vertical-alignment: center;
+                                color: Theme.foreground;
+                                font-size: 13px;
+                            }
+                            settings-tabbar := ComboBox {
+                                model: root.tabbar-default-labels;
+                                current-index <=> root.tabbar-default-pref;
+                                horizontal-stretch: 1;
+                                selected(_) => { root.tabbar-default-changed(settings-tabbar.current-index); }
+                            }
+                        }
+                    }
+
+                    // Timezone of the "Modified" column: local time
+                    // (default) or UTC.
+                    Rectangle {
+                        height: 32px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: root.strings.settings-clock-label;
+                                // min-width (instead of a fixed width): the label
+                                // widens if a language is long (the ComboBox
+                                // absorbs it), instead of truncating the text at 150%.
+                                min-width: 160px;
+                                vertical-alignment: center;
+                                color: Theme.foreground;
+                                font-size: 13px;
+                            }
+                            settings-clock := ComboBox {
+                                model: [root.strings.settings-clock-local, "UTC"];
+                                current-index <=> root.clock-utc-pref;
+                                horizontal-stretch: 1;
+                                selected(_) => { root.clock-mode-changed(settings-clock.current-index); }
+                            }
+                        }
+                    }
+
+                    // "Full path" tooltip on tab hover —
+                    // opt-in, unchecked by default.
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-tab-tooltip-label;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-tab-tooltip-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                CheckBox {
+                                    checked <=> root.tab-tooltip-enabled;
+                                    toggled => { root.tab-tooltip-changed(self.checked); }
+                                }
+                            }
+                        }
+                    }
+
+                    // Hybrid Preview mode: previewable content
+                    // keeps the chosen zoom, plain icons stay at
+                    // normal height. Enabled by default.
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-compact-preview-label;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-compact-preview-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                CheckBox {
+                                    checked <=> root.compact-preview-rows-enabled;
+                                    toggled => { root.compact-preview-rows-changed(self.checked); }
+                                }
+                            }
+                        }
+                    }
+
+                    // "Video thumbnails (ffmpeg)" section — LINUX only.
+                    // Discreet when ffmpeg is present; guides toward installation
+                    // (command per distro, detected one highlighted) otherwise.
+                    if !root.platform-windows : Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 10px;
+                            // Header: title+hint (stretch) · badge · recheck.
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-ffmpeg-title;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.ffmpeg-found
+                                            ? root.strings.settings-ffmpeg-hint-ok
+                                            : root.strings.settings-ffmpeg-hint-missing;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                // Status badge: green (found) / amber (missing).
+                                // Amber, not red: ffmpeg is an optional convenience,
+                                // not a destructive error.
+                                status-badge := Rectangle {
+                                    property <color> tone: root.ffmpeg-found ? Tokens.success : Tokens.warning;
+                                    height: 22px;
+                                    vertical-stretch: 0;
+                                    border-radius: 11px;
+                                    background: status-badge.tone.with-alpha(0.15);
+                                    HorizontalLayout {
+                                        padding-left: 9px;
+                                        padding-right: 9px;
+                                        spacing: 5px;
+                                        Image {
+                                            width: 12px;
+                                            height: 12px;
+                                            y: (parent.height - self.height) / 2;
+                                            source: root.ffmpeg-found
+                                                ? @image-url("../../../assets/icons/check.svg")
+                                                : @image-url("../../../assets/icons/alert-triangle.svg");
+                                            colorize: status-badge.tone;
+                                        }
+                                        Text {
+                                            text: root.ffmpeg-found
+                                                ? (root.ffmpeg-version == "" ? "ffmpeg" : "ffmpeg " + root.ffmpeg-version)
+                                                : root.strings.settings-ffmpeg-missing-badge;
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                            color: status-badge.tone;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                                // "Recheck" button.
+                                Rectangle {
+                                    height: 28px;
+                                    vertical-stretch: 0;
+                                    border-radius: 6px;
+                                    border-width: 1px;
+                                    border-color: recheck-touch.has-hover ? Theme.accent-background : Theme.border;
+                                    background: recheck-touch.has-hover ? Theme.alternate-background : transparent;
+                                    HorizontalLayout {
+                                        padding-left: 9px;
+                                        padding-right: 10px;
+                                        spacing: 6px;
+                                        Image {
+                                            width: 13px;
+                                            height: 13px;
+                                            y: (parent.height - self.height) / 2;
+                                            source: @image-url("../../../assets/icons/refresh.svg");
+                                            colorize: Theme.foreground.with-alpha(0.7);
+                                        }
+                                        Text {
+                                            text: root.strings.settings-ffmpeg-recheck;
+                                            font-size: 12px;
+                                            color: Theme.foreground;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    recheck-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.ffmpeg-recheck(); }
+                                    }
+                                }
+                            }
+                            // "Missing" body: honest Flatpak message OR the
+                            // per-distribution install commands.
+                            if !root.ffmpeg-found && root.ffmpeg-flatpak : Text {
+                                text: root.strings.settings-ffmpeg-flatpak;
+                                font-size: 11px;
+                                color: Theme.foreground.with-alpha(0.55);
+                                wrap: word-wrap;
+                            }
+                            if !root.ffmpeg-found && !root.ffmpeg-flatpak : Rectangle {
+                                // "Inset" field (more recessed than the card).
+                                background: Theme.background;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Tokens.hairline;
+                                VerticalLayout {
+                                    padding: 6px;
+                                    spacing: 4px;
+                                    FfmpegCmdRow {
+                                        distro: "Debian/Ubuntu";
+                                        command: "sudo apt install ffmpeg";
+                                        promoted: root.ffmpeg-detected-index == 0;
+                                        detected-label: root.strings.settings-ffmpeg-detected;
+                                        copy(t) => { root.settings-copy(t); }
+                                    }
+                                    FfmpegCmdRow {
+                                        distro: "Fedora";
+                                        command: "sudo dnf install ffmpeg-free";
+                                        promoted: root.ffmpeg-detected-index == 1;
+                                        detected-label: root.strings.settings-ffmpeg-detected;
+                                        copy(t) => { root.settings-copy(t); }
+                                    }
+                                    FfmpegCmdRow {
+                                        distro: "Arch/Manjaro";
+                                        command: "sudo pacman -S ffmpeg";
+                                        promoted: root.ffmpeg-detected-index == 2;
+                                        detected-label: root.strings.settings-ffmpeg-detected;
+                                        copy(t) => { root.settings-copy(t); }
+                                    }
+                                    FfmpegCmdRow {
+                                        distro: "Alpine";
+                                        command: "sudo apk add ffmpeg";
+                                        promoted: root.ffmpeg-detected-index == 3;
+                                        detected-label: root.strings.settings-ffmpeg-detected;
+                                        copy(t) => { root.settings-copy(t); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // "Unsaved changes" guard before loading
+                    // another workspace — checked by default;
+                    // uncheckable by an advanced user.
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-ws-warn-label;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-ws-warn-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                CheckBox {
+                                    checked <=> root.ws-warn-unsaved;
+                                    toggled => { root.ws-warn-unsaved-changed(self.checked); }
+                                }
+                            }
+                        }
+                    }
+
+                    // "Folder modification date" section. The label
+                    // on the card below also serves as the section header.
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-rmtime-label;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-rmtime-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                SpinBox {
+                                    width: 96px;
+                                    minimum: 0;
+                                    maximum: 8;
+                                    value <=> root.rmtime-depth;
+                                    edited(v) => { root.rmtime-depth-changed(v); }
+                                }
+                            }
+                        }
+                    }
+
+                    // "Folder size" section. Same design as the modification
+                    // date above; on the Rust side both share ONE walk.
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-fsize-label;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-fsize-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                SpinBox {
+                                    width: 96px;
+                                    minimum: 0;
+                                    maximum: 8;
+                                    value <=> root.size-depth;
+                                    edited(v) => { root.size-depth-changed(v); }
+                                }
+                            }
+                        }
+                    }
+
+                    // "Default columns" section --
+                    Text {
+                        text: root.strings.settings-columns-section;
+                        font-weight: 600;
+                        font-size: 11px;
+                        color: Theme.foreground.with-alpha(0.6);
+                        letter-spacing: 0.5px;
+                    }
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 0px;
+                            for col[ci] in root.settings-columns : Rectangle {
+                                height: 32px;
+                                border-radius: 5px;
+                                opacity: col.id == "name" ? 0.5 : 1.0;
+                                background: scol-touch.has-hover && col.id != "name"
+                                    ? Theme.alternate-background
+                                    : transparent;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 10px;
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 16px;
+                                        height: parent.height;
+                                        Rectangle {
+                                            width: 16px;
+                                            height: 16px;
+                                            y: (parent.height - self.height) / 2;
+                                            border-radius: 4px;
+                                            border-width: 1px;
+                                            border-color: col.visible ? Theme.accent-background : Theme.border;
+                                            background: col.visible ? Theme.accent-background : transparent;
+                                            if col.visible : Image {
+                                                source: @image-url("../../../assets/icons/check.svg");
+                                                width: 10px;
+                                                height: 10px;
+                                                colorize: Theme.accent-foreground;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: col.label;
+                                        font-size: 13px;
+                                        color: Theme.foreground;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                                scol-touch := TouchArea {
+                                    mouse-cursor: col.id == "name" ? default : pointer;
+                                    clicked => {
+                                        if (col.id != "name") {
+                                            root.default-column-toggle(col.id, !col.visible);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // -- "Storage locations" section --
+                    Text {
+                        text: root.strings.settings-paths-section;
+                        font-weight: 600;
+                        font-size: 11px;
+                        color: Theme.foreground.with-alpha(0.6);
+                        // "Section header" style: uppercase + letter-spacing
+                        // (visual effect reminiscent of Apple Preferences / GNOME Settings).
+                        letter-spacing: 0.5px;
+                    }
+                    // -- Card grouping the 3 XDG paths --
+                    Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 12px;
+                            if !root.config-path-redundant : PathRow {
+                                label: root.strings.settings-config-path;
+                                value: root.config-dir-path;
+                                open-text: root.strings.settings-open;
+                                open-clicked => { root.open-config-dir(); }
+                            }
+                            if !root.config-path-redundant : Rectangle { height: 1px; background: Theme.border; }
+                            PathRow {
+                                label: root.strings.settings-data-path;
+                                value: root.data-dir-path;
+                                open-text: root.strings.settings-open;
+                                open-clicked => { root.open-data-dir(); }
+                            }
+                            Rectangle { height: 1px; background: Theme.border; }
+                            PathRow {
+                                label: root.strings.settings-cache-path;
+                                value: root.cache-dir-path;
+                                open-text: root.strings.settings-open;
+                                open-clicked => { root.open-cache-dir(); }
+                            }
+                            Rectangle { height: 1px; background: Theme.border; }
+                            // Sweeping annotations left behind. Deliberately
+                            // manual and deliberately explicit: the count is
+                            // shown before anything is offered, and the hint
+                            // says what will NOT be touched.
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-annotations-title;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-annotations-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                // Count badge. Neutral when there is nothing
+                                // to sweep, amber otherwise: leftovers are
+                                // untidy, never an error.
+                                orphan-badge := Rectangle {
+                                    property <color> tone: root.annotation-orphans > 0
+                                        ? Tokens.warning
+                                        : Tokens.success;
+                                    height: 22px;
+                                    vertical-stretch: 0;
+                                    border-radius: 11px;
+                                    background: orphan-badge.tone.with-alpha(0.15);
+                                    HorizontalLayout {
+                                        padding-left: 9px;
+                                        padding-right: 9px;
+                                        Text {
+                                            text: root.annotation-orphans;
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            color: orphan-badge.tone;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                                SettingsRowButton {
+                                    text: root.strings.settings-annotations-clean;
+                                    enabled: root.annotation-orphans > 0;
+                                    clicked => { root.clean-annotations(); }
+                                }
+                            }
+                        }
+                    }
+
+                }
+            } // <- end of the GENERAL tab (closes VerticalLayout + ScrollView)
+
+            // Scrollable content of the Shortcuts tab.
+            if root.settings-tab == 1 : ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 18px;
+                    sc-box := VerticalLayout {
+                        spacing: 10px;
+                        property <bool> reset-all-armed: false;
+
+                        // Header: search + reset all
+                        HorizontalLayout {
+                            spacing: 8px;
+                            SearchField {
+                                horizontal-stretch: 1;
+                                placeholder-text: root.strings.shortcut-search-placeholder;
+                                text <=> root.shortcut-search-text;
+                                edited(value) => { root.shortcut-search(value); }
+                            }
+                            if root.shortcut-has-overrides : Rectangle {
+                                height: 32px;
+                                width: rall-text.preferred-width + 24px;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: rall-touch.has-hover ? Theme.accent-background : Theme.border;
+                                background: rall-touch.has-hover ? Theme.alternate-background : transparent;
+                                rall-text := Text {
+                                    text: sc-box.reset-all-armed
+                                        ? root.strings.shortcut-reset-all-confirm
+                                        : root.strings.shortcut-reset-all;
+                                    font-size: 12px;
+                                    color: sc-box.reset-all-armed ? Tokens.danger : Theme.foreground;
+                                    x: (parent.width - self.width) / 2;
+                                    vertical-alignment: center;
+                                }
+                                rall-touch := TouchArea {
+                                    pointer-event(ev) => {
+                                        // Same rule as the rows: consumed here, so reported here.
+                                        if (ev.kind == PointerEventKind.down
+                                                && ev.button == PointerEventButton.left) {
+                                            Dismiss.serial += 1;
+                                        }
+                                    }
+                                    clicked => {
+                                        if (sc-box.reset-all-armed) {
+                                            root.shortcut-reset-all();
+                                            sc-box.reset-all-armed = false;
+                                        } else {
+                                            sc-box.reset-all-armed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Grouped list
+                        for grp[gi] in root.shortcut-groups : VerticalLayout {
+                            spacing: 0px;
+                            Text {
+                                text: grp.name;
+                                font-weight: 600;
+                                font-size: 11px;
+                                color: Theme.foreground.with-alpha(0.5);
+                                letter-spacing: 0.5px;
+                                height: 28px;
+                                vertical-alignment: bottom;
+                            }
+                            Rectangle {
+                                background: Theme.alternate-background.with-alpha(0.5);
+                                border-radius: 8px;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                VerticalLayout {
+                                    padding: 4px;
+                                    spacing: 0px;
+                                    for row[ri] in grp.rows : VerticalLayout {
+                                        spacing: 0px;
+                                        // Main row
+                                        Rectangle {
+                                            height: 36px;
+                                            border-radius: 5px;
+                                            background: row-hover.has-hover ? Theme.alternate-background : transparent;
+                                            row-hover := TouchArea {
+                                                pointer-event(ev) => {
+                                                    // Reported like every other click inside this
+                                                    // tab: a touch area consumes what it receives,
+                                                    // so the panel's catch-all underneath never
+                                                    // hears it and the floating menu would survive.
+                                                    if (ev.kind == PointerEventKind.down
+                                                            && ev.button == PointerEventButton.left) {
+                                                        Dismiss.serial += 1;
+                                                    }
+                                                    if (ev.kind == PointerEventKind.down
+                                                            && ev.button == PointerEventButton.right) {
+                                                        root.open-shortcut-menu(row.action-id,
+                                                            self.absolute-position.x + self.mouse-x,
+                                                            self.absolute-position.y + self.mouse-y);
+                                                    }
+                                                }
+                                            }
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-right: 8px;
+                                                spacing: 8px;
+                                                Text {
+                                                    text: row.name;
+                                                    font-size: 13px;
+                                                    color: Theme.foreground;
+                                                    vertical-alignment: center;
+                                                    horizontal-stretch: 1;
+                                                }
+                                                if row.overridden : Rectangle {
+                                                    width: 22px;
+                                                    Image {
+                                                        width: 13px;
+                                                        height: 13px;
+                                                        x: (parent.width - self.width) / 2;
+                                                        y: (parent.height - self.height) / 2;
+                                                        source: @image-url("../../../assets/icons/refresh.svg");
+                                                        colorize: rst-touch.has-hover ? Theme.accent-background : Theme.foreground.with-alpha(0.55);
+                                                    }
+                                                    rst-touch := TouchArea {
+                                                        clicked => { root.shortcut-reset(row.action-id); }
+                                                        pointer-event(ev) => {
+                                                            // Same rule as the rows: consumed here, so reported here.
+                                                            if (ev.kind == PointerEventKind.down
+                                                                    && ev.button == PointerEventButton.left) {
+                                                                Dismiss.serial += 1;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                // Clickable cluster: capture pill / caps / unassigned
+                                                Rectangle {
+                                                    width: sc-cluster.preferred-width;
+                                                    sc-cluster := HorizontalLayout {
+                                                        spacing: 3px;
+                                                        if root.shortcut-capturing == row.action-id : Rectangle {
+                                                            height: 24px;
+                                                            width: 168px;
+                                                            y: (parent.height - self.height) / 2;
+                                                            border-radius: 6px;
+                                                            border-width: 1px;
+                                                            border-color: Theme.accent-background;
+                                                            background: Theme.accent-background.with-alpha(0.10);
+                                                            Text {
+                                                                text: root.strings.shortcut-listening;
+                                                                font-size: 11px;
+                                                                color: Theme.accent-background;
+                                                                x: (parent.width - self.width) / 2;
+                                                                vertical-alignment: center;
+                                                            }
+                                                        }
+                                                        if root.shortcut-capturing != row.action-id && row.assigned : HorizontalLayout {
+                                                            spacing: 3px;
+                                                            for cap[ci] in row.caps : HorizontalLayout {
+                                                                spacing: 3px;
+                                                                if ci > 0 : Text {
+                                                                    text: "+";
+                                                                    font-size: 11px;
+                                                                    color: Theme.foreground.with-alpha(0.45);
+                                                                    vertical-alignment: center;
+                                                                }
+                                                                Rectangle {
+                                                                    height: 22px;
+                                                                    width: cap.kind == 0 ? max(24px, cap-lbl.preferred-width + 14px) : 24px;
+                                                                    y: (parent.height - self.height) / 2;
+                                                                    border-radius: 5px;
+                                                                    border-width: 1px;
+                                                                    border-color: Theme.border;
+                                                                    background: Theme.surface;
+                                                                    cap-lbl := Text {
+                                                                        visible: cap.kind == 0;
+                                                                        text: cap.label;
+                                                                        font-size: 11px;
+                                                                        font-weight: 600;
+                                                                        color: Theme.foreground;
+                                                                        x: (parent.width - self.width) / 2;
+                                                                        vertical-alignment: center;
+                                                                    }
+                                                                    if cap.kind != 0 : Image {
+                                                                        width: 11px;
+                                                                        height: 11px;
+                                                                        x: (parent.width - self.width) / 2;
+                                                                        y: (parent.height - self.height) / 2;
+                                                                        colorize: Theme.foreground;
+                                                                        source: cap.kind == 1 ? @image-url("../../../assets/icons/arrow-up.svg")
+                                                                            : cap.kind == 2 ? @image-url("../../../assets/icons/arrow-down.svg")
+                                                                            : cap.kind == 3 ? @image-url("../../../assets/icons/chevron-left.svg")
+                                                                            : @image-url("../../../assets/icons/chevron-right.svg");
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if root.shortcut-capturing != row.action-id && !row.assigned : Text {
+                                                            text: root.strings.shortcut-unassigned;
+                                                            font-size: 11px;
+                                                            font-italic: true;
+                                                            color: Theme.foreground.with-alpha(0.4);
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                    TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.shortcut-capturing = row.action-id;
+                                                            root.return-focus();
+                                                        }
+                                                        pointer-event(ev) => {
+                                                            // Above the panel's catch-all, so this
+                                                            // row reports its own left click: without
+                                                            // it, the menu opened on one row survived
+                                                            // a click on the next.
+                                                            if (ev.kind == PointerEventKind.down
+                                                                    && ev.button == PointerEventButton.left) {
+                                                                Dismiss.serial += 1;
+                                                            }
+                                                            if (ev.kind == PointerEventKind.down
+                                                                    && ev.button == PointerEventButton.right) {
+                                                                root.open-shortcut-menu(row.action-id,
+                                                                    self.absolute-position.x + self.mouse-x,
+                                                                    self.absolute-position.y + self.mouse-y);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Conflict band
+                                        if row.action-id == root.shortcut-conflict-action : Rectangle {
+                                            height: 32px;
+                                            border-radius: 6px;
+                                            background: Tokens.danger.with-alpha(0.12);
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-right: 8px;
+                                                spacing: 8px;
+                                                Text {
+                                                    text: root.shortcut-conflict-message;
+                                                    font-size: 11px;
+                                                    color: Tokens.danger;
+                                                    vertical-alignment: center;
+                                                    horizontal-stretch: 1;
+                                                }
+                                                Rectangle {
+                                                    width: ra-text.preferred-width + 18px;
+                                                    height: 24px;
+                                                    y: (parent.height - self.height) / 2;
+                                                    border-radius: 5px;
+                                                    border-width: 1px;
+                                                    border-color: Theme.accent-background;
+                                                    background: ra-touch.has-hover ? Theme.accent-background.with-alpha(0.12) : transparent;
+                                                    ra-text := Text {
+                                                        text: root.strings.shortcut-conflict-reassign;
+                                                        font-size: 11px;
+                                                        color: Theme.accent-background;
+                                                        x: (parent.width - self.width) / 2;
+                                                        vertical-alignment: center;
+                                                    }
+                                                    ra-touch := TouchArea { clicked => { root.shortcut-resolve-conflict(true); } }
+                                                }
+                                                Rectangle {
+                                                    width: rk-text.preferred-width + 18px;
+                                                    height: 24px;
+                                                    y: (parent.height - self.height) / 2;
+                                                    border-radius: 5px;
+                                                    border-width: 1px;
+                                                    border-color: Theme.border;
+                                                    background: rk-touch.has-hover ? Theme.alternate-background : transparent;
+                                                    rk-text := Text {
+                                                        text: root.strings.shortcut-conflict-keep;
+                                                        font-size: 11px;
+                                                        color: Theme.foreground;
+                                                        x: (parent.width - self.width) / 2;
+                                                        vertical-alignment: center;
+                                                    }
+                                                    rk-touch := TouchArea { clicked => { root.shortcut-resolve-conflict(false); } }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if root.shortcut-groups.length == 0 : Text {
+                            text: root.strings.shortcut-no-results;
+                            color: Theme.foreground.with-alpha(0.5);
+                            font-size: 12px;
+                            height: 40px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            // Scrollable content — OPEN WITH tab
+            if root.settings-tab == 2 : ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    // "Open with" and "Detected Windows entries" sub-tabs.
+                    // The segmented style follows the shortcut popup's. A
+                    // fixed height keeps the buttons from occupying the free space
+                    // when the content is empty.
+                    if root.platform-windows : HorizontalBox {
+                        height: 32px;
+                        padding: 0px;
+                        spacing: 6px;
+                        Button {
+                            text: root.strings.settings-openers-section;
+                            primary: root.ow-subtab == 0;
+                            clicked => { root.ow-subtab = 0; }
+                        }
+                        Button {
+                            text: root.strings.settings-shellext-list-label;
+                            primary: root.ow-subtab == 1;
+                            clicked => { root.ow-subtab = 1; }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    if root.ow-subtab == 0 : HorizontalLayout {
+                        height: 32px;
+                        spacing: 8px;
+                        SearchField {
+                            horizontal-stretch: 1;
+                            placeholder-text: root.strings.ow-search-placeholder;
+                            text <=> root.opener-search-text;
+                            edited(value) => { root.opener-search(value); }
+                        }
+                        Rectangle {
+                            width: owadd-txt.preferred-width + 22px;
+                            height: 32px;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: owadd-ta.has-hover ? Theme.accent-background : Theme.border;
+                            background: owadd-ta.has-hover ? Theme.alternate-background : transparent;
+                            owadd-txt := Text { text: root.strings.ow-add; font-size: 12px; color: Theme.foreground; x: (parent.width - self.width)/2; vertical-alignment: center; height: parent.height; }
+                            owadd-ta := TouchArea { clicked => { root.ow-add(); } }
+                        }
+                    }
+                    // Ready-made archiving/sharing commands, on their own
+                    // block under the search row. Wrapped over two rows so
+                    // the menu never scrolls sideways — even in the longer
+                    // languages or when every tool is installed. The label
+                    // keeps a fixed height so its box cannot grow with the
+                    // platform font's line spacing (which left a gap above
+                    // the buttons on Linux).
+                    // Ready-made commands, collapsed by default. The
+                    // whole header line toggles it, on the model of the
+                    // sidebar section headers.
+                    // Shown even with nothing detected: the block is how
+                    // one learns the recipes exist at all, and that
+                    // installing an archiver makes them appear.
+                    if root.ow-subtab == 0 : VerticalLayout {
+                        spacing: 6px;
+                        Rectangle {
+                            // Fixed height: a bare Text grew with the system
+                            // line spacing and left a gap on Linux.
+                            height: 26px;
+                            border-radius: 5px;
+                            background: rcp-hdr.has-hover ? Theme.alternate-background : transparent;
+                            accessible-role: button;
+                            accessible-label: root.strings.ow-recipes-label;
+                            accessible-action-default => { root.ow-recipes-open = !root.ow-recipes-open; }
+                            rcp-hdr := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.ow-recipes-open = !root.ow-recipes-open; }
+                            }
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 8px;
+                                spacing: 6px;
+                                // Fixed slot: the two chevrons differ in
+                                // width, and the label would shift on toggle.
+                                Rectangle {
+                                    width: 12px;
+                                    Image {
+                                        width: 10px;
+                                        height: 10px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        source: root.ow-recipes-open
+                                            ? @image-url("../../../assets/icons/chevron-down.svg")
+                                            : @image-url("../../../assets/icons/chevron-right.svg");
+                                        colorize: Theme.foreground.with-alpha(rcp-hdr.has-hover ? 0.75 : 0.45);
+                                    }
+                                }
+                                Text {
+                                    text: root.strings.ow-recipes-label;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    color: Theme.foreground.with-alpha(rcp-hdr.has-hover ? 0.8 : 0.55);
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                // Collapsed, this count is the only thing
+                                // saying the section holds anything.
+                                Text {
+                                    text: "(" + (root.ow-recipes-col1.length + root.ow-recipes-col2.length) + ")";
+                                    font-size: 11px;
+                                    color: Theme.foreground.with-alpha(0.4);
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+                        if root.ow-recipes-open : VerticalLayout {
+                            padding-left: 18px;
+                            spacing: 6px;
+                            Text {
+                                text: root.strings.ow-recipes-hint;
+                                font-size: 11px;
+                                color: Theme.foreground.with-alpha(0.55);
+                                wrap: word-wrap;
+                            }
+                            if root.ow-recipes-missing != "" : Text {
+                                text: root.ow-recipes-missing;
+                                font-size: 11px;
+                                color: Theme.foreground.with-alpha(0.4);
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
+                                    for r in root.ow-recipes-col1 : OwRecipeButton {
+                                        recipe: r;
+                                        activate => { root.ow-recipe-add(r.index); }
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
+                                    for r in root.ow-recipes-col2 : OwRecipeButton {
+                                        recipe: r;
+                                        activate => { root.ow-recipe-add(r.index); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if root.ow-subtab == 0 : Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            if root.openers-all.length == 0 : Text {
+                                text: root.opener-search-text == ""
+                                    ? root.strings.ow-empty
+                                    : root.strings.ow-no-results;
+                                font-size: 12px;
+                                color: Theme.foreground.with-alpha(0.45);
+                                height: 30px;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                            for op[oi] in root.openers-all : Rectangle {
+                                height: 32px;
+                                border-radius: 5px;
+                                background: oprow.has-hover ? Theme.alternate-background : transparent;
+                                oprow := TouchArea { }
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 4px;
+                                    spacing: 6px;
+                                    CommandIcon {
+                                        kind: op.icon-kind;
+                                        extracted: op.icon;
+                                        available: op.available;
+                                    }
+                                    Text {
+                                        text: op.label;
+                                        font-size: 13px;
+                                        color: op.available ? Theme.foreground : Theme.foreground.with-alpha(0.45);
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/chevron-up.svg"); tooltip: root.strings.ow-move-up; clicked => { root.ow-move(op.id, -1); } }
+                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/chevron-down.svg"); tooltip: root.strings.ow-move-down; clicked => { root.ow-move(op.id, 1); } }
+                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/duplicate.svg"); tooltip: root.strings.ow-duplicate-tip; clicked => { root.ow-duplicate(op.id); } }
+                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/pencil.svg"); tooltip: root.strings.ow-edit-tip; clicked => { root.ow-edit(op.id); } }
+                                    SidebarHeaderAction { icon: @image-url("../../../assets/icons/trash.svg"); tooltip: root.strings.ow-delete-tip; clicked => { root.ow-delete(op.id); } }
+                                }
+                            }
+                        }
+                    }
+
+                    // ===== Detected Windows entries (shell extensions) =====
+                    // Dedicated sub-tab. List built at LAUNCH
+                    // (completed as right-clicks happen); unchecking hides
+                    // the entry from the context menu.
+                    // Global toggle for the Windows context menu —
+                    // moved here from the General tab: everything
+                    // related to shell extensions lives in this sub-tab.
+                    if root.platform-windows && root.ow-subtab == 1 : Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text {
+                                        text: root.strings.settings-shellmenu-label;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.foreground;
+                                    }
+                                    Text {
+                                        text: root.strings.settings-shellmenu-hint;
+                                        font-size: 11px;
+                                        color: Theme.foreground.with-alpha(0.55);
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                CheckBox {
+                                    checked <=> root.shell-menu-enabled;
+                                    toggled => { root.shell-menu-changed(self.checked); }
+                                }
+                            }
+                        }
+                    }
+                    // The list below only makes sense if the integration is
+                    // active → greyed out/hidden otherwise.
+                    if root.platform-windows && root.ow-subtab == 1 && root.shell-menu-enabled : Text {
+                        text: root.strings.settings-shellext-list-hint;
+                        font-size: 11px;
+                        color: Theme.foreground.with-alpha(0.55);
+                        wrap: word-wrap;
+                    }
+                    if root.platform-windows && root.ow-subtab == 1 && root.shell-menu-enabled && root.shell-ext-rows.length == 0 : Text {
+                        text: root.strings.settings-shellext-empty;
+                        font-size: 12px;
+                        color: Theme.foreground.with-alpha(0.45);
+                        height: 40px;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    if root.platform-windows && root.ow-subtab == 1 && root.shell-menu-enabled && root.shell-ext-rows.length > 0 : Rectangle {
+                        background: Theme.alternate-background.with-alpha(0.5);
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 6px;
+                            spacing: 2px;
+                            for sx in root.shell-ext-rows : Rectangle {
+                                height: 28px;
+                                border-radius: 5px;
+                                background: sxrow.has-hover ? Theme.alternate-background : transparent;
+                                sxrow := TouchArea { }
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 4px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: sx.label;
+                                        font-size: 13px;
+                                        color: Theme.foreground;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                    CheckBox {
+                                        checked: sx.enabled;
+                                        toggled => { root.shell-ext-toggle(sx.label, self.checked); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // End spring: absorbs the free space → the
+                    // cards/tabs keep their natural height even when
+                    // the list is empty or hidden.
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+        }
+    }
+    // ===== Context menu of a keyboard shortcut =====
+    // Rendered AFTER the Settings dialog → on top of it. Gated on
+    // `settings-open`: closing settings also hides this menu.
+    if root.settings-open && root.settings-tab == 1 && root.shortcut-menu-open : Rectangle {
+        x: min(root.shortcut-menu-x, root.width - self.width - 8px);
+        y: min(root.shortcut-menu-y, root.height - self.height - 8px);
+        width: 240px;
+        height: 40px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            MenuItem {
+                label: root.strings.shortcut-unassign;
+                clicked => {
+                    root.shortcut-menu-open = false;
+                    root.shortcut-unassign(root.shortcut-menu-action);
+                }
+            }
+        }
+    }
+}
