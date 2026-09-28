@@ -2744,98 +2744,6 @@ export component MainWindow inherits Window {
         // The New folder, Expand all, and Collapse all actions live
         // in the Favorites section's header.
 
-        if root.fav-menu-open : Rectangle {
-            x: min(root.fav-menu-x, root.width - self.width - 8px);
-            y: min(root.fav-menu-y, root.height - self.height - 8px);
-            width: 220px;
-            height: root.fav-menu-container ? 120px : 126px;
-            background: Theme.background;
-            border-radius: Tokens.radius-overlay;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #000000.with-alpha(0.25);
-            drop-shadow-offset-y: 4px;
-            TouchArea { }
-            VerticalLayout {
-                padding: 4px;
-                // --- CONTAINER ---
-                if root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-open-all;
-                    clicked => { root.fav-menu-open = false; root.fav-open-all(root.fav-menu-id); }
-                }
-                if root.fav-menu-container : Rectangle {
-                    height: 7px;
-                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-                }
-                if root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-new-subcontainer;
-                    clicked => { root.fav-menu-open = false; root.open-fav-name(false, root.fav-menu-id, ""); }
-                }
-                if root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-rename;
-                    clicked => { root.fav-menu-open = false; root.open-fav-name(true, root.fav-menu-id, root.fav-menu-name); }
-                }
-                // Container deletion: 2nd click = confirmation (recursive).
-                if root.fav-menu-container : Rectangle {
-                    height: 26px;
-                    border-radius: 4px;
-                    background: root.fav-menu-confirm-delete
-                        ? Tokens.danger.with-alpha(fdc-touch.has-hover ? 0.34 : 0.20)
-                        : (fdc-touch.has-hover ? Tokens.danger.with-alpha(0.14) : transparent);
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        Text {
-                            text: root.fav-menu-confirm-delete ? root.strings.fav-delete-confirm : root.strings.fav-delete;
-                            color: Tokens.danger;
-                            font-size: 12px;
-                            font-weight: root.fav-menu-confirm-delete ? 700 : 400;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    fdc-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            if (root.fav-menu-confirm-delete) {
-                                root.fav-menu-open = false;
-                                root.fav-delete(root.fav-menu-id);
-                            } else {
-                                root.fav-menu-confirm-delete = true;
-                            }
-                        }
-                    }
-                }
-                // --- FAVORITE ---
-                if !root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-open;
-                    clicked => { root.fav-menu-open = false; root.fav-open(root.fav-menu-id); }
-                }
-                if !root.fav-menu-container : Rectangle {
-                    height: 7px;
-                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-                }
-                if !root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-rename;
-                    clicked => { root.fav-menu-open = false; root.open-fav-name(true, root.fav-menu-id, root.fav-menu-name); }
-                }
-                if !root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-delete;
-                    clicked => { root.fav-menu-open = false; root.fav-delete(root.fav-menu-id); }
-                }
-                if !root.fav-menu-container : Rectangle {
-                    height: 7px;
-                    Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
-                }
-                if !root.fav-menu-container : MenuItem {
-                    label: root.strings.fav-copy-path;
-                    clicked => { root.fav-menu-open = false; root.fav-copy-path(root.fav-menu-id); }
-                }
-            }
-        }
-
         // ===== Tab bar, Columns and drop menus =====
         // Extracted to overlays/panel_menus.slint; the forwards below are the
         // whole contract with it (state in, actions back out).
@@ -2871,7 +2779,7 @@ export component MainWindow inherits Window {
             file-drop-menu-y: root.file-drop-menu-y;
         }
 
-        // ===== Favorites popups (naming, save-as, new container) =====
+        // ===== Favorites popups and the container context menu =====
         // Extracted to overlays/favorites.slint; the forwards below are the
         // whole contract with it (forms two-way, validation in, saves out).
         OverlayFavorites {
@@ -2895,6 +2803,19 @@ export component MainWindow inherits Window {
             fav-newc-name <=> root.fav-newc-name;
             fav-newc-parent-index <=> root.fav-newc-parent-index;
             fav-newc-focus-armed <=> root.fav-newc-focus-armed;
+            // Sidebar container / favorite context menu.
+            fav-menu-open <=> root.fav-menu-open;
+            fav-menu-x <=> root.fav-menu-x;
+            fav-menu-y <=> root.fav-menu-y;
+            fav-menu-container <=> root.fav-menu-container;
+            fav-menu-confirm-delete <=> root.fav-menu-confirm-delete;
+            fav-menu-id: root.fav-menu-id;
+            fav-menu-name: root.fav-menu-name;
+            fav-open(id) => { root.fav-open(id); }
+            fav-open-all(id) => { root.fav-open-all(id); }
+            fav-delete(id) => { root.fav-delete(id); }
+            fav-copy-path(id) => { root.fav-copy-path(id); }
+            open-fav-name(rename, id, name) => { root.open-fav-name(rename, id, name); }
         }
 
 
@@ -4571,6 +4492,7 @@ export component MainWindow inherits Window {
 
     }
 }
+
 
 
 

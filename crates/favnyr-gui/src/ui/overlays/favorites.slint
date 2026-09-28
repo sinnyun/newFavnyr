@@ -1,13 +1,15 @@
-// The three favorites popups: naming or renaming a container, "save as
-// favorite" (with its container dropdown and alias field) and the
-// "new container" sub-popup raised from the save flow.
+// The favorites popups and the sidebar context menu: naming or renaming a
+// container, "save as favorite" (with its container dropdown and alias
+// field), the "new container" sub-popup raised from the save flow, and the
+// container / favorite context menu.
 //
 // Extracted from main_window.slint. Everything the forms edit is two-way,
 // including the container index of the dropdowns and the focus-armer flags
 // the in-popup timers clear themselves.
 
 import { Strings } from "../structs.slint";
-import { Theme } from "../theme.slint";
+import { Theme, Tokens } from "../theme.slint";
+import { MenuItem } from "../widgets/menus.slint";
 import { EditLineEdit } from "../widgets/inputs.slint";
 import { ModalBackdrop } from "../widgets/tabs.slint";
 import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
@@ -43,6 +45,20 @@ export component OverlayFavorites inherits Rectangle {
     in-out property <string> fav-newc-name: "";
     in-out property <int> fav-newc-parent-index: 0;
     in-out property <bool> fav-newc-focus-armed: false;
+
+    // Sidebar container / favorite context menu.
+    in-out property <bool> fav-menu-open: false;
+    in-out property <length> fav-menu-x;
+    in-out property <length> fav-menu-y;
+    in-out property <bool> fav-menu-container: false;
+    in-out property <bool> fav-menu-confirm-delete: false;
+    in property <string> fav-menu-id: "";
+    in property <string> fav-menu-name: "";
+    callback fav-open(string);
+    callback fav-open-all(string);
+    callback fav-delete(string);
+    callback fav-copy-path(string);
+    callback open-fav-name(bool, string, string);
 
     // ===== Modal popup for naming or renaming a favorites container =====
     // It shares the rules of the other naming popups: validation via
@@ -266,6 +282,101 @@ export component OverlayFavorites inherits Rectangle {
                         root.fav-newc-open = false;
                     }
                 }
+            }
+        }
+    }
+    // ===== Container / favorite context menu =====
+    // Two faces in one popup: the container section (open all, new
+    // sub-folder, rename, two-step delete) shows when fav-menu-container is
+    // set, the favorite section (open, rename, delete, copy path) otherwise.
+    if root.fav-menu-open : Rectangle {
+        x: min(root.fav-menu-x, root.width - self.width - 8px);
+        y: min(root.fav-menu-y, root.height - self.height - 8px);
+        width: 220px;
+        height: root.fav-menu-container ? 120px : 126px;
+        background: Theme.background;
+        border-radius: Tokens.radius-overlay;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #000000.with-alpha(0.25);
+        drop-shadow-offset-y: 4px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 4px;
+            // --- CONTAINER ---
+            if root.fav-menu-container : MenuItem {
+                label: root.strings.fav-open-all;
+                clicked => { root.fav-menu-open = false; root.fav-open-all(root.fav-menu-id); }
+            }
+            if root.fav-menu-container : Rectangle {
+                height: 7px;
+                Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
+            }
+            if root.fav-menu-container : MenuItem {
+                label: root.strings.fav-new-subcontainer;
+                clicked => { root.fav-menu-open = false; root.open-fav-name(false, root.fav-menu-id, ""); }
+            }
+            if root.fav-menu-container : MenuItem {
+                label: root.strings.fav-rename;
+                clicked => { root.fav-menu-open = false; root.open-fav-name(true, root.fav-menu-id, root.fav-menu-name); }
+            }
+            // Container deletion: 2nd click = confirmation (recursive).
+            if root.fav-menu-container : Rectangle {
+                height: 26px;
+                border-radius: 4px;
+                background: root.fav-menu-confirm-delete
+                    ? Tokens.danger.with-alpha(fdc-touch.has-hover ? 0.34 : 0.20)
+                    : (fdc-touch.has-hover ? Tokens.danger.with-alpha(0.14) : transparent);
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text {
+                        text: root.fav-menu-confirm-delete ? root.strings.fav-delete-confirm : root.strings.fav-delete;
+                        color: Tokens.danger;
+                        font-size: 12px;
+                        font-weight: root.fav-menu-confirm-delete ? 700 : 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+                fdc-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if (root.fav-menu-confirm-delete) {
+                            root.fav-menu-open = false;
+                            root.fav-delete(root.fav-menu-id);
+                        } else {
+                            root.fav-menu-confirm-delete = true;
+                        }
+                    }
+                }
+            }
+            // --- FAVORITE ---
+            if !root.fav-menu-container : MenuItem {
+                label: root.strings.fav-open;
+                clicked => { root.fav-menu-open = false; root.fav-open(root.fav-menu-id); }
+            }
+            if !root.fav-menu-container : Rectangle {
+                height: 7px;
+                Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
+            }
+            if !root.fav-menu-container : MenuItem {
+                label: root.strings.fav-rename;
+                clicked => { root.fav-menu-open = false; root.open-fav-name(true, root.fav-menu-id, root.fav-menu-name); }
+            }
+            if !root.fav-menu-container : MenuItem {
+                label: root.strings.fav-delete;
+                clicked => { root.fav-menu-open = false; root.fav-delete(root.fav-menu-id); }
+            }
+            if !root.fav-menu-container : Rectangle {
+                height: 7px;
+                Rectangle { y: 3px; height: 1px; background: Tokens.hairline; }
+            }
+            if !root.fav-menu-container : MenuItem {
+                label: root.strings.fav-copy-path;
+                clicked => { root.fav-menu-open = false; root.fav-copy-path(root.fav-menu-id); }
             }
         }
     }
