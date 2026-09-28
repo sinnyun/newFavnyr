@@ -203,7 +203,6 @@ export component DragEdgeScroller inherits Rectangle {
 // modal (the settings panel, the file view underneath) and scroll or select
 // there while the modal is up. Clicks on the dim are absorbed; set
 // `dismiss-on-click` to also close the modal from a click in the dim.
-
 export component ModalBackdrop inherits Rectangle {
     in property <bool> dismiss-on-click: false;
     callback dismiss();
