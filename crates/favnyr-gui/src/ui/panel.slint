@@ -2,11 +2,12 @@
 // rows, footer). Instantiated once per view by `MainWindow`.
 
 import { PanelView, Strings } from "structs.slint";
-import { Dismiss, Note, Theme, Tip, Tokens, WindowFocus } from "theme.slint";
-import { DragEdgeScroller, NavIconButton, VTabBar } from "widgets/tabs.slint";
+import { Dismiss, Note, Theme, Tokens, WindowFocus } from "theme.slint";
+import { DragEdgeScroller, VTabBar } from "widgets/tabs.slint";
 import { ColumnHeader, FileRowView, FileTileView, SectionHeaderView } from "widgets/rows.slint";
-import { EditTextInput, FilterBar } from "widgets/inputs.slint";
+import { FilterBar } from "widgets/inputs.slint";
 import { PanelTabsBar } from "panel/tabs_bar.slint";
+import { PanelNavBar } from "panel/nav_bar.slint";
 
 export component PanelComponent inherits Rectangle {
     // IMPORTANT: `preferred-width: 0` is necessary for the splitter
@@ -166,10 +167,6 @@ export component PanelComponent inherits Rectangle {
     property <bool> swap-lit: root.view-swap-flying
         || (root.view-drag-armed
             && (root.view-drag-is-source || root.view-drag-is-target));
-    // Where the grip was pressed, and whether the press became a drag.
-    property <length> vd-x;
-    property <length> vd-y;
-    property <bool> view-dragging: false;
 
     // Directional drop zones -----
     // Drag cursor position in THIS panel's frame.
@@ -824,512 +821,38 @@ export component PanelComponent inherits Rectangle {
         }
 
         // ===== Nav bar + breadcrumb =====
-        HorizontalLayout {
-            spacing: 4px;
-            alignment: stretch;
-            height: 28px;
-
-            NavIconButton {
-                enabled: root.view.can-go-back;
-                icon: @image-url("../../assets/icons/chevron-left.svg");
-                tooltip-text: root.strings.nav-prev;
-                clicked => { root.activate(); root.go-back(); }
-            }
-            NavIconButton {
-                enabled: root.view.can-go-forward;
-                icon: @image-url("../../assets/icons/chevron-right.svg");
-                tooltip-text: root.strings.nav-next;
-                clicked => { root.activate(); root.go-forward(); }
-            }
-            NavIconButton {
-                icon: @image-url("../../assets/icons/arrow-up.svg");
-                tooltip-text: root.strings.nav-parent;
-                clicked => { root.activate(); root.go-parent(); }
-            }
-            NavIconButton {
-                icon: @image-url("../../assets/icons/refresh.svg");
-                tooltip-text: root.strings.nav-refresh;
-                clicked => { root.activate(); root.refresh(); }
-            }
-            // Display mode of this view. The icon shows the CURRENT mode, and
-            // a click opens the 3-option menu (list / previews / grid).
-            // (Embedded SVGs rather than Unicode glyphs ▦/☰: those code points
-            // are absent from the default Windows UI font, so they render as
-            // empty "tofu" boxes there.)
-            NavIconButton {
-                icon: root.view.view-mode == "grid"
-                    ? @image-url("../../assets/icons/grid.svg")
-                    : (root.view.preview-mode
-                        ? @image-url("../../assets/icons/previews.svg")
-                        : @image-url("../../assets/icons/list.svg"));
-                tooltip-text: root.strings.view-mode-tooltip;
-                dismiss-bump: false;   // opens a menu → don't auto-close it
-                clicked-at(mx, my) => {
-                    root.close-ctx-menu();
-                    root.open-view-menu(mx, my);
-                    root.activate();
-                }
-            }
-            // "Show subfolder contents": one section per direct subfolder,
-            // folded by clicking its header. Lit while on.
-            NavIconButton {
-                icon: @image-url("../../assets/icons/folder-expand.svg");
-                tooltip-text: root.strings.show-subfolders-tooltip;
-                lit: root.view.show-subfolders;
-                clicked => { root.activate(); root.toggle-subfolder-contents(); }
-            }
-            // Shows / hides hidden files, per view. The icon
-            // reflects the CURRENT state: eye = hidden files shown; crossed-out eye = hidden.
-            NavIconButton {
-                icon: root.view.show-hidden
-                    ? @image-url("../../assets/icons/eye.svg")
-                    : @image-url("../../assets/icons/eye-off.svg");
-                tooltip-text: root.strings.show-hidden-tooltip;
-                clicked => { root.activate(); root.toggle-show-hidden(); }
-            }
-            // Tab bar position: 3-option dropdown menu
-            // (top / left / right). The icon reflects the current state via a
-            // radio-choice semantics, at the same location in all three modes.
-            NavIconButton {
-                icon: root.tab-mode == 1
-                    ? @image-url("../../assets/icons/tabs-left.svg")
-                    : (root.tab-mode == 2
-                        ? @image-url("../../assets/icons/tabs-right.svg")
-                        : @image-url("../../assets/icons/tabs-top.svg"));
-                tooltip-text: root.strings.tabbar-menu-tooltip;
-                dismiss-bump: false;   // opens a menu → don't auto-close it
-                // Position provided by the button's internal TouchArea via
-                // `clicked-at`, same as for tooltips. It thus shares the
-                // same reference frame as the pointer event.
-                clicked-at(mx, my) => {
-                    root.close-ctx-menu();
-                    root.open-tabbar-menu(mx, my);
-                    root.activate();
-                }
-            }
-
-            // Path bar: two modes.
-            //  - Display (default): breadcrumb of clickable segments.
-            //    Clicking a segment → navigate-to(segment.path). Clicking the
-            //    empty area on the right → switches to edit mode.
-            //  - Edit: TextInput (type an arbitrary path). Enter
-            //    submits, Escape cancels. Nautilus pattern (Ctrl+L to edit).
-            Rectangle {
-                // Visual frame (background + rounded corners) WITHOUT clip: a clip with
-                // border-radius forces an offscreen layer rendered at a
-                // fractional size → VERY BLURRY URL bar. The clip is carried by
-                // the inner rectangular wrapper (scissor, crisp).
-                background: Theme.alternate-background;
-                border-radius: 4px;
-                border-width: root.path-edit-mode ? 1px : 0;
-                border-color: Theme.accent-background;
-                horizontal-stretch: 1;
-
-                url-clip := Rectangle {
-                width: 100%;
-                height: 100%;
-                clip: true;
-
-                // --- DISPLAY mode: breadcrumbs ---
-                if !root.path-edit-mode : TouchArea {
-                    // Click on the empty area (not on a segment) → edit mode.
-                    clicked => {
-                        root.activate();
-                        root.close-ctx-menu();
-                        root.url-edit-text = root.view.current-path;
-                        root.path-edit-mode = true;
-                    }
-                    // Right-click → enters edit mode (pre-filled field) + Paste/Copy
-                    // menu, so "Paste" fills the field.
-                    pointer-event(ev) => {
-                        if (ev.kind == PointerEventKind.down
-                                && ev.button == PointerEventButton.right) {
-                            root.activate();
-                            root.close-ctx-menu();
-                            root.url-edit-text = root.view.current-path;
-                            root.path-edit-mode = true;
-                            root.open-url-menu(
-                                self.absolute-position.x + self.mouse-x,
-                                self.absolute-position.y + self.mouse-y);
-                        }
-                    }
-                    // The trail is kept END-aligned as soon as it overflows.
-                    // A view narrowed by its splitter then hides the start of
-                    // the path instead of its last segments — the folder being
-                    // looked at is what identifies the view, the drive it sits
-                    // on rarely is.
-                    crumbs-flick := Flickable {
-                        width: parent.width;
-                        height: parent.height;
-                        viewport-width: max(self.width, crumbs-row.preferred-width);
-                        viewport-height: self.height;
-                        interactive: false;
-                        // Zero while the trail fits, so a wide view keeps it
-                        // against the left edge exactly as before. Nothing else
-                        // writes this property, and `crumbs-row` never reads it,
-                        // so the binding cannot feed back into the layout that
-                        // produces it.
-                        viewport-x: min(0px, self.width - self.viewport-width);
-
-                        crumbs-row := HorizontalLayout {
-                            padding-left: 6px;
-                            padding-right: 6px;
-                            spacing: 0px;
-                            alignment: start;
-                            for crumb[ci] in root.view.crumbs : HorizontalLayout {
-                                spacing: 0px;
-                                // "›" separator between segments (not before the first).
-                                if ci > 0 : Rectangle {
-                                    width: 16px;
-                                    Image {
-                                        source: @image-url("../../assets/icons/chevron-right.svg");
-                                        width: 11px;
-                                        height: 11px;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
-                                        colorize: Theme.foreground.with-alpha(0.4);
-                                    }
-                                }
-                                crumb-rect := Rectangle {
-                                    height: parent.height;
-                                    border-radius: 3px;
-                                    background: crumb-touch.has-hover
-                                        ? Theme.accent-background.with-alpha(0.18)
-                                        : transparent;
-                                    HorizontalLayout {
-                                        padding-left: 5px;
-                                        padding-right: 5px;
-                                        Text {
-                                            text: crumb.label;
-                                            font-size: 12px;
-                                            color: Theme.foreground;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                    crumb-touch := TouchArea {
-                                        clicked => {
-                                            root.activate();
-                                            root.close-ctx-menu();
-                                            root.navigate-to(crumb.path);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // --- EDIT mode: TextInput + "confirm" button on the right ---
-                if root.path-edit-mode : Rectangle {
-                    // Right-click thread BEHIND the TextInput: the latter only
-                    // handles the left button (cursor/selection), so the
-                    // right-click falls through here → Paste/Copy menu.
-                    TouchArea {
-                        pointer-event(ev) => {
-                            if (ev.kind == PointerEventKind.down
-                                    && ev.button == PointerEventButton.right) {
-                                root.open-url-menu(
-                                    self.absolute-position.x + self.mouse-x,
-                                    self.absolute-position.y + self.mouse-y);
-                            }
-                        }
-                    }
-                    // The field is wider than its frame as soon as the path
-                    // overflows, so it lives in a viewport that follows the
-                    // caret. Without this, extending a selection past the
-                    // right edge selects text that stays invisible. The
-                    // rename field gets the same behaviour from `LineEdit`,
-                    // whose chrome would be out of place inside this bar.
-                    url-flick := Flickable {
-                        x: 8px;
-                        y: 0;
-                        // Leaves room for the confirm button (28px) on the right.
-                        width: parent.width - 8px - 30px;
-                        height: parent.height;
-                        // Dragging scrolls the text selection, never the
-                        // viewport: the caret alone drives it.
-                        interactive: false;
-                        viewport-width: max(self.width, url-input.preferred-width);
-                        viewport-height: self.height;
-                        url-input := EditTextInput {
-                            width: parent.viewport-width;
-                            height: parent.height;
-                            // Keeps the caret inside the frame. `viewport-x` is
-                            // negative or zero, so the caret sits on screen at
-                            // `cursor.x + viewport-x`.
-                            cursor-position-changed(cursor) => {
-                                if (cursor.x + url-flick.viewport-x < 0px) {
-                                    url-flick.viewport-x = -cursor.x;
-                                } else if (cursor.x + url-flick.viewport-x
-                                        > url-flick.width - 2px) {
-                                    url-flick.viewport-x =
-                                        url-flick.width - 2px - cursor.x;
-                                }
-                            }
-                            // Shared text (initialized to the current path on entering
-                            // edit mode; replaceable via "Paste").
-                            text <=> root.url-edit-text;
-                            font-size: 12px;
-                            color: Theme.foreground;
-                            single-line: true;
-                            vertical-alignment: center;
-                            selection-background-color: Theme.accent-background.with-alpha(0.5);
-                            selection-foreground-color: Theme.foreground;
-                            // Focus + select the WHOLE path (direct replacement
-                            // on click; desired default behavior).
-                            init => {
-                                self.focus();
-                                self.set-selection-offsets(0, 99999);
-                                self.copy-seen = root.url-copy-serial;
-                                self.paste-seen = root.url-paste-serial;
-                            }
-                            // "Copy" in the URL menu acts on the SELECTION, like
-                            // this field's own Ctrl+C — copying the whole path
-                            // whatever was highlighted made selecting part of it
-                            // pointless. Only the field knows its selection, and
-                            // the menu lives at window level, out of reach of it;
-                            // the menu therefore bumps a counter and the field
-                            // acts on it. Same broadcast idiom as `Dismiss`.
-                            //
-                            // The snapshot taken on `init` is what keeps entering
-                            // edit mode from copying on its own: only a counter
-                            // that moved AFTER this field appeared is a request.
-                            property <int> copy-seen;
-                            property <int> copy-request: root.url-copy-serial;
-                            changed copy-request => {
-                                if (self.copy-request > self.copy-seen) {
-                                    self.copy-seen = self.copy-request;
-                                    self.copy();
-                                }
-                            }
-                            // Same reasoning for "Paste": handing the clipboard to
-                            // the field through its text replaced the whole line,
-                            // where the toolkit's own paste drops it at the caret
-                            // and replaces just the selection — what every text
-                            // field does, and what Ctrl+V here already did.
-                            property <int> paste-seen;
-                            property <int> paste-request: root.url-paste-serial;
-                            changed paste-request => {
-                                if (self.paste-request > self.paste-seen) {
-                                    self.paste-seen = self.paste-request;
-                                    self.paste();
-                                }
-                            }
-                            // Focus loss → exits edit mode without navigating
-                            // ("cancel on blur"). BUT not if the URL menu is
-                            // open (right-click → menu): we must stay in edit mode
-                            // so "Paste" fills the field.
-                            changed has-focus => {
-                                if (!self.has-focus && !root.url-menu-open) {
-                                    root.path-edit-mode = false;
-                                }
-                            }
-                            accepted => {
-                                root.path-edit-mode = false;
-                                root.activate();
-                                root.navigate-to(self.text);
-                                root.request-focus();
-                            }
-                            key-pressed(event) => {
-                                if (event.text == Key.Escape) {
-                                    root.path-edit-mode = false;
-                                    root.request-focus();
-                                    return accept;
-                                }
-                                // Shared editing shortcuts (see EditTextInput):
-                                // this field overrides `key-pressed`, so it must
-                                // call them explicitly.
-                                if (self.edit-shortcut(event)) { return accept; }
-                                return reject;
-                            }
-                        }
-                    }
-
-                    // "Confirm" button: applies the entered path and exits
-                    // edit mode (equivalent to Enter), clickable.
-                    Rectangle {
-                        width: 22px;
-                        height: 22px;
-                        x: parent.width - 26px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: 4px;
-                        background: validate-touch.has-hover
-                            ? Theme.accent-background
-                            : Theme.accent-background.with-alpha(0.85);
-                        Image {
-                            source: @image-url("../../assets/icons/check.svg");
-                            width: 13px;
-                            height: 13px;
-                            colorize: Theme.accent-foreground;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        validate-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.path-edit-mode = false;
-                                root.activate();
-                                root.close-ctx-menu();
-                                root.navigate-to(url-input.text);
-                                root.request-focus();
-                            }
-                        }
-                    }
-                }
-                } // closes url-clip (rectangular clip wrapper = crisp)
-            }
-
-            // -- Grip: drag this VIEW onto another to swap their places. --
-            // In the nav bar rather than in the empty part of the tab strip:
-            // that empty part vanishes the moment the tabs overflow
-            // (`tabs-overflow`), and a handle whose existence depends on the
-            // number of tabs is not a handle. Here it sits in the same place in
-            // all three tab bar modes.
-            //
-            // To the LEFT of the split token on purpose: overshooting a handle
-            // must land on a harmless button, never on the one that closes the
-            // view. Shown only when there is another view to swap with — the
-            // same condition the close button already uses.
-            if root.can-close : Rectangle {
-                width: 22px;
-                height: 22px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: grip-touch.has-hover
-                    ? Theme.accent-background.with-alpha(0.18)
-                    : transparent;
-                border-width: 1px;
-                border-color: grip-touch.has-hover
-                    ? Theme.accent-background.with-alpha(0.55)
-                    : Theme.border;
-                Image {
-                    source: @image-url("../../assets/icons/grip-horizontal.svg");
-                    width: 14px;
-                    height: 9px;
-                    colorize: Theme.foreground;
-                    // The three-step scale the sidebar section headers already
-                    // use, for the same icon and the same gesture.
-                    opacity: root.view-dragging ? 0.90
-                        : (grip-touch.has-hover ? 0.65 : 0.32);
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                grip-touch := TouchArea {
-                    mouse-cursor: root.view-dragging ? grabbing : grab;
-                    changed has-hover => {
-                        if (self.has-hover && !root.view-dragging) {
-                            Tip.text = root.strings.panel-move-tooltip;
-                            Tip.x = self.absolute-position.x;
-                            Tip.y = self.absolute-position.y + self.height + 4px;
-                        } else if (Tip.text == root.strings.panel-move-tooltip) {
-                            Tip.text = "";
-                        }
-                    }
-                    pointer-event(ev) => {
-                        if (ev.button == PointerEventButton.left
-                                && ev.kind == PointerEventKind.down) {
-                            root.vd-x = self.absolute-position.x + self.mouse-x;
-                            root.vd-y = self.absolute-position.y + self.mouse-y;
-                            root.view-dragging = false;
-                        }
-                        if (ev.button == PointerEventButton.left
-                                && ev.kind == PointerEventKind.up
-                                && root.view-dragging) {
-                            root.view-dragging = false;
-                            root.view-drag-completed(
-                                self.absolute-position.x + self.mouse-x,
-                                self.absolute-position.y + self.mouse-y);
-                        }
-                    }
-                    moved => {
-                        // Threshold on BOTH axes, like the tab drag: a view can
-                        // be pulled straight down as readily as sideways.
-                        if (self.pressed && !root.view-dragging
-                                && (abs(self.absolute-position.x + self.mouse-x - root.vd-x) > 6px
-                                    || abs(self.absolute-position.y + self.mouse-y - root.vd-y) > 6px)) {
-                            root.view-dragging = true;
-                            Tip.text = "";
-                        }
-                        if (self.pressed && root.view-dragging) {
-                            root.view-drag-progress(
-                                self.absolute-position.x + self.mouse-x,
-                                self.absolute-position.y + self.mouse-y);
-                        }
-                    }
-                }
-            }
-
-            // Split token: opens the "Split" menu. Moved from the
-            // strip to the nav bar: a single location, stable across the
-            //    three tab bar modes. --
-            Rectangle {
-                width: 22px;
-                height: 22px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: split-touch.has-hover
-                    ? Theme.accent-background.with-alpha(0.18)
-                    : transparent;
-                border-width: 1px;
-                border-color: split-touch.has-hover
-                    ? Theme.accent-background.with-alpha(0.55)
-                    : Theme.border;
-                Image {
-                    source: @image-url("../../assets/icons/split.svg");
-                    width: 14px;
-                    height: 14px;
-                    colorize: Theme.foreground.with-alpha(split-touch.has-hover ? 1.0 : 0.7);
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                split-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    changed has-hover => {
-                        if (self.has-hover) {
-                            Tip.text = root.strings.panel-split-view;
-                            Tip.x = self.absolute-position.x;
-                            Tip.y = self.absolute-position.y + self.height + 4px;
-                        } else if (Tip.text == root.strings.panel-split-view) {
-                            Tip.text = "";
-                        }
-                    }
-                    clicked => {
-                        root.close-ctx-menu();
-                        // Capture the position + open the menu BEFORE activate()
-                        // (which may rebuild this panel, invalidating `self`).
-                        root.open-split-menu(
-                            self.absolute-position.x,
-                            self.absolute-position.y + self.height);
-                        root.activate();
-                    }
-                }
-            }
-
-            // -- "x" button to close this panel (visible if > 1 panel) --
-            if root.can-close : Rectangle {
-                width: 22px;
-                height: 22px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: close-panel-touch.has-hover ? Tokens.danger.with-alpha(0.27) : transparent;
-                border-width: 1px;
-                border-color: close-panel-touch.has-hover ? Tokens.danger.with-alpha(0.4) : Theme.border;
-                Image {
-                    source: @image-url("../../assets/icons/close.svg");
-                    width: 12px;
-                    height: 12px;
-                    colorize: close-panel-touch.has-hover ? Tokens.danger : Theme.foreground.with-alpha(0.7);
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                close-panel-touch := TouchArea {
-                    // Hover → "danger" preview across the whole panel (it will
-                    // close on click). `changed` because has-hover is not a
-                    // direct binding usable from the root.
-                    changed has-hover => { root.close-hover = self.has-hover; }
-                    clicked => { root.close-ctx-menu(); root.close-panel(); }
-                }
-            }
+        // ===== Nav bar + breadcrumb =====
+        // History / view-mode / path bar / grip / split / close live in
+        // `panel/nav_bar.slint`; the two-way bindings are the edit mode, the
+        // URL field's text and the close-hover preview.
+        navbar := PanelNavBar {
+            view: root.view;
+            strings: root.strings;
+            can-close: root.can-close;
+            tab-mode: root.tab-mode;
+            path-edit-mode <=> root.path-edit-mode;
+            url-edit-text <=> root.url-edit-text;
+            url-menu-open: root.url-menu-open;
+            url-copy-serial: root.url-copy-serial;
+            url-paste-serial: root.url-paste-serial;
+            close-hover <=> root.close-hover;
+            activate => { root.activate(); }
+            go-back => { root.go-back(); }
+            go-forward => { root.go-forward(); }
+            go-parent => { root.go-parent(); }
+            refresh => { root.refresh(); }
+            request-focus => { root.request-focus(); }
+            navigate-to(p) => { root.navigate-to(p); }
+            close-panel => { root.close-panel(); }
+            open-split-menu(x, y) => { root.open-split-menu(x, y); }
+            open-tabbar-menu(x, y) => { root.open-tabbar-menu(x, y); }
+            open-view-menu(x, y) => { root.open-view-menu(x, y); }
+            toggle-subfolder-contents => { root.toggle-subfolder-contents(); }
+            toggle-show-hidden => { root.toggle-show-hidden(); }
+            open-url-menu(x, y) => { root.open-url-menu(x, y); }
+            close-ctx-menu => { root.close-ctx-menu(); }
+            view-drag-progress(x, y) => { root.view-drag-progress(x, y); }
+            view-drag-completed(x, y) => { root.view-drag-completed(x, y); }
         }
             } // closes the toolbar's inner VerticalLayout
         } // closes the toolbar (Theme.toolbar)
