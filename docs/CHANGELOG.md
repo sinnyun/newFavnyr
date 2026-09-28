@@ -184,3 +184,35 @@ files touched, so a behaviour can be traced back to its source.
 - 验证：每个覆盖层都做**行级校验**（搬走的区块去缩进后与原文逐行比对，`block verbatim`）+ 组件成员与实例转发一一对应核查 + `cargo check -p favnyr-gui` 全绿；`cargo test -p favnyr-core -p favnyr-gui` → core 205 passed / 1 ignored、gui 138 passed、0 failed。
 - 尚未人工点检：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（capture 与冲突）需要跑一次。
 - 有意保留：`overlays/settings.slint`（1 507 行）按页分块、`panel.slint`（2 897）第二层分块；理由与后续见 `docs/split-plan.md` §16。
+
+## 2026-09-28 — 设置面板按页拆分：`overlays/settings.slint` 1 507 → 外壳 385 + `settings/{general,shortcuts,openwith}`
+
+**Changed**
+
+仍是纯搬迁拆分：不改行为、不改对外契约；`OverlaySettings` 的 81 个成员（29 `in` / 19 `in-out` / 32 `callback` + `return-focus()`）逐字未变，`main_window.slint` 实例处的转发一行未动。三个 tab 页各一次提交：
+
+| 提交 | 新文件（行数） | 内容 |
+| --- | ---: | --- |
+| `7f8f6cc` | `overlays/settings/shortcuts.slint`（323） | 快捷键页：搜索、捕获、冲突提示、重置 |
+| `a7cb679` | `overlays/settings/general.slint`（680） | 常规页：语言、主题、缩放、时钟、标签栏、shell 菜单、列与尺寸 |
+| `1d5e3af` | `overlays/settings/openwith.slint`（331） | 打开方式页：打开器、方案（recipes）、Windows shell 条目 |
+
+`overlays/settings.slint` **1 507 → 385 行**：剩下窗口、标题栏、tab 条与快捷键行菜单（菜单必须画在面板之上，留在外壳）。
+
+做法（每页相同）：
+
+- 每页原来是 `if root.settings-tab == N : ScrollView { vertical-stretch: 1; VerticalLayout { … } }`，提取为 `export component SettingsX inherits ScrollView { … }`，页面体去一级缩进逐行搬移；外壳实例处保留 `if root.settings-tab == N : SettingsX { vertical-stretch: 1; … }`。
+- 转发沿用覆盖层约定：只读 → `x: root.x;`；页面写回的 → `x <=> root.x;`；动作 → `cb(a, b) => { root.cb(a, b); }`。方向由脚本按"被赋值 / 出现在 `<=>` 右侧 / 被调用"分类。
+- 页面 import 用 `"../../structs.slint"` 一级路径；`@image-url` 加深为 `../../../../assets/…`（12 处，快捷键页 5 处）。`settings-tab` 只被边界 `if` 读取，页面不声明该成员。
+- 页面内未使用的成员不声明（`shortcut-unassign` 只在 shell 的菜单里被调用）；外壳 import 表只留仍在用的名字（剪掉 13 个孤儿名字）。
+
+**Docs**
+
+- `docs/split-plan.md` — §16 阶段 5 状态更新（设置按页拆分完成，只剩 `panel.slint` 第二层与 `bridge/tests.rs` 再分）；偏差补 19–20（页面放入 `settings/` 子目录、逐页提交与行级校验）。
+- `docs/code-map.md` — §3.3 文件表（24 个 `.slint`，新增 `overlays/settings/` 三行、shell 385 行）、§4.4 依赖链改为"两层覆盖层+页面"并补第二层拆分约定、§6 剩余项同步。
+
+**Notes**
+
+- 验证：逐页**行级校验**（页面体去缩进后与原文逐行比对，唯一允许的改写是 12 处 `@image-url` 路径）+ 成员方向三查（声明 / 实例转发 / 页面内使用一致）+ `cargo check -p favnyr-gui` 每个提交后全绿；`cargo test -p favnyr-core -p favnyr-gui` 全绿（core 205 passed / 1 ignored、gui 138 passed、0 failed）。
+- 尚未人工点检：设置三页切换与各页交互（含快捷键捕获与冲突、Open with 子页）。
+- `panel.slint` 第二层的障碍记录在 `docs/split-plan.md` §16：面板级成员**反向读写**区块内部 id（`tabs-flick.viewport-x/width/viewport-width` 被面板的滚动函数与计时器写入；`sel-touch.*` / `rows-scroll.*` 被 `note-row`、`update-pointer-hover`、`report-rows-viewport` 等读出），这组双向耦合需先厘清归属再动。

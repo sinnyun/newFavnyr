@@ -334,7 +334,7 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 | 2 | GUI 外围：`i18n`、`openwith`、`actions`、`winddrag` | ✅ 全部完成 |
 | 3 | `bridge.rs` 外围模块（47 个文件） | ✅ 全部完成（`bridge/mod.rs` 151 行） |
 | 4 | `bridge.rs` 的 `install()`（791 + 12 个 `cb_*.rs`） | ✅ 完成 |
-| 5 | `.slint` 拆分 | 🟡 `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 10 个文件、11 个组件已完成**（`main_window.slint` 5 541 → 3 193 行）；`panel.slint` 第二层与 `overlays/settings.slint` 按页分块未做 |
+| 5 | `.slint` 拆分 | 🟡 `structs`/`theme`/`widgets/*`/`panel`/`sidebar`/`workspaces`/`progress` 已分文件；**`overlays/*` 10 个文件、11 个组件已完成**（`main_window.slint` 5 541 → 3 193 行），**设置对话框按页拆分已完成**（`overlays/settings.slint` 1 507 → 外壳 385 + `settings/{general,shortcuts,openwith}`）；`panel.slint` 第二层未做 |
 
 **验证**：`cargo fmt -p favnyr-gui`、`cargo clippy -p favnyr-gui --all-targets -- -D warnings` 干净；`cargo test -p favnyr-gui` 138 全绿（`favnyr-core` 同）；GUI 冷启动冒烟通过（恢复工作区 + 进入事件循环，无 panic）。覆盖层每一层搬完后都另有**行级校验**：搬走的区块按去缩进后与原文逐行比对（`block verbatim`），并核对组件成员与实例转发一一对应、无遗漏，再跑 `cargo check -p favnyr-gui`。**人工点检仍欠**：见 §2"迁移顺序"前的说明。
 
@@ -358,10 +358,12 @@ GUI 行为不在单测覆盖内，涉及 `bridge`/`.slint` 的阶段必须人工
 16. `overlays/favorites.slint` 吸收收藏容器/收藏项的右键菜单（方案列在 `menus.slint` 区块）——它与三个收藏弹窗共用 `fav-menu-*` 状态，合在一起内聚更高。
 17. `notes.slint` / `panel_menus.slint` / `settings.slint` 新增组件内 `callback return-focus();`：原先直接调用窗口的 `key-scope.focus()`，覆盖层拿不到该 id，改由实例处接回。
 18. 覆盖层提取后 `main_window.slint` 的 import 表按"只留仍在用的名字"重写（`FfmpegCmdRow`/`SidebarHeaderAction`/`MenuItem`/`ModalBackdrop`/`PathRow`/`SearchField` 等移出），并在 `overlays/*.slint` 里把 `@image-url` 下沉为 `../../../assets/…`。
+19. 设置对话框按页拆为**子目录** `ui/overlays/settings/`（`general`/`shortcuts`/`openwith`），每页是 `export component SettingsX inherits ScrollView`，页面内容即原 `ScrollView` 的子女（`vertical-stretch: 1` 留在实例处）；外壳 `overlays/settings.slint` 只剩 385 行。每页一次提交（`7f8f6cc`、`a7cb679`、`1d5e3af`），搬走的区块仍按行级校验：去缩进后与原文逐行比对，唯一允许的改写是 `@image-url` 再深一级（`../../../assets/` → `../../../../assets/`，共 12 处），已用"无浅路径残留"断言覆盖。
+20. 三页的成员方向取自脚本分类（`root.x` 被赋值或出现在 `<=>` 右侧 → `in-out`；被调用 → `callback`；其余 → `in`），再逐页核对"页面用到的 root 成员 = 声明成员 = 外壳转发"三者相等；外壳的 import 同时在最后一页提交里按"只留仍在用的名字"再剪一次（`PathRow`/`SearchField`/`SettingsRowButton`/`CommandIcon`/`OwRecipeButton`/`FfmpegCmdRow`/`SidebarHeaderAction`/`Button`/`CheckBox`/`ComboBox`/`HorizontalBox`/`ScrollView`/`SpinBox` 移出，余 7 行）。
 
 **剩余项**（有意保留，不是遗漏）：
 
 - ✅ `ui/main_window.slint` 的约 40 个覆盖层区块（约 4 000 行）→ `ui/overlays/*.slint`（10 文件 11 组件），已完成；`main_window.slint` 5 541 → 3 193 行（含 552 行转发）。**仍需维护者人工点检**：导航、标签页 tear-off、拖放（含虚拟文件）、粘贴进度、缩略图、设置各页、快捷键（含 capture 与冲突）。
-- `ui/panel.slint`（2 897 行）的第二层分块（`panel/{header,columns,rows,footer}.slint`）：与覆盖层同属"显式转发改写"一类，但 `PanelComponent` 的成员面（含 500+ 行列头/行高/几何常量）需要先盘点读写方向，建议作为独立一轮，一次一块提交。
-- `ui/overlays/settings.slint`（1 507 行）按页分块（`settings/{general,shortcuts,openwith}.slint` + 面板外壳）：三页共用 `settings-*` 状态，拆分时要把每页用到的成员分别列清；快捷键菜单留在外壳里（须在面板之上）。
+- `ui/panel.slint`（2 897 行）的第二层分块（`panel/{header,columns,rows,footer}.slint`）：与覆盖层同属"显式转发改写"一类，但 `PanelComponent` 的成员面（含 500+ 行列头/行高/几何常量）需要先盘点读写方向，建议作为独立一轮，一次一块提交。已探明的主要障碍：面板级成员**反向读写**区块内部 id（`tabs-flick.viewport-x/width/viewport-width` 被面板的滚动函数与计时器写入，`sel-touch.*` / `rows-scroll.*` 被 `note-row`、`update-pointer-hover`、`report-rows-viewport`、`menu-key-watch` 读出），提取时要么把这些状态一并下沉、要么以 `in-out` 别名把 Flickable 的视口数值接出（Slint 支持 `public function`，行为可从组件外调用，可减少一层回调）。
+- ✅ `ui/overlays/settings.slint`（1 507 行）按页分块（`settings/{general,shortcuts,openwith}.slint` + 面板外壳）已完成：外壳 385 行，三页 680 / 323 / 331 行；快捷键菜单留在外壳里（须在面板之上）。
 - `bridge/tests.rs`（2 346）按模块再分（方案原文即"可后续"）；`bridge/state.rs`（1 508）、`ui/sidebar.slint`（1 113）、`ui/widgets/rows.slint`（922）、`bridge/thumbs.rs`（862）、`bridge/rows/build.rs`（855）、`core/src/fs/tests.rs`（807）为拆分后仍超 800 的文件，理由见 [code-map.md §6](code-map.md#6-拆分前基线与剩余项)。
