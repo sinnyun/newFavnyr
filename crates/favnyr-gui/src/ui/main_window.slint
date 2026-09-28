@@ -33,6 +33,7 @@ import { OverlayDialogs } from "overlays/dialogs.slint";
 import { OverlayWorkspaces } from "overlays/workspaces.slint";
 import { OverlayCustomCommand } from "overlays/custom_command.slint";
 import { OverlayNoteBubble, OverlayNotes } from "overlays/notes.slint";
+import { OverlayFavorites } from "overlays/favorites.slint";
 import { ActivityRail, FavPanel, Sidebar, SidebarHeaderAction } from "sidebar.slint";
 import { ComboBox, VerticalBox, HorizontalBox, ScrollView, LineEdit, Button, SpinBox, CheckBox, Palette } from "std-widgets.slint";
 
@@ -3607,230 +3608,30 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ===== Modal popup for naming or renaming a favorites container =====
-        // It shares the rules of the other naming popups: validation via
-        // `is_valid_entry_name`, deferred focus, and a disabled button if the name is invalid.
-        if root.fav-name-open : ModalBackdrop { }
-        if root.fav-name-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 460px;
-            height: 196px;
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-
-            Timer {
-                interval: 1ms;
-                running: root.fav-name-focus-armed;
-                triggered => {
-                    favname-edit.focus();
-                    // Caret at the END of the line (no selection) — same behavior
-                    // as a folder name (see rename-edit).
-                    favname-edit.set-selection-offsets(99999, 99999);
-                    root.fav-name-focus-armed = false;
-                }
-            }
-
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-                Text {
-                    text: root.fav-name-rename ? root.strings.fav-rename : root.strings.fav-new-container;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: Theme.foreground;
-                }
-                favname-edit := EditLineEdit {
-                    placeholder-text: root.strings.create-placeholder;
-                    text <=> root.fav-name-value;
-                    edited(t) => { root.fav-name-check(t); }
-                    accepted(t) => {
-                        if (!root.fav-name-invalid && t != "") { root.fav-name-confirm(); }
-                    }
-                }
-                Rectangle { vertical-stretch: 1; }
-                HorizontalBox {
-                    padding: 0px;
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.btn-cancel;
-                        clicked => { root.fav-name-open = false; }
-                    }
-                    Button {
-                        text: root.fav-name-rename ? root.strings.rename-confirm : root.strings.create-confirm;
-                        primary: true;
-                        enabled: !root.fav-name-invalid && root.fav-name-value != "";
-                        clicked => { root.fav-name-confirm(); }
-                    }
-                }
-            }
-        }
-
-        // ===== "Save as favorite" popup =====
-        if root.fav-save-open : ModalBackdrop { }
-        if root.fav-save-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 460px;
-            height: 300px;
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-                Text {
-                    text: root.strings.fav-popup-title;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: Theme.foreground;
-                }
-                // Target (path, or "N items").
-                Text {
-                    text: root.fav-save-target;
-                    color: Theme.foreground.with-alpha(0.7);
-                    font-size: 12px;
-                    overflow: elide;
-                }
-                // Alias (single item).
-                if !root.fav-save-multi : Text {
-                    text: root.strings.fav-popup-alias;
-                    font-size: 10px;
-                    font-weight: 600;
-                    letter-spacing: 0.3px;
-                    color: Theme.foreground.with-alpha(0.55);
-                }
-                if !root.fav-save-multi : fav-save-alias-edit := EditLineEdit {
-                    text <=> root.fav-save-alias;
-                }
-                // Target container.
-                Text {
-                    text: root.strings.fav-popup-container;
-                    font-size: 10px;
-                    font-weight: 600;
-                    letter-spacing: 0.3px;
-                    color: Theme.foreground.with-alpha(0.55);
-                }
-                HorizontalBox {
-                    padding: 0px;
-                    spacing: 8px;
-                    ComboBox {
-                        model: root.fav-container-labels;
-                        current-index <=> root.fav-container-index;
-                        horizontal-stretch: 1;
-                    }
-                    Button {
-                        text: root.strings.fav-popup-new;
-                        clicked => {
-                            // Opens the creation sub-popup (name + parent container).
-                            root.fav-newc-name = root.strings.fav-new-container;
-                            root.fav-newc-parent-index = root.fav-container-index;
-                            root.fav-newc-open = true;
-                            root.fav-newc-focus-armed = true;
-                        }
-                    }
-                }
-                Rectangle { vertical-stretch: 1; }
-                HorizontalBox {
-                    padding: 0px;
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.btn-cancel;
-                        clicked => { root.fav-save-open = false; }
-                    }
-                    Button {
-                        text: root.strings.fav-save;
-                        primary: true;
-                        enabled: root.fav-save-multi || root.fav-save-alias != "";
-                        clicked => {
-                            root.fav-save-commit(root.fav-save-alias, root.fav-container-index);
-                            root.fav-save-open = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        // ===== "New container" sub-popup (from the save flow) =====
-        if root.fav-newc-open : ModalBackdrop { }
-        if root.fav-newc-open : Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 420px;
-            height: 210px;
-            background: Theme.background;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000.with-alpha(0.35);
-            drop-shadow-offset-y: 6px;
-            Timer {
-                interval: 1ms;
-                running: root.fav-newc-focus-armed;
-                triggered => {
-                    fav-newc-edit.focus();
-                    fav-newc-edit.set-selection-offsets(0, 99999);
-                    root.fav-newc-focus-armed = false;
-                }
-            }
-            VerticalBox {
-                padding: 18px;
-                spacing: 10px;
-                Text {
-                    text: root.strings.fav-new-container;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: Theme.foreground;
-                }
-                fav-newc-edit := EditLineEdit {
-                    text <=> root.fav-newc-name;
-                    accepted(t) => {
-                        if (t != "") {
-                            root.fav-save-new-container(t, root.fav-newc-parent-index);
-                            root.fav-newc-open = false;
-                        }
-                    }
-                }
-                Text {
-                    text: root.strings.fav-popup-parent;
-                    font-size: 10px;
-                    font-weight: 600;
-                    letter-spacing: 0.3px;
-                    color: Theme.foreground.with-alpha(0.55);
-                }
-                ComboBox {
-                    model: root.fav-container-labels;
-                    current-index <=> root.fav-newc-parent-index;
-                }
-                Rectangle { vertical-stretch: 1; }
-                HorizontalBox {
-                    padding: 0px;
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: root.strings.btn-cancel;
-                        clicked => { root.fav-newc-open = false; }
-                    }
-                    Button {
-                        text: root.strings.fav-save;
-                        primary: true;
-                        enabled: root.fav-newc-name != "";
-                        clicked => {
-                            root.fav-save-new-container(root.fav-newc-name, root.fav-newc-parent-index);
-                            root.fav-newc-open = false;
-                        }
-                    }
-                }
-            }
+        // ===== Favorites popups (naming, save-as, new container) =====
+        // Extracted to overlays/favorites.slint; the forwards below are the
+        // whole contract with it (forms two-way, validation in, saves out).
+        OverlayFavorites {
+            strings: root.strings;
+            fav-name-open <=> root.fav-name-open;
+            fav-name-rename: root.fav-name-rename;
+            fav-name-value <=> root.fav-name-value;
+            fav-name-invalid: root.fav-name-invalid;
+            fav-name-focus-armed <=> root.fav-name-focus-armed;
+            fav-name-check(t) => { root.fav-name-check(t); }
+            fav-name-confirm() => { root.fav-name-confirm(); }
+            fav-save-open <=> root.fav-save-open;
+            fav-save-target: root.fav-save-target;
+            fav-save-multi: root.fav-save-multi;
+            fav-save-alias <=> root.fav-save-alias;
+            fav-container-labels: root.fav-container-labels;
+            fav-container-index <=> root.fav-container-index;
+            fav-save-commit(alias, index) => { root.fav-save-commit(alias, index); }
+            fav-save-new-container(name, parent) => { root.fav-save-new-container(name, parent); }
+            fav-newc-open <=> root.fav-newc-open;
+            fav-newc-name <=> root.fav-newc-name;
+            fav-newc-parent-index <=> root.fav-newc-parent-index;
+            fav-newc-focus-armed <=> root.fav-newc-focus-armed;
         }
 
         // ===== Columns menu (right-click on a header) =====

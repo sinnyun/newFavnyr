@@ -1,0 +1,272 @@
+// The three favorites popups: naming or renaming a container, "save as
+// favorite" (with its container dropdown and alias field) and the
+// "new container" sub-popup raised from the save flow.
+//
+// Extracted from main_window.slint. Everything the forms edit is two-way,
+// including the container index of the dropdowns and the focus-armer flags
+// the in-popup timers clear themselves.
+
+import { Strings } from "../structs.slint";
+import { Theme } from "../theme.slint";
+import { EditLineEdit } from "../widgets/inputs.slint";
+import { ModalBackdrop } from "../widgets/tabs.slint";
+import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+export component OverlayFavorites inherits Rectangle {
+    // Transparent, full-window host; the popups centre themselves on it.
+    width: 100%;
+    height: 100%;
+
+    in property <Strings> strings;
+
+    // Container naming / renaming.
+    in-out property <bool> fav-name-open: false;
+    in property <bool> fav-name-rename: false;
+    in-out property <string> fav-name-value: "";
+    in property <bool> fav-name-invalid: true;
+    in-out property <bool> fav-name-focus-armed: false;
+    callback fav-name-check(string);
+    callback fav-name-confirm();
+
+    // "Save as favorite".
+    in-out property <bool> fav-save-open: false;
+    in property <string> fav-save-target: "";
+    in property <bool> fav-save-multi: false;
+    in-out property <string> fav-save-alias: "";
+    in property <[string]> fav-container-labels;
+    in-out property <int> fav-container-index: 0;
+    callback fav-save-commit(string, int);
+    callback fav-save-new-container(string, int);
+
+    // "New container", raised from the save flow.
+    in-out property <bool> fav-newc-open: false;
+    in-out property <string> fav-newc-name: "";
+    in-out property <int> fav-newc-parent-index: 0;
+    in-out property <bool> fav-newc-focus-armed: false;
+
+    // ===== Modal popup for naming or renaming a favorites container =====
+    // It shares the rules of the other naming popups: validation via
+    // `is_valid_entry_name`, deferred focus, and a disabled button if the name is invalid.
+    if root.fav-name-open : ModalBackdrop { }
+    if root.fav-name-open : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 460px;
+        height: 196px;
+        background: Theme.background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000.with-alpha(0.35);
+        drop-shadow-offset-y: 6px;
+
+        Timer {
+            interval: 1ms;
+            running: root.fav-name-focus-armed;
+            triggered => {
+                favname-edit.focus();
+                // Caret at the END of the line (no selection) — same behavior
+                // as a folder name (see rename-edit).
+                favname-edit.set-selection-offsets(99999, 99999);
+                root.fav-name-focus-armed = false;
+            }
+        }
+
+        VerticalBox {
+            padding: 18px;
+            spacing: 10px;
+            Text {
+                text: root.fav-name-rename ? root.strings.fav-rename : root.strings.fav-new-container;
+                font-size: 16px;
+                font-weight: 700;
+                color: Theme.foreground;
+            }
+            favname-edit := EditLineEdit {
+                placeholder-text: root.strings.create-placeholder;
+                text <=> root.fav-name-value;
+                edited(t) => { root.fav-name-check(t); }
+                accepted(t) => {
+                    if (!root.fav-name-invalid && t != "") { root.fav-name-confirm(); }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalBox {
+                padding: 0px;
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: root.strings.btn-cancel;
+                    clicked => { root.fav-name-open = false; }
+                }
+                Button {
+                    text: root.fav-name-rename ? root.strings.rename-confirm : root.strings.create-confirm;
+                    primary: true;
+                    enabled: !root.fav-name-invalid && root.fav-name-value != "";
+                    clicked => { root.fav-name-confirm(); }
+                }
+            }
+        }
+    }
+
+    // ===== "Save as favorite" popup =====
+    if root.fav-save-open : ModalBackdrop { }
+    if root.fav-save-open : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 460px;
+        height: 300px;
+        background: Theme.background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000.with-alpha(0.35);
+        drop-shadow-offset-y: 6px;
+        VerticalBox {
+            padding: 18px;
+            spacing: 10px;
+            Text {
+                text: root.strings.fav-popup-title;
+                font-size: 16px;
+                font-weight: 700;
+                color: Theme.foreground;
+            }
+            // Target (path, or "N items").
+            Text {
+                text: root.fav-save-target;
+                color: Theme.foreground.with-alpha(0.7);
+                font-size: 12px;
+                overflow: elide;
+            }
+            // Alias (single item).
+            if !root.fav-save-multi : Text {
+                text: root.strings.fav-popup-alias;
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                color: Theme.foreground.with-alpha(0.55);
+            }
+            if !root.fav-save-multi : fav-save-alias-edit := EditLineEdit {
+                text <=> root.fav-save-alias;
+            }
+            // Target container.
+            Text {
+                text: root.strings.fav-popup-container;
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                color: Theme.foreground.with-alpha(0.55);
+            }
+            HorizontalBox {
+                padding: 0px;
+                spacing: 8px;
+                ComboBox {
+                    model: root.fav-container-labels;
+                    current-index <=> root.fav-container-index;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: root.strings.fav-popup-new;
+                    clicked => {
+                        // Opens the creation sub-popup (name + parent container).
+                        root.fav-newc-name = root.strings.fav-new-container;
+                        root.fav-newc-parent-index = root.fav-container-index;
+                        root.fav-newc-open = true;
+                        root.fav-newc-focus-armed = true;
+                    }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalBox {
+                padding: 0px;
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: root.strings.btn-cancel;
+                    clicked => { root.fav-save-open = false; }
+                }
+                Button {
+                    text: root.strings.fav-save;
+                    primary: true;
+                    enabled: root.fav-save-multi || root.fav-save-alias != "";
+                    clicked => {
+                        root.fav-save-commit(root.fav-save-alias, root.fav-container-index);
+                        root.fav-save-open = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== "New container" sub-popup (from the save flow) =====
+    if root.fav-newc-open : ModalBackdrop { }
+    if root.fav-newc-open : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 420px;
+        height: 210px;
+        background: Theme.background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000.with-alpha(0.35);
+        drop-shadow-offset-y: 6px;
+        Timer {
+            interval: 1ms;
+            running: root.fav-newc-focus-armed;
+            triggered => {
+                fav-newc-edit.focus();
+                fav-newc-edit.set-selection-offsets(0, 99999);
+                root.fav-newc-focus-armed = false;
+            }
+        }
+        VerticalBox {
+            padding: 18px;
+            spacing: 10px;
+            Text {
+                text: root.strings.fav-new-container;
+                font-size: 16px;
+                font-weight: 700;
+                color: Theme.foreground;
+            }
+            fav-newc-edit := EditLineEdit {
+                text <=> root.fav-newc-name;
+                accepted(t) => {
+                    if (t != "") {
+                        root.fav-save-new-container(t, root.fav-newc-parent-index);
+                        root.fav-newc-open = false;
+                    }
+                }
+            }
+            Text {
+                text: root.strings.fav-popup-parent;
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                color: Theme.foreground.with-alpha(0.55);
+            }
+            ComboBox {
+                model: root.fav-container-labels;
+                current-index <=> root.fav-newc-parent-index;
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalBox {
+                padding: 0px;
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: root.strings.btn-cancel;
+                    clicked => { root.fav-newc-open = false; }
+                }
+                Button {
+                    text: root.strings.fav-save;
+                    primary: true;
+                    enabled: root.fav-newc-name != "";
+                    clicked => {
+                        root.fav-save-new-container(root.fav-newc-name, root.fav-newc-parent-index);
+                        root.fav-newc-open = false;
+                    }
+                }
+            }
+        }
+    }
+}
